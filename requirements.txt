@@ -1,0 +1,19 @@
+Django>=5.0
+psycopg2-binary    # PostgreSQL database adapter
+python-dotenv        # For environment variables
+pillow              # For image handling
+djangorestframework # For REST APIs
+gunicorn           # Production WSGI server for containers
+twilio
+django-cors-headers
+django-stub
+apscheduler
+python-dateutil>=2.8.2
+drf-yasg            # Swagger/OpenAPI documentation
+openapi
+
+# Celery and related packages
+celery>=5.3.1       # Task queue
+django-celery-beat>=2.5.0  # For periodic task scheduling
+redis>=4.5.0        # Redis client for Celery broker (K8s-friendly)
+
