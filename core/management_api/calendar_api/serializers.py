@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import Calendar, CalendarConfiguration, Workspace
 
 
@@ -18,7 +19,8 @@ class CalendarSerializer(serializers.ModelSerializer):
             'auth_token': {'write_only': True}  # Don't expose auth tokens in responses
         }
     
-    def get_config_count(self, obj):
+    @extend_schema_field(serializers.IntegerField)
+    def get_config_count(self, obj) -> int:
         """Get the number of configurations for this calendar"""
         return obj.mapping_calendar_configurations.count()
 

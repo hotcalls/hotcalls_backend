@@ -141,20 +141,151 @@ REST_FRAMEWORK = {
 # Spectacular (Swagger) Settings
 SPECTACULAR_SETTINGS = {
     'TITLE': 'HotCalls API',
-    'DESCRIPTION': 'Comprehensive API for HotCalls - AI Agent Call Management System',
+    'DESCRIPTION': '''
+# 🔐 HotCalls API - Complete Permission Matrix
+
+## 🎭 User Roles & Authentication
+
+### User Role Hierarchy
+| Role | Level | Description | Permissions |
+|------|--------|-------------|-------------|
+| **👤 Regular User** | `is_authenticated=True` | Standard authenticated user | Limited to own data and workspace resources |
+| **👔 Staff Member** | `is_staff=True` | System staff member | Can manage most system resources |
+| **🔧 Superuser** | `is_superuser=True` | System administrator | Full access to all operations |
+
+### 🔑 Authentication Methods
+- **Session Authentication**: Login via `/admin/` then use session cookies
+- **Basic Authentication**: Use `Authorization: Basic <base64(username:password)>` header
+
+---
+
+## 📊 Complete Permission Matrix
+
+### 👤 User Management API (`/api/users/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Users** | ✅ Own profile only | ✅ All users | ✅ All users | Users filtered by ownership |
+| **Create User** | ✅ Public registration | ✅ Any user | ✅ Any user | No authentication required |
+| **Edit User** | ✅ Own profile only | ✅ Any user | ✅ Any user | Object-level permission check |
+| **Delete User** | ❌ No access | ❌ No access | ✅ Any user | Destructive operation restricted |
+| **Change Status** | ❌ No access | ✅ Any user | ✅ Any user | Staff can activate/deactivate |
+| **View Blacklist** | ❌ No access | ✅ All entries | ✅ All entries | Staff-only security feature |
+| **Manage Blacklist** | ❌ No access | ✅ Create/Edit | ✅ All operations | High-security operations |
+
+### 📋 Subscription Management API (`/api/subscriptions/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Plans** | ✅ All plans | ✅ All plans | ✅ All plans | Public information |
+| **View Features** | ✅ All features | ✅ All features | ✅ All features | Public information |
+| **Create Plans/Features** | ❌ No access | ✅ Full access | ✅ Full access | Business configuration |
+| **Edit Plans/Features** | ❌ No access | ✅ Full access | ✅ Full access | Business configuration |
+| **Delete Plans/Features** | ❌ No access | ❌ No access | ✅ Full access | Destructive operations |
+| **Manage Assignments** | ❌ No access | ✅ Full access | ✅ Full access | Plan-feature relationships |
+
+### 🏢 Workspace Management API (`/api/workspaces/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Workspaces** | ✅ Own workspaces | ✅ All workspaces | ✅ All workspaces | Filtered by membership |
+| **Create Workspace** | ❌ No access | ✅ Full access | ✅ Full access | Organization structure |
+| **Edit Workspace** | ❌ No access | ✅ Full access | ✅ Full access | Organization structure |
+| **Delete Workspace** | ❌ No access | ❌ No access | ✅ Full access | Destructive operations |
+| **Manage Members** | ❌ No access | ✅ Full access | ✅ Full access | User-workspace relationships |
+| **View Statistics** | ✅ Own workspaces | ✅ All workspaces | ✅ All workspaces | Analytics access |
+
+### 🤖 Agent Management API (`/api/agents/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Agents** | ✅ Workspace agents | ✅ All agents | ✅ All agents | Filtered by workspace |
+| **Create Agent** | ❌ No access | ✅ Full access | ✅ Full access | AI agent configuration |
+| **Edit Agent** | ❌ No access | ✅ Full access | ✅ Full access | AI agent configuration |
+| **Delete Agent** | ❌ No access | ❌ No access | ✅ Full access | Destructive operations |
+| **View Phone Numbers** | ✅ All numbers | ✅ All numbers | ✅ All numbers | System resources |
+| **Manage Phone Numbers** | ❌ No access | ✅ Full access | ✅ Full access | System resources |
+| **Agent-Phone Assignment** | ❌ No access | ✅ Full access | ✅ Full access | Resource allocation |
+
+### 📞 Lead Management API (`/api/leads/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Leads** | ✅ All leads | ✅ All leads | ✅ All leads | Customer data access |
+| **Create Lead** | ✅ Single/Bulk | ✅ Single/Bulk | ✅ Single/Bulk | Data entry operations |
+| **Edit Lead** | ❌ No access | ✅ All leads | ✅ All leads | Data modification |
+| **Delete Lead** | ❌ No access | ✅ All leads | ✅ All leads | Customer data deletion |
+| **Update Metadata** | ❌ No access | ✅ All leads | ✅ All leads | Custom field management |
+| **View Call History** | ✅ All leads | ✅ All leads | ✅ All leads | Historical data |
+
+### 📱 Call Management API (`/api/calls/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Call Logs** | ✅ All logs | ✅ All logs | ✅ All logs | Historical call data |
+| **Create Call Log** | ❌ No access | ✅ Full access | ✅ Full access | System generated data |
+| **Edit Call Log** | ❌ No access | ✅ Full access | ✅ Full access | Data correction |
+| **Delete Call Log** | ❌ No access | ❌ No access | ✅ Full access | Destructive operations |
+| **View Analytics** | ✅ All analytics | ✅ All analytics | ✅ All analytics | Business intelligence |
+| **Daily Statistics** | ✅ All stats | ✅ All stats | ✅ All stats | Reporting access |
+
+### 📅 Calendar Management API (`/api/calendars/`)
+| Operation | Regular User | Staff | Superuser | Notes |
+|-----------|--------------|-------|-----------|-------|
+| **View Calendars** | ✅ Workspace calendars | ✅ All calendars | ✅ All calendars | Filtered by workspace |
+| **Create Calendar** | ❌ No access | ✅ Full access | ✅ Full access | Integration setup |
+| **Edit Calendar** | ❌ No access | ✅ Full access | ✅ Full access | Integration management |
+| **Delete Calendar** | ❌ No access | ❌ No access | ✅ Full access | Destructive operations |
+| **View Configurations** | ✅ Workspace configs | ✅ All configs | ✅ All configs | Filtered by workspace |
+| **Manage Configurations** | ❌ No access | ✅ Full access | ✅ Full access | Scheduling setup |
+| **Check Availability** | ✅ Workspace calendars | ✅ All calendars | ✅ All calendars | Booking operations |
+
+---
+
+## 🚨 Common Error Responses
+
+### 401 Unauthorized
+```json
+{
+  "detail": "Authentication credentials were not provided."
+}
+```
+**Cause**: No authentication provided or session expired
+
+### 403 Forbidden  
+```json
+{
+  "detail": "You do not have permission to perform this action."
+}
+```
+**Cause**: Insufficient permission level for the operation
+
+### 404 Not Found (Permission-related)
+```json
+{
+  "detail": "Not found."
+}
+```
+**Cause**: Resource exists but user lacks permission to view it
+
+---
+
+## 📚 Getting Started
+
+1. **Authenticate**: Use the "Authorize" button below to login
+2. **Test Permissions**: Try different endpoints based on your role
+3. **Check Responses**: See how permissions filter your results
+4. **Handle Errors**: Implement proper error handling for 401/403 responses
+
+**Legend**: ✅ = Allowed, ❌ = Forbidden
+    ''',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'SCHEMA_PATH_PREFIX': '/api/',
     'COMPONENT_SPLIT_REQUEST': True,
     'SORT_OPERATIONS': False,
     'TAGS': [
-        {'name': 'User Management', 'description': 'User accounts and blacklist management'},
-        {'name': 'Subscription Management', 'description': 'Plans, features, and subscription management'},
-        {'name': 'Workspace Management', 'description': 'Workspace and user association management'},
-        {'name': 'Agent Management', 'description': 'AI agents and phone number management'},
-        {'name': 'Lead Management', 'description': 'Lead management and bulk operations'},
-        {'name': 'Call Management', 'description': 'Call logs and analytics'},
-        {'name': 'Calendar Management', 'description': 'Calendar integration and scheduling'},
+        {'name': 'User Management', 'description': '👤 User accounts and blacklist management - Role-based access to user data'},
+        {'name': 'Subscription Management', 'description': '📋 Plans, features, and subscription management - Staff manage, Users view'},
+        {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management - Workspace-filtered access'},
+        {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management - Workspace-scoped agent access'},
+        {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations - Shared lead access with staff controls'},
+        {'name': 'Call Management', 'description': '📱 Call logs and analytics - Universal read access, staff write access'},
+        {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling - Workspace-filtered calendar access'},
     ],
 }
 

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import Workspace, User
 
 
@@ -13,7 +14,7 @@ class WorkspaceUserSerializer(serializers.ModelSerializer):
 
 class WorkspaceSerializer(serializers.ModelSerializer):
     """Serializer for Workspace model"""
-    users = WorkspaceUserSerializer(many=True, read_only=True, source='mapping_user_workspaces')
+    users = WorkspaceUserSerializer(many=True, read_only=True)
     user_count = serializers.SerializerMethodField()
     
     class Meta:
@@ -24,9 +25,10 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_user_count(self, obj):
+    @extend_schema_field(serializers.IntegerField)
+    def get_user_count(self, obj) -> int:
         """Get the number of users in this workspace"""
-        return obj.mapping_user_workspaces.count()
+        return obj.users.count()
 
 
 class WorkspaceCreateSerializer(serializers.ModelSerializer):
@@ -60,4 +62,15 @@ class WorkspaceUserAssignmentSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"The following user IDs do not exist: {list(missing_ids)}"
             )
-        return value 
+        return value
+
+
+class WorkspaceStatsSerializer(serializers.Serializer):
+    """Serializer for workspace statistics"""
+    workspace_id = serializers.UUIDField(read_only=True)
+    workspace_name = serializers.CharField(read_only=True)
+    user_count = serializers.IntegerField(read_only=True)
+    agent_count = serializers.IntegerField(read_only=True)
+    calendar_count = serializers.IntegerField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    updated_at = serializers.DateTimeField(read_only=True) 

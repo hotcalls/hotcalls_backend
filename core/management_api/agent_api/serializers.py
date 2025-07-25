@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration
 
 
@@ -14,7 +15,7 @@ class PhoneNumberSerializer(serializers.ModelSerializer):
 class AgentSerializer(serializers.ModelSerializer):
     """Serializer for Agent model"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
-    phone_numbers = PhoneNumberSerializer(many=True, read_only=True, source='mapping_agent_phonenumbers')
+    phone_numbers = PhoneNumberSerializer(many=True, read_only=True)
     phone_number_count = serializers.SerializerMethodField()
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
@@ -28,9 +29,10 @@ class AgentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
     
-    def get_phone_number_count(self, obj):
+    @extend_schema_field(serializers.IntegerField)
+    def get_phone_number_count(self, obj) -> int:
         """Get the number of phone numbers assigned to this agent"""
-        return obj.mapping_agent_phonenumbers.count()
+        return obj.phone_numbers.count()
 
 
 class AgentCreateSerializer(serializers.ModelSerializer):
@@ -88,4 +90,22 @@ class AgentPhoneAssignmentSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 f"The following phone number IDs do not exist or are inactive: {list(missing_ids)}"
             )
-        return value 
+        return value
+
+
+class AgentConfigSerializer(serializers.ModelSerializer):
+    """Serializer for agent configuration details"""
+    workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
+    phone_numbers = PhoneNumberSerializer(many=True, read_only=True)
+    calendar_config_id = serializers.CharField(source='calendar_configuration.id', read_only=True)
+    calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
+    
+    class Meta:
+        model = Agent
+        fields = [
+            'agent_id', 'workspace', 'workspace_name', 'greeting', 'voice', 
+            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'character', 'config_id', 'phone_numbers', 'calendar_configuration',
+            'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at'] 

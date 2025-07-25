@@ -59,6 +59,11 @@ class BlacklistSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+class UserStatusChangeSerializer(serializers.Serializer):
+    """Serializer for changing user status"""
+    status = serializers.ChoiceField(choices=User._meta.get_field('status').choices)
+
+
 class BlacklistCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating blacklist entries"""
     
