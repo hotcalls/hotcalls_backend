@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, Plan, Feature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog
+from .models import User, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog
 
 
 @admin.register(User)
@@ -26,19 +26,37 @@ class CustomUserAdmin(UserAdmin):
     )
 
 
-@admin.register(Plan)
-class PlanAdmin(admin.ModelAdmin):
-    list_display = ('plan_name', 'created_at', 'updated_at')
-    search_fields = ('plan_name',)
-    ordering = ('plan_name',)
-
-
 @admin.register(Feature)
 class FeatureAdmin(admin.ModelAdmin):
-    list_display = ('feature_name', 'plan', 'limit', 'created_at')
-    list_filter = ('plan', 'created_at')
-    search_fields = ('feature_name', 'plan__plan_name')
-    ordering = ('plan', 'feature_name')
+    list_display = ('feature_name', 'description', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('feature_name', 'description')
+    ordering = ('feature_name',)
+
+
+class PlanFeatureInline(admin.TabularInline):
+    model = PlanFeature
+    extra = 1
+
+
+@admin.register(PlanFeature)
+class PlanFeatureAdmin(admin.ModelAdmin):
+    list_display = ('plan', 'feature', 'limit', 'created_at')
+    list_filter = ('plan', 'feature', 'created_at')
+    search_fields = ('plan__plan_name', 'feature__feature_name')
+    ordering = ('plan', 'feature')
+
+
+@admin.register(Plan)
+class PlanAdmin(admin.ModelAdmin):
+    list_display = ('plan_name', 'get_features_count', 'created_at', 'updated_at')
+    search_fields = ('plan_name',)
+    ordering = ('plan_name',)
+    inlines = [PlanFeatureInline]
+    
+    def get_features_count(self, obj):
+        return obj.features.count()
+    get_features_count.short_description = 'Features Count'
 
 
 @admin.register(Workspace)
@@ -76,9 +94,9 @@ class PhoneNumberAdmin(admin.ModelAdmin):
 
 @admin.register(Lead)
 class LeadAdmin(admin.ModelAdmin):
-    list_display = ('name', 'email', 'phone', 'status', 'created_at')
-    list_filter = ('status', 'created_at')
-    search_fields = ('name', 'email', 'phone')
+    list_display = ('name', 'surname', 'email', 'phone', 'created_at')
+    list_filter = ('created_at',)
+    search_fields = ('name', 'surname', 'email', 'phone')
     ordering = ('-created_at',)
 
 

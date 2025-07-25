@@ -69,6 +69,7 @@ class Plan(models.Model):
     """Subscription plans"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plan_name = models.CharField(max_length=100, unique=True)
+    features = models.ManyToManyField('Feature', through='PlanFeature', related_name='mapping_plan_features')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -77,17 +78,31 @@ class Plan(models.Model):
 
 
 class Feature(models.Model):
-    """Features with limits for each plan"""
+    """High-level features that can be assigned to plans"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    feature_name = models.CharField(max_length=100)
-    limit = models.IntegerField(help_text="Feature limit for this plan")
-    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name='mapping_plan_features')
+    feature_name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True, help_text="Feature description")
     created_at = models.DateTimeField(auto_now_add=True)
-    
-    
+    updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.feature_name} - {self.plan.plan_name} (limit: {self.limit})"
+        return self.feature_name
+
+
+class PlanFeature(models.Model):
+    """Mapping table between Plan and Feature with limit"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE)
+    feature = models.ForeignKey(Feature, on_delete=models.CASCADE)
+    limit = models.IntegerField(help_text="Feature limit for this plan")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['plan', 'feature']
+    
+    def __str__(self):
+        return f"{self.plan.plan_name} - {self.feature.feature_name} (limit: {self.limit})"
 
 
 class Workspace(models.Model):
@@ -153,7 +168,7 @@ class Lead(models.Model):
     """Leads that agents will call"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    surname = models.CharField(max_length=255, help_text="Lead surname")
+    surname = models.CharField(max_length=255, blank=True, null=True, help_text="Lead surname")
     email = models.EmailField()
     phone = models.CharField(
         max_length=50,
