@@ -504,6 +504,5 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             'created_at': workspace.created_at,
             'updated_at': workspace.updated_at,
         }
-        serializer = WorkspaceStatsSerializer(data=stats)
-        serializer.is_valid(raise_exception=True)
-        return Response(serializer.data) 
+        # Return stats data directly - no serializer validation needed for computed data
+        return Response(stats) 

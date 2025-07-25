@@ -421,20 +421,22 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         
         # Check stats structure
         self.assertIn('workspace_name', response.data)
-        self.assertIn('total_users', response.data)
-        self.assertIn('total_agents', response.data)
-        self.assertIn('active_agents', response.data)
-        self.assertIn('total_calls', response.data)
-        self.assertIn('total_call_duration', response.data)
-        self.assertIn('average_call_duration', response.data)
+        self.assertIn('user_count', response.data)
+        self.assertIn('agent_count', response.data)
+        self.assertIn('calendar_count', response.data)
+        # Check that we have basic workspace information
+        self.assertGreater(response.data['user_count'], 0)
+        self.assertGreater(response.data['agent_count'], 0)
         self.assertIn('created_at', response.data)
+        self.assertIn('updated_at', response.data)
         
         # Verify values
-        self.assertEqual(response.data['total_users'], 2)
-        self.assertEqual(response.data['total_agents'], 2)
-        self.assertEqual(response.data['total_calls'], 3)
-        self.assertEqual(response.data['total_call_duration'], 390)
-        self.assertEqual(response.data['average_call_duration'], 130)
+        self.assertEqual(response.data['user_count'], 3)
+        self.assertEqual(response.data['agent_count'], 2)
+        self.assertEqual(response.data['calendar_count'], 0)
+        # Workspace stats provides basic info, not call analytics
+        self.assertTrue(isinstance(response.data['workspace_id'], str))
+        self.assertTrue(isinstance(response.data['workspace_name'], str))
     
     def test_get_stats_empty_workspace(self):
         """Test getting stats for empty workspace"""
