@@ -2,7 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, extend_schema_view
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 from datetime import datetime, timedelta
 
 from core.models import Calendar, CalendarConfiguration
@@ -17,13 +17,55 @@ from .permissions import CalendarPermission, CalendarConfigurationPermission
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List calendars",
-        description="Retrieve a list of calendars (users see only calendars in their workspaces, staff see all)",
+        summary="📅 List calendars",
+        description="""
+        Retrieve calendars based on your workspace access and role.
+        
+        **🔐 Permission Requirements**:
+        - **Regular Users**: Can only see calendars in their workspaces (filtered)
+        - **Staff Members**: Can view all calendars in the system
+        - **Superusers**: Full access to all calendar data
+        
+        **📊 Response Filtering**:
+        - Regular users see only workspace-scoped calendars
+        - Staff/Superusers see all calendars with full configuration
+        
+        **🎯 Use Cases**:
+        - Calendar integration overview
+        - Scheduling resource management
+        - Workspace calendar inventory
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=CalendarSerializer(many=True),
+                description="✅ Successfully retrieved calendars based on access level"
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required - Please login to access calendars")
+        },
         tags=["Calendar Management"]
     ),
     create=extend_schema(
-        summary="Create a new calendar",
-        description="Create a new calendar integration (staff only)",
+        summary="➕ Create calendar integration",
+        description="""
+        Create a new calendar integration for a workspace (Staff only).
+        
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot create calendar integrations
+        - **✅ Staff Members**: Can create calendar integrations
+        - **✅ Superusers**: Can create calendar integrations
+        
+        **📅 Integration Setup**:
+        - Connects external calendar services (Google, Outlook)
+        - Establishes authentication with calendar providers
+        - Enables scheduling and availability checking
+        """,
+        request=CalendarCreateSerializer,
+        responses={
+            201: OpenApiResponse(response=CalendarSerializer, description="✅ Calendar integration created successfully"),
+            400: OpenApiResponse(description="❌ Validation error - Check integration settings"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied - Staff access required")
+        },
         tags=["Calendar Management"]
     ),
     retrieve=extend_schema(
@@ -49,12 +91,12 @@ from .permissions import CalendarPermission, CalendarConfigurationPermission
 )
 class CalendarViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for Calendar model operations
+    📅 **Calendar Integration Management with Workspace-Based Access**
     
-    Provides CRUD operations for calendar integrations:
-    - Users can view calendars in their workspaces
-    - Staff can view all calendars and create/modify them
-    - Superusers can delete calendars
+    Manages calendar integrations with workspace-filtered access:
+    - **👤 Regular Users**: Access only calendars in their workspaces
+    - **👔 Staff**: Full calendar administration across all workspaces
+    - **🔧 Superusers**: Complete calendar control including deletion
     """
     queryset = Calendar.objects.all()
     permission_classes = [CalendarPermission]

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import CallLog, Lead
 
 
@@ -18,7 +19,8 @@ class CallLogSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'timestamp', 'updated_at']
     
-    def get_duration_formatted(self, obj):
+    @extend_schema_field(serializers.CharField)
+    def get_duration_formatted(self, obj) -> str:
         """Format duration in minutes and seconds"""
         minutes = obj.duration // 60
         seconds = obj.duration % 60
@@ -38,10 +40,11 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
 
 class CallLogAnalyticsSerializer(serializers.Serializer):
     """Serializer for call analytics"""
-    total_calls = serializers.IntegerField()
-    total_duration = serializers.IntegerField()
-    average_duration = serializers.FloatField()
-    inbound_calls = serializers.IntegerField()
-    outbound_calls = serializers.IntegerField()
-    successful_calls = serializers.IntegerField()
-    failed_calls = serializers.IntegerField() 
+    total_calls = serializers.IntegerField(read_only=True)
+    calls_today = serializers.IntegerField(read_only=True)
+    calls_this_week = serializers.IntegerField(read_only=True)
+    calls_this_month = serializers.IntegerField(read_only=True)
+    avg_duration = serializers.FloatField(read_only=True)
+    total_duration = serializers.IntegerField(read_only=True)
+    inbound_calls = serializers.IntegerField(read_only=True)
+    outbound_calls = serializers.IntegerField(read_only=True) 

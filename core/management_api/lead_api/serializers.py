@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import Lead
 
 
@@ -14,7 +15,8 @@ class LeadSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_full_name(self, obj):
+    @extend_schema_field(serializers.CharField)
+    def get_full_name(self, obj) -> str:
         """Get the full name of the lead"""
         if obj.surname:
             return f"{obj.name} {obj.surname}"
@@ -64,4 +66,12 @@ class LeadMetaDataUpdateSerializer(serializers.Serializer):
         """Validate that meta_data is a valid JSON object"""
         if not isinstance(value, dict):
             raise serializers.ValidationError("meta_data must be a JSON object")
-        return value 
+        return value
+
+
+class LeadStatsSerializer(serializers.Serializer):
+    """Serializer for lead statistics"""
+    total_leads = serializers.IntegerField(read_only=True)
+    leads_with_calls = serializers.IntegerField(read_only=True)
+    leads_without_calls = serializers.IntegerField(read_only=True)
+    avg_calls_per_lead = serializers.FloatField(read_only=True, allow_null=True) 

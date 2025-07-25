@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import Plan, Feature, PlanFeature
 
 
@@ -41,7 +42,8 @@ class PlanSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def get_feature_count(self, obj):
+    @extend_schema_field(serializers.IntegerField)
+    def get_feature_count(self, obj) -> int:
         """Get the number of features assigned to this plan"""
         return obj.features.count()
 
