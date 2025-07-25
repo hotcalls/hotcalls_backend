@@ -11,14 +11,20 @@ class AgentPermission(permissions.BasePermission):
     """
     
     def has_permission(self, request, view):
-        # Authenticated users can access the API
-        return request.user and request.user.is_authenticated
+        # Authenticated users can access the API for read operations
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        
+        # Write operations (create/update) require staff privileges
+        return (request.user and 
+                request.user.is_authenticated and 
+                request.user.is_staff)
     
     def has_object_permission(self, request, view, obj):
         # Read permissions
         if request.method in permissions.SAFE_METHODS:
             # Users can view agents in their workspaces, staff can view all
-            return (request.user in obj.workspace.mapping_user_workspaces.all() or 
+            return (request.user in obj.workspace.users.all() or 
                    request.user.is_staff)
         
         # Write permissions only for staff

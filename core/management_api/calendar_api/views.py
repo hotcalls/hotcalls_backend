@@ -119,7 +119,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
             return Calendar.objects.all()
         else:
             # Regular users can only see calendars in their workspaces
-            return Calendar.objects.filter(workspace__mapping_user_workspaces=user)
+            return Calendar.objects.filter(workspace__users=user)
     
     @extend_schema(
         summary="Get calendar configurations",
@@ -218,7 +218,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         else:
             # Regular users can only see configurations for calendars in their workspaces
             return CalendarConfiguration.objects.filter(
-                calendar__workspace__mapping_user_workspaces=user
+                calendar__workspace__users=user
             )
     
     @extend_schema(
