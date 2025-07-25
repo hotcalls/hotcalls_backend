@@ -4,7 +4,7 @@ Tests Agent and PhoneNumber operations including phone assignment and configurat
 """
 from rest_framework import status
 from core.tests.base import BaseAPITestCase
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration
+from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice
 import uuid
 from datetime import time
 import json
@@ -21,7 +21,33 @@ class AgentAPITestCase(BaseAPITestCase):
         # Create test workspace and agent
         self.test_workspace = self.create_test_workspace("Test Workspace")
         self.test_workspace.users.add(self.regular_user, self.admin_user, self.staff_user)
-        self.test_agent = self.create_test_agent(self.test_workspace)
+        
+        # Create test voice for agents
+        self.test_voice = Voice.objects.create(
+            voice_external_id='en-US-Standard-A',
+            provider='google'
+        )
+        
+        self.test_agent = self.create_test_agent(self.test_workspace, voice=self.test_voice)
+    
+    def get_agent_data(self, **overrides):
+        """Helper method to get valid agent data"""
+        data = {
+            'workspace': str(self.test_workspace.id),
+            'name': 'Test Agent',
+            'status': 'active',
+            'greeting_inbound': 'Hello, how can I help you today?',
+            'greeting_outbound': 'Hello, this is a sales call.',
+            'voice': str(self.test_voice.id),
+            'language': 'en-US',
+            'retry_interval': 45,
+            'workdays': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+            'call_from': '08:00:00',
+            'call_to': '18:00:00',
+            'character': 'Professional and courteous customer service representative'
+        }
+        data.update(overrides)
+        return data
         
     # ========== AGENT LIST TESTS ==========
     
@@ -57,17 +83,14 @@ class AgentAPITestCase(BaseAPITestCase):
     def test_list_agents_with_search(self):
         """Test searching agents by greeting or character"""
         # Create agent with unique greeting
-        unique_agent = Agent.objects.create(
+        unique_agent = self.create_test_agent(
             workspace=self.test_workspace,
-            greeting="Welcome to our support line",
-            voice="en-US-Standard-A",
-            language="en-US",
-            retry_interval=30,
-            workdays=["monday", "tuesday"],
-            call_from=time(9, 0),
-            call_to=time(17, 0),
-            character="Friendly support agent"
+            name="Support Agent",
+            voice=self.test_voice
         )
+        unique_agent.greeting_inbound = "Welcome to our support line"
+        unique_agent.character = "Friendly support agent"
+        unique_agent.save()
         
         response = self.user_client.get(f"{self.agents_url}?search=support")
         self.assert_response_success(response)
@@ -78,37 +101,20 @@ class AgentAPITestCase(BaseAPITestCase):
     
     def test_create_agent_as_admin(self):
         """Test admin can create agents"""
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Hello, how can I help you today?',
-            'voice': 'en-US-Wavenet-A',
-            'language': 'en-US',
-            'retry_interval': 45,
-            'workdays': ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-            'call_from': '08:00:00',
-            'call_to': '18:00:00',
-            'character': 'Professional and courteous customer service representative'
-        }
+        agent_data = self.get_agent_data(name='Admin Created Agent')
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['greeting'], agent_data['greeting'])
+        self.assertEqual(response.data['name'], 'Admin Created Agent')
+        self.assertEqual(response.data['status'], 'active')
+        self.assertEqual(response.data['greeting_inbound'], agent_data['greeting_inbound'])
+        self.assertEqual(response.data['greeting_outbound'], agent_data['greeting_outbound'])
         self.assertEqual(response.data['retry_interval'], 45)
-        self.assertTrue(Agent.objects.filter(greeting=agent_data['greeting']).exists())
+        self.assertTrue(Agent.objects.filter(name='Admin Created Agent').exists())
     
     def test_create_agent_as_regular_user(self):
         """Test regular user cannot create agents"""
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Unauthorized agent',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday'],
-            'call_from': '09:00:00',
-            'call_to': '17:00:00',
-            'character': 'Test character'
-        }
+        agent_data = self.get_agent_data(name='Unauthorized Agent')
         
         response = self.user_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
@@ -118,48 +124,28 @@ class AgentAPITestCase(BaseAPITestCase):
         # Missing required fields
         response = self.admin_client.post(self.agents_url, {}, format='json')
         self.assert_validation_error(response)
-        required_fields = ['workspace', 'greeting', 'voice', 'language', 
-                          'workdays', 'call_from', 'call_to', 'character']
+        required_fields = ['workspace', 'name', 'greeting_inbound', 'greeting_outbound', 
+                          'language', 'call_from', 'call_to', 'character']
         for field in required_fields:
-            if field in ['workspace', 'greeting', 'voice', 'language', 'call_from', 'call_to', 'character']:
-                self.assertIn(field, response.data)
+            self.assertIn(field, response.data)
         
         # Invalid time format
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Test greeting',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday'],
-            'call_from': 'invalid-time',
-            'call_to': '17:00:00',
-            'character': 'Test character'
-        }
+        agent_data = self.get_agent_data(call_from='invalid-time')
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_validation_error(response)
         self.assertIn('call_from', response.data)
         
         # Invalid workdays
-        agent_data['call_from'] = '09:00:00'
-        agent_data['workdays'] = ['invalid-day']
+        agent_data = self.get_agent_data(workdays=['invalid-day'])
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_validation_error(response)
     
     def test_create_agent_with_config_id(self):
         """Test creating agent with config_id"""
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Hello!',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday', 'tuesday'],
-            'call_from': '09:00:00',
-            'call_to': '17:00:00',
-            'character': 'Helpful assistant',
-            'config_id': 'test-config-123'
-        }
+        agent_data = self.get_agent_data(
+            name='Agent with Config',
+            config_id='test-config-123'
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
@@ -171,22 +157,14 @@ class AgentAPITestCase(BaseAPITestCase):
         calendar = self.create_test_calendar(self.test_workspace)
         cal_config = self.create_test_calendar_configuration(calendar)
         
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Hello!',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday', 'tuesday'],
-            'call_from': '09:00:00',
-            'call_to': '17:00:00',
-            'character': 'Helpful assistant',
-            'calendar_configuration': str(cal_config.id)
-        }
+        agent_data = self.get_agent_data(
+            name='Agent with Calendar',
+            calendar_configuration=str(cal_config.id)
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
-        self.assertEqual(str(response.data['calendar_configuration']), str(str(cal_config.id)))
+        self.assertEqual(str(response.data['calendar_configuration']), str(cal_config.id))
     
     # ========== AGENT RETRIEVE TESTS ==========
     
@@ -195,7 +173,10 @@ class AgentAPITestCase(BaseAPITestCase):
         response = self.user_client.get(f"{self.agents_url}{self.test_agent.agent_id}/")
         self.assert_response_success(response)
         self.assertEqual(response.data['agent_id'], str(self.test_agent.agent_id))
-        self.assertEqual(str(response.data['greeting']), str(self.test_agent.greeting))
+        self.assertEqual(response.data['name'], self.test_agent.name)
+        self.assertEqual(response.data['status'], self.test_agent.status)
+        self.assertEqual(response.data['greeting_inbound'], self.test_agent.greeting_inbound)
+        self.assertEqual(response.data['greeting_outbound'], self.test_agent.greeting_outbound)
         self.assertIn('created_at', response.data)
         self.assertIn('updated_at', response.data)
     
@@ -212,19 +193,23 @@ class AgentAPITestCase(BaseAPITestCase):
         response = self.admin_client.patch(
             f"{self.agents_url}{self.test_agent.agent_id}/",
             {
-                'greeting': 'Updated greeting message',
+                'name': 'Updated Agent Name',
+                'greeting_inbound': 'Updated inbound greeting',
+                'greeting_outbound': 'Updated outbound greeting',
                 'retry_interval': 60
             },
             format='json'
         )
         self.assert_response_success(response)
-        self.assertEqual(response.data['greeting'], 'Updated greeting message')
+        self.assertEqual(response.data['name'], 'Updated Agent Name')
+        self.assertEqual(response.data['greeting_inbound'], 'Updated inbound greeting')
+        self.assertEqual(response.data['greeting_outbound'], 'Updated outbound greeting')
         self.assertEqual(response.data['retry_interval'], 60)
     
     def test_update_agent_as_regular_user(self):
         """Test regular user cannot update agents"""
         response = self.user_client.patch(
-            f"{self.agents_url}{self.test_agent.agent_id}/", {'greeting': 'Hacked greeting'}, format='json'
+            f"{self.agents_url}{self.test_agent.agent_id}/", {'name': 'Hacked name'}, format='json'
         )
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
@@ -437,8 +422,13 @@ class AgentAPITestCase(BaseAPITestCase):
         # Check config structure
         self.assertIn('agent_id', response.data)
         self.assertIn('workspace', response.data)
-        self.assertIn('greeting', response.data)
+        self.assertIn('name', response.data)
+        self.assertIn('status', response.data)
+        self.assertIn('greeting_inbound', response.data)
+        self.assertIn('greeting_outbound', response.data)
         self.assertIn('voice', response.data)
+        self.assertIn('voice_provider', response.data)
+        self.assertIn('voice_external_id', response.data)
         self.assertIn('language', response.data)
         self.assertIn('retry_interval', response.data)
         self.assertIn('workdays', response.data)
@@ -535,17 +525,15 @@ class AgentAPITestCase(BaseAPITestCase):
         """Test creating agent with all weekdays"""
         all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': 'Available every day!',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': all_days,
-            'call_from': '00:00:00',
-            'call_to': '23:59:59',
-            'character': '24/7 support agent'
-        }
+        agent_data = self.get_agent_data(
+            name='24/7 Agent',
+            greeting_inbound='Available every day for inbound!',
+            greeting_outbound='Available every day for outbound!',
+            workdays=all_days,
+            call_from='00:00:00',
+            call_to='23:59:59',
+            character='24/7 support agent'
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
@@ -553,25 +541,22 @@ class AgentAPITestCase(BaseAPITestCase):
     
     def test_agent_with_very_long_text_fields(self):
         """Test creating agent with very long text fields"""
-        long_greeting = "Hello! " * 100  # Very long greeting
+        long_greeting_inbound = "Hello inbound! " * 100  # Very long greeting
+        long_greeting_outbound = "Hello outbound! " * 100  # Very long greeting
         long_character = "Professional " * 100  # Very long character description
         
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': long_greeting,
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday'],
-            'call_from': '09:00:00',
-            'call_to': '17:00:00',
-            'character': long_character
-        }
+        agent_data = self.get_agent_data(
+            name='Long Text Agent',
+            greeting_inbound=long_greeting_inbound,
+            greeting_outbound=long_greeting_outbound,
+            character=long_character
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
         # Compare trimmed versions to handle potential whitespace differences
-        self.assertEqual(response.data['greeting'].strip(), long_greeting.strip())
+        self.assertEqual(response.data['greeting_inbound'].strip(), long_greeting_inbound.strip())
+        self.assertEqual(response.data['greeting_outbound'].strip(), long_greeting_outbound.strip())
         self.assertEqual(response.data['character'].strip(), long_character.strip())
     
     def test_phone_number_formats(self):
@@ -593,54 +578,46 @@ class AgentAPITestCase(BaseAPITestCase):
     
     def test_agent_with_multiple_languages(self):
         """Test agents with different languages"""
-        languages = [
-            ('en-US', 'en-US-Standard-A'),
-            ('es-ES', 'es-ES-Standard-A'),
-            ('fr-FR', 'fr-FR-Standard-A'),
-            ('de-DE', 'de-DE-Standard-A'),
-            ('ja-JP', 'ja-JP-Standard-A')
-        ]
+        languages = ['en-US', 'es-ES', 'fr-FR', 'de-DE', 'ja-JP']
         
-        for lang, voice in languages:
-            agent_data = {
-                'workspace': str(self.test_workspace.id),
-                'greeting': f'Hello in {lang}',
-                'voice': voice,
-                'language': lang,
-                'retry_interval': 30,
-                'workdays': ['monday'],
-                'call_from': '09:00:00',
-                'call_to': '17:00:00',
-                'character': f'Agent speaking {lang}'
-            }
+        for i, lang in enumerate(languages):
+            agent_data = self.get_agent_data(
+                name=f'Agent {lang}',
+                greeting_inbound=f'Hello inbound in {lang}',
+                greeting_outbound=f'Hello outbound in {lang}',
+                language=lang,
+                character=f'Agent speaking {lang}'
+            )
             
             response = self.admin_client.post(self.agents_url, agent_data, format='json')
             self.assert_response_success(response, status.HTTP_201_CREATED)
             self.assertEqual(response.data['language'], lang)
-            self.assertEqual(response.data['voice'], voice)
+            # Voice should be our test_voice UUID, not a string
+            self.assertEqual(str(response.data['voice']), str(self.test_voice.id))
     
     def test_agent_time_edge_cases(self):
         """Test agent with edge case times"""
         # Midnight to midnight (24 hour agent)
-        agent_data = {
-            'workspace': str(self.test_workspace.id),
-            'greeting': '24 hour service',
-            'voice': 'en-US-Standard-A',
-            'language': 'en-US',
-            'retry_interval': 30,
-            'workdays': ['monday'],
-            'call_from': '00:00:00',
-            'call_to': '23:59:59',
-            'character': 'Always available'
-        }
+        agent_data = self.get_agent_data(
+            name='24 Hour Agent',
+            greeting_inbound='24 hour inbound service',
+            greeting_outbound='24 hour outbound service',
+            call_from='00:00:00',
+            call_to='23:59:59',
+            character='Always available'
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
         
         # Same start and end time
-        agent_data['call_from'] = '12:00:00'
-        agent_data['call_to'] = '12:00:00'
-        agent_data['greeting'] = 'Same time agent'
+        agent_data = self.get_agent_data(
+            name='Same Time Agent',
+            greeting_inbound='Same time inbound',
+            greeting_outbound='Same time outbound',
+            call_from='12:00:00',
+            call_to='12:00:00'
+        )
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)

@@ -89,15 +89,35 @@ class BaseAPITestCase(TestCase):
             workspace.users.set(users)
         return workspace
     
-    def create_test_agent(self, workspace=None):
+    def create_test_voice(self, provider="openai", voice_external_id=None):
+        """Create a test voice"""
+        from core.models import Voice
+        if not voice_external_id:
+            voice_external_id = f"voice-{uuid.uuid4().hex[:8]}"
+        
+        return Voice.objects.create(
+            provider=provider,
+            voice_external_id=voice_external_id
+        )
+    
+    def create_test_agent(self, workspace=None, name=None, voice=None):
         """Create a test agent"""
         if not workspace:
             workspace = self.create_test_workspace()
         
+        if not name:
+            name = f"Test Agent {uuid.uuid4().hex[:6]}"
+        
+        if voice is None:
+            voice = self.create_test_voice()
+        
         return Agent.objects.create(
             workspace=workspace,
-            greeting="Hello, this is a test agent",
-            voice="en-US-Standard-A",
+            name=name,
+            status='active',
+            greeting_inbound="Hello, this is a test agent for inbound calls",
+            greeting_outbound="Hello, this is a test agent for outbound calls", 
+            voice=voice,
             language="en-US",
             retry_interval=30,
             workdays=["monday", "tuesday", "wednesday", "thursday", "friday"],

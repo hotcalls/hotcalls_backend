@@ -8,10 +8,24 @@ class AgentFilter(django_filters.FilterSet):
     
     # Text search filters
     search = django_filters.CharFilter(method='filter_search', label='Search')
-    voice = django_filters.CharFilter(lookup_expr='icontains')
+    
+    # NEW: Name and status filters
+    name = django_filters.CharFilter(lookup_expr='icontains')
+    status = django_filters.ChoiceFilter(choices=[('active', 'Active'), ('paused', 'Paused')])
+    
+    # NEW: Greeting filters  
+    greeting_inbound = django_filters.CharFilter(lookup_expr='icontains')
+    greeting_outbound = django_filters.CharFilter(lookup_expr='icontains')
+    
+    # UPDATED: Voice filters (now FK to Voice model)
+    voice = django_filters.UUIDFilter(field_name='voice__id')
+    voice_provider = django_filters.CharFilter(field_name='voice__provider', lookup_expr='iexact')
+    voice_external_id = django_filters.CharFilter(field_name='voice__voice_external_id', lookup_expr='icontains')
+    has_voice = django_filters.BooleanFilter(method='filter_has_voice')
+    
+    # EXISTING: Other filters
     language = django_filters.CharFilter(lookup_expr='icontains')
     character = django_filters.CharFilter(lookup_expr='icontains')
-    greeting = django_filters.CharFilter(lookup_expr='icontains')
     config_id = django_filters.CharFilter(lookup_expr='icontains')
     
     # Workspace filters
@@ -43,17 +57,26 @@ class AgentFilter(django_filters.FilterSet):
     
     class Meta:
         model = Agent
-        fields = ['workspace', 'voice', 'language', 'retry_interval']
+        fields = ['workspace', 'name', 'status', 'voice', 'language', 'retry_interval']
     
     def filter_search(self, queryset, name, value):
         """Global search across multiple fields"""
         return queryset.filter(
-            models.Q(voice__icontains=value) |
+            models.Q(name__icontains=value) |
             models.Q(language__icontains=value) |
             models.Q(character__icontains=value) |
-            models.Q(greeting__icontains=value) |
-            models.Q(workspace__workspace_name__icontains=value)
+            models.Q(greeting_inbound__icontains=value) |
+            models.Q(greeting_outbound__icontains=value) |
+            models.Q(workspace__workspace_name__icontains=value) |
+            models.Q(voice__provider__icontains=value) |
+            models.Q(voice__voice_external_id__icontains=value)
         )
+    
+    def filter_has_voice(self, queryset, name, value):
+        """Filter agents that have/don't have a voice assigned"""
+        if value:
+            return queryset.filter(voice__isnull=False)
+        return queryset.filter(voice__isnull=True)
     
     def filter_has_phone_number(self, queryset, name, value):
         """Filter agents that have a specific phone number"""
