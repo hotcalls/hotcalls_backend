@@ -324,9 +324,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
             'outbound_calls': next((item['count'] for item in direction_stats if item['direction'] == 'outbound'), 0),
         }
         
-        serializer = CallLogAnalyticsSerializer(data=analytics_data)
-        serializer.is_valid(raise_exception=True)
-        return Response(serializer.data)
+        # Return analytics data directly - no serializer validation needed for computed data
+        return Response(analytics_data)
     
     @extend_schema(
         summary="📅 Get daily call statistics",

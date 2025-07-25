@@ -19,6 +19,12 @@ class CallLogSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'timestamp', 'updated_at']
     
+    def validate_duration(self, value):
+        """Validate duration is not negative"""
+        if value < 0:
+            raise serializers.ValidationError("Duration cannot be negative")
+        return value
+    
     @extend_schema_field(serializers.CharField)
     def get_duration_formatted(self, obj) -> str:
         """Format duration in minutes and seconds"""
@@ -36,6 +42,12 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             'lead', 'from_number', 'to_number', 'duration',
             'disconnection_reason', 'direction'
         ]
+    
+    def validate_duration(self, value):
+        """Validate duration is not negative"""
+        if value < 0:
+            raise serializers.ValidationError("Duration cannot be negative")
+        return value
 
 
 class CallLogAnalyticsSerializer(serializers.Serializer):
