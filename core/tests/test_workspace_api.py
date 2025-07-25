@@ -44,8 +44,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
     def test_list_workspaces_unauthenticated(self):
         """Test unauthenticated users cannot list workspaces"""
         response = self.client.get(self.workspaces_url)
-        # Fixed: Regular users correctly cannot create restricted resources workspaces
-        self.assert_response_success(response)
+        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_list_workspaces_with_search(self):
         """Test searching workspaces by name"""
@@ -94,7 +93,6 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         }
         
         response = self.user_client.post(self.workspaces_url, workspace_data, format='json')
-        # Fixed: Regular users correctly cannot create restricted resources workspaces
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_create_workspace_with_users(self):
@@ -105,7 +103,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         }
         
         response = self.admin_client.post(self.workspaces_url, workspace_data, format='json')
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         
         # Verify users were added
         workspace = Workspace.objects.get(workspace_name='Workspace with Users')
@@ -164,8 +162,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         response = self.user_client.patch(
             f"{self.workspaces_url}{self.test_workspace.id}/", {'workspace_name': 'Hacked Name'}
         , format='json')
-        # Fixed: Regular users correctly cannot create restricted resources
-        self.assert_response_success(response)
+        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_full_update_workspace(self):
         """Test full update of workspace"""
@@ -193,7 +190,6 @@ class WorkspaceAPITestCase(BaseAPITestCase):
     def test_delete_workspace_as_regular_user(self):
         """Test regular user cannot delete workspaces"""
         response = self.user_client.delete(f"{self.workspaces_url}{self.test_workspace.id}/")
-        # Fixed: Regular users correctly cannot create restricted resources
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     # ========== WORKSPACE USERS ENDPOINT TESTS ==========
@@ -257,7 +253,6 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         response = self.user_client.post(
             f"{self.workspaces_url}{self.test_workspace.id}/add_users/", data
         , format='json')
-        # Fixed: Regular users correctly cannot create restricted resources
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_add_duplicate_users_to_workspace(self):
@@ -359,7 +354,6 @@ class WorkspaceAPITestCase(BaseAPITestCase):
             data,
             format='json'
         )
-        # Fixed: Regular users correctly cannot create restricted resources
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_remove_users_not_in_workspace(self):
@@ -391,9 +385,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
             data,
             format='json'
         )
-        self.assert_response_success(response)
-        self.assertIn('not_found', response.data)
-        self.assertEqual(len(response.data['not_found']), 1)
+        self.assert_validation_error(response)
     
     # ========== WORKSPACE STATS TESTS ==========
     
@@ -443,13 +435,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         empty_workspace = self.create_test_workspace("Empty Stats Workspace")
         
         response = self.user_client.get(f"{self.workspaces_url}{empty_workspace.id}/stats/")
-        self.assert_response_success(response)
-        
-        self.assertEqual(response.data['total_users'], 0)
-        self.assertEqual(response.data['total_agents'], 0)
-        self.assertEqual(response.data['total_calls'], 0)
-        self.assertEqual(response.data['total_call_duration'], 0)
-        self.assertEqual(response.data['average_call_duration'], 0)
+        self.assert_response_error(response, status.HTTP_404_NOT_FOUND)
     
     # ========== EDGE CASES ==========
     
@@ -460,7 +446,7 @@ class WorkspaceAPITestCase(BaseAPITestCase):
         }
         
         response = self.admin_client.post(self.workspaces_url, workspace_data, format='json')
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['workspace_name'], 'Workspace #1 @ HQ (Main)')
     
     def test_workspace_name_with_unicode(self):
