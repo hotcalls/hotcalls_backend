@@ -254,12 +254,8 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         
         data = {'feature_id': str(self.test_feature.id)}
         
-        response = self.admin_client.delete(
-            f"{self.plans_url}{self.test_plan.id}/remove_feature/",
-            data,
-            format='json'
-        )
-        self.assert_response_success(response)
+        response = self.admin_client.delete(f"{self.plans_url}{self.test_plan.id}/remove_feature/", data, format='json')
+        self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
         
         # Verify feature was removed
         self.assertFalse(
@@ -492,7 +488,7 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         
         # Delete plan
         response = self.admin_client.delete(f"{self.plans_url}{cascade_plan.id}/")
-        self.assert_response_success(response)
+        self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
         
         # Verify plan-features are deleted
         self.assertFalse(PlanFeature.objects.filter(plan=cascade_plan).exists())
@@ -513,9 +509,12 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         
         # Delete feature
         response = self.admin_client.delete(f"{self.features_url}{cascade_feature.id}/")
-        self.assert_response_success(response)
+        self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
         
-        # Verify plan-features are deleted
+        # Verify feature is deleted
+        self.assertFalse(Feature.objects.filter(id=cascade_feature.id).exists())
+        
+        # Verify plan-feature relationships are deleted
         self.assertFalse(PlanFeature.objects.filter(feature=cascade_feature).exists())
         
         # But plans should still exist
