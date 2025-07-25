@@ -51,11 +51,15 @@ class WorkspaceAdmin(admin.ModelAdmin):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'voice', 'language', 'phone_number', 'created_at')
+    list_display = ('agent_id', 'workspace', 'voice', 'language', 'get_phone_numbers', 'created_at')
     list_filter = ('voice', 'language', 'created_at')
-    search_fields = ('workspace__workspace_name', 'phone_number', 'voice')
+    search_fields = ('workspace__workspace_name', 'voice')
     filter_horizontal = ('phone_numbers',)
     ordering = ('-created_at',)
+    
+    def get_phone_numbers(self, obj):
+        return ", ".join([phone.phonenumber for phone in obj.phone_numbers.all()])
+    get_phone_numbers.short_description = 'Phone Numbers'
 
 
 @admin.register(PhoneNumber)
@@ -66,7 +70,7 @@ class PhoneNumberAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     
     def get_agents(self, obj):
-        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.agents.all()])
+        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.mapping_agent_phonenumbers.all()])
     get_agents.short_description = 'Agents'
 
 

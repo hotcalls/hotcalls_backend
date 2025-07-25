@@ -81,7 +81,7 @@ class Feature(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     feature_name = models.CharField(max_length=100)
     limit = models.IntegerField(help_text="Feature limit for this plan")
-    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name='features')
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name='mapping_plan_features')
     created_at = models.DateTimeField(auto_now_add=True)
     
     
@@ -94,7 +94,7 @@ class Workspace(models.Model):
     """Workspaces that users can belong to"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace_name = models.CharField(max_length=255)
-    users = models.ManyToManyField(User, related_name='workspaces')
+    users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -105,7 +105,7 @@ class Workspace(models.Model):
 class Agent(models.Model):
     """AI agents for each workspace"""
     agent_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='agents')
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='mapping_workspace_agents')
     greeting = models.TextField(help_text="Agent greeting message")
     voice = models.CharField(max_length=255, help_text="Voice setting for the agent")
     language = models.CharField(max_length=50, help_text="Agent language")
@@ -126,7 +126,7 @@ class Agent(models.Model):
         blank=True,
         help_text="Configuration ID for agent settings"
     )
-    phone_numbers = models.ManyToManyField('PhoneNumber', related_name='agents', blank=True)
+    phone_numbers = models.ManyToManyField('PhoneNumber', related_name='mapping_agent_phonenumbers', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -153,10 +153,10 @@ class Lead(models.Model):
     """Leads that agents will call"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    status = models.CharField(max_length=50, help_text="Lead status")
+    surname = models.CharField(max_length=255, help_text="Lead surname")
     email = models.EmailField()
     phone = models.CharField(
-        max_length=17,
+        max_length=50,
         help_text="Lead's phone number"
     )
     created_at = models.DateTimeField(auto_now_add=True)
@@ -173,7 +173,7 @@ class Lead(models.Model):
 class Blacklist(models.Model):
     """Blacklisted users"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='blacklist')
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='mapping_user_blacklist')
     reason = models.TextField(help_text="Reason for blacklisting")
     status = models.CharField(
         max_length=20, 
@@ -190,7 +190,7 @@ class Blacklist(models.Model):
 class CallLog(models.Model):
     """Call logs for tracking all calls"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='call_logs')
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs')
     timestamp = models.DateTimeField(auto_now_add=True)
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")
