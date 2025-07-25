@@ -41,6 +41,8 @@ STATIC_URL = os.environ.get("STATIC_URL", "static/")
 STATIC_ROOT = BASE_DIR / "staticfiles"
 ROOT_URLCONF = "hotcalls.urls"
 
+# Custom User Model
+AUTH_USER_MODEL = 'core.User'
 
 INSTALLED_APPS = [
     "django.contrib.admin",
