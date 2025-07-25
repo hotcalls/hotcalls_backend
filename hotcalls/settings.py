@@ -56,8 +56,7 @@ INSTALLED_APPS = [
     "core",
     "django_celery_beat",
     "drf_yasg",
-    # DRF and API packages
-    'rest_framework',
+    # Additional DRF packages
     'drf_spectacular',
     'django_filters',
 ]
