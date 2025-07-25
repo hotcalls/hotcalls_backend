@@ -38,14 +38,15 @@ def health_check(request):
 
 # Define main URL patterns to be used for both actual routing and swagger documentation
 api_url_patterns = [
-    path('api/v1/voice/', include('core.voice_api.urls')),
-    path('api/v1/frontend/', include('core.frontend_api.urls')),
-    path('api/v1/widget/', include('core.widget_api.urls')),
-    path('api/v1/management/', include('core.management_api.urls')),
-    path('api/v1/checkin/', include('core.checkin_api.urls')),
-    path('api/v1/ppc/', include('core.ppc_api.urls')),
-    path('api/v1/prc/', include('core.prc_api.urls')),
-    path('api/v1/patients/', include('patients.urls')),  # Add patients app URLs
+    # TODO: Uncomment these when the corresponding URL files are created
+    # path('api/v1/voice/', include('core.voice_api.urls')),
+    # path('api/v1/frontend/', include('core.frontend_api.urls')),
+    # path('api/v1/widget/', include('core.widget_api.urls')),
+    # path('api/v1/management/', include('core.management_api.urls')),
+    # path('api/v1/checkin/', include('core.checkin_api.urls')),
+    # path('api/v1/ppc/', include('core.ppc_api.urls')),
+    # path('api/v1/prc/', include('core.prc_api.urls')),
+    # path('api/v1/patients/', include('patients.urls')),  # Add patients app URLs
 ]
 
 # Swagger/OpenAPI documentation setup
