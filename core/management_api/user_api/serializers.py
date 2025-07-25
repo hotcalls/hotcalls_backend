@@ -28,10 +28,26 @@ class UserCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         password = validated_data.pop('password')
+        
+        # SECURITY: Force all public registrations to be basic users only
+        validated_data['is_staff'] = False
+        validated_data['is_superuser'] = False
+        validated_data['is_active'] = True
+        validated_data['status'] = 'active'
+        
         user = User.objects.create_user(**validated_data)
         user.set_password(password)
         user.save()
         return user
+    
+    def validate(self, attrs):
+        """Ensure no one can set privileged fields during registration"""
+        # Remove any attempt to set privileged fields
+        forbidden_fields = ['is_staff', 'is_superuser', 'is_active', 'status', 'groups', 'user_permissions']
+        for field in forbidden_fields:
+            if field in attrs:
+                attrs.pop(field)
+        return attrs
 
 
 class UserUpdateSerializer(serializers.ModelSerializer):
@@ -43,6 +59,22 @@ class UserUpdateSerializer(serializers.ModelSerializer):
             'first_name', 'last_name', 'email', 'phone', 
             'stripe_customer_id', 'status', 'social_id', 'social_provider'
         ]
+    
+    def validate(self, attrs):
+        """Validate user update based on permissions"""
+        request = self.context.get('request')
+        if request and not request.user.is_staff:
+            # Non-staff users cannot change status
+            if 'status' in attrs:
+                attrs.pop('status')
+        
+        # No one can set staff/superuser through this serializer
+        forbidden_fields = ['is_staff', 'is_superuser', 'groups', 'user_permissions']
+        for field in forbidden_fields:
+            if field in attrs:
+                attrs.pop(field)
+        
+        return attrs
 
 
 class BlacklistSerializer(serializers.ModelSerializer):
@@ -62,6 +94,26 @@ class BlacklistSerializer(serializers.ModelSerializer):
 class UserStatusChangeSerializer(serializers.Serializer):
     """Serializer for changing user status"""
     status = serializers.ChoiceField(choices=User._meta.get_field('status').choices)
+
+
+class AdminUserCreateSerializer(serializers.ModelSerializer):
+    """Admin-only serializer for creating users with elevated privileges"""
+    password = serializers.CharField(write_only=True, min_length=8)
+    
+    class Meta:
+        model = User
+        fields = [
+            'username', 'first_name', 'last_name', 'email', 'phone',
+            'password', 'is_staff', 'is_superuser', 'is_active', 'status',
+            'social_id', 'social_provider'
+        ]
+    
+    def create(self, validated_data):
+        password = validated_data.pop('password')
+        user = User.objects.create_user(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
 
 
 class BlacklistCreateSerializer(serializers.ModelSerializer):
