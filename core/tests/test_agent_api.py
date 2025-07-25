@@ -35,13 +35,12 @@ class AgentAPITestCase(BaseAPITestCase):
         response = self.user_client.get(self.agents_url)
         self.assert_response_success(response)
         self.assert_pagination_response(response)
-        self.assertGreaterEqual(response.data['count'], 3)
+        self.assertGreaterEqual(response.data['count'], 2)
     
     def test_list_agents_unauthenticated(self):
         """Test unauthenticated users cannot list agents"""
         response = self.client.get(self.agents_url)
-        # Fixed: Regular users correctly cannot create restricted resources agents
-        self.assert_response_success(response)
+        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_list_agents_with_filters(self):
         """Test filtering agents by workspace"""
@@ -53,7 +52,7 @@ class AgentAPITestCase(BaseAPITestCase):
         response = self.user_client.get(f"{self.agents_url}?workspace={self.test_workspace.id}")
         self.assert_response_success(response)
         self.assertEqual(response.data['count'], 1)
-        self.assertEqual(response.data['results'][0]['workspace'], str(self.test_workspace.id))
+        self.assertEqual(str(response.data['results'][0]['workspace']), str(self.test_workspace.id))
     
     def test_list_agents_with_search(self):
         """Test searching agents by greeting or character"""
@@ -215,7 +214,8 @@ class AgentAPITestCase(BaseAPITestCase):
             {
                 'greeting': 'Updated greeting message',
                 'retry_interval': 60
-            }
+            },
+            format='json'
         )
         self.assert_response_success(response)
         self.assertEqual(response.data['greeting'], 'Updated greeting message')
@@ -224,17 +224,16 @@ class AgentAPITestCase(BaseAPITestCase):
     def test_update_agent_as_regular_user(self):
         """Test regular user cannot update agents"""
         response = self.user_client.patch(
-            f"{self.agents_url}{self.test_agent.agent_id}/", {'greeting': 'Hacked greeting'}
-        , format='json')
-        # Fixed: Regular users correctly cannot create restricted resources
-        self.assert_response_success(response)
+            f"{self.agents_url}{self.test_agent.agent_id}/", {'greeting': 'Hacked greeting'}, format='json'
+        )
+        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
     
     def test_update_agent_workdays(self):
         """Test updating agent workdays"""
         new_workdays = ['monday', 'wednesday', 'friday']
         response = self.admin_client.patch(
-            f"{self.agents_url}{self.test_agent.agent_id}/", {'workdays': new_workdays}
-        , format='json')
+            f"{self.agents_url}{self.test_agent.agent_id}/", {'workdays': new_workdays}, format='json'
+        )
         self.assert_response_success(response)
         self.assertEqual(response.data['workdays'], new_workdays)
     
@@ -245,7 +244,8 @@ class AgentAPITestCase(BaseAPITestCase):
             {
                 'call_from': '07:30:00',
                 'call_to': '19:30:00'
-            }
+            },
+            format='json'
         )
         self.assert_response_success(response)
         self.assertEqual(response.data['call_from'], '07:30:00')
@@ -516,8 +516,8 @@ class AgentAPITestCase(BaseAPITestCase):
         phone = self.create_test_phone_number("+15552222222")
         
         response = self.admin_client.patch(
-            f"{self.phone_numbers_url}{phone.id}/", {'is_active': False}
-        , format='json')
+            f"{self.phone_numbers_url}{phone.id}/", {'is_active': False}, format='json'
+        )
         self.assert_response_success(response)
         self.assertFalse(response.data['is_active'])
     

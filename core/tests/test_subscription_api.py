@@ -439,16 +439,15 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         new_feature = self.create_test_feature("Negative Limit Feature")
         
         data = {
-            'feature_id': str(new_feature.id),
+            'feature': str(new_feature.id),
             'limit': -10
         }
         
         response = self.admin_client.post(
-            f"{self.plans_url}{self.test_plan.id}/add_feature/", data
-        , format='json')
+            f"{self.plans_url}{self.test_plan.id}/add_feature/", data, format='json'
+        )
         # Should allow negative values (might mean unlimited)
-        # TODO: Regular users might be able to create plan features
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['limit'], -10)
     
     def test_zero_limit_value(self):
@@ -456,15 +455,14 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         new_feature = self.create_test_feature("Zero Limit Feature")
         
         data = {
-            'feature_id': str(new_feature.id),
+            'feature': str(new_feature.id),
             'limit': 0
         }
         
         response = self.admin_client.post(
-            f"{self.plans_url}{self.test_plan.id}/add_feature/", data
-        , format='json')
-        # TODO: Regular users might be able to create plan features
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+            f"{self.plans_url}{self.test_plan.id}/add_feature/", data, format='json'
+        )
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['limit'], 0)
     
     def test_very_large_limit_value(self):
@@ -472,15 +470,14 @@ class SubscriptionAPITestCase(BaseAPITestCase):
         new_feature = self.create_test_feature("Large Limit Feature")
         
         data = {
-            'feature_id': str(new_feature.id),
+            'feature': str(new_feature.id),
             'limit': 2147483647  # Max int value
         }
         
         response = self.admin_client.post(
-            f"{self.plans_url}{self.test_plan.id}/add_feature/", data
-        , format='json')
-        # TODO: Regular users might be able to create plan features
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+            f"{self.plans_url}{self.test_plan.id}/add_feature/", data, format='json'
+        )
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['limit'], 2147483647)
     
     def test_cascade_delete_plan(self):
