@@ -125,18 +125,54 @@ class BaseAPITestCase(TestCase):
             meta_data={"source": "test", "tags": ["test"]}
         )
     
-    def create_test_call_log(self, lead=None, duration=120):
-        """Create a test call log"""
+    def create_test_call_log(self, lead=None, agent=None, duration=120, **kwargs):
+        """Create a test call log with required agent field"""
         if not lead:
             lead = self.create_test_lead()
         
-        return CallLog.objects.create(
+        if not agent:
+            # Create a default workspace and agent for the call log
+            workspace = self.create_test_workspace()
+            agent = self.create_test_agent(workspace)
+        
+        call_data = {
+            'lead': lead,
+            'agent': agent,
+            'from_number': kwargs.get('from_number', "+15551234567"),
+            'to_number': kwargs.get('to_number', lead.phone),
+            'duration': duration,
+            'direction': kwargs.get('direction', "outbound"),
+            'disconnection_reason': kwargs.get('disconnection_reason', "completed"),
+            'status': kwargs.get('status'),
+            'appointment_datetime': kwargs.get('appointment_datetime')
+        }
+        
+        return CallLog.objects.create(**call_data)
+    
+    def create_test_call_log_with_appointment(self, lead=None, agent=None, appointment_datetime=None):
+        """Create a test call log with an appointment scheduled"""
+        if not appointment_datetime:
+            from django.utils import timezone
+            appointment_datetime = timezone.now() + timedelta(days=1)
+        
+        return self.create_test_call_log(
             lead=lead,
-            from_number="+15551234567",
-            to_number=lead.phone,
-            duration=duration,
-            direction="outbound",
-            disconnection_reason="completed"
+            agent=agent,
+            status='appointment_scheduled',
+            appointment_datetime=appointment_datetime
+        )
+    
+    def create_test_call_log_with_status(self, status, lead=None, agent=None, **kwargs):
+        """Create a test call log with a specific status"""
+        if status == 'appointment_scheduled' and 'appointment_datetime' not in kwargs:
+            from django.utils import timezone
+            kwargs['appointment_datetime'] = timezone.now() + timedelta(days=1)
+        
+        return self.create_test_call_log(
+            lead=lead,
+            agent=agent,
+            status=status,
+            **kwargs
         )
     
     def create_test_calendar(self, workspace=None):
