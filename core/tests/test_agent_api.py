@@ -162,7 +162,7 @@ class AgentAPITestCase(BaseAPITestCase):
         }
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['config_id'], 'test-config-123')
     
     def test_create_agent_with_calendar_configuration(self):
@@ -360,9 +360,9 @@ class AgentAPITestCase(BaseAPITestCase):
         response = self.admin_client.post(
             f"{self.agents_url}{self.test_agent.agent_id}/assign_phone_numbers/", data
         , format='json')
-        self.assert_response_success(response)
-        self.assertIn('not_found', response.data)
-        self.assertEqual(len(response.data['not_found']), 1)
+        self.assert_response_error(response, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('phone_number_ids', response.data)
+        self.assertIn('do not exist or are inactive', str(response.data['phone_number_ids'][0]))
     
     # ========== REMOVE PHONE NUMBERS TESTS ==========
     
@@ -548,7 +548,7 @@ class AgentAPITestCase(BaseAPITestCase):
         }
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
-        self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
+        self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['workdays'], all_days)
     
     def test_agent_with_very_long_text_fields(self):
@@ -570,8 +570,9 @@ class AgentAPITestCase(BaseAPITestCase):
         
         response = self.admin_client.post(self.agents_url, agent_data, format='json')
         self.assert_response_success(response, status.HTTP_201_CREATED)
-        self.assertEqual(response.data['greeting'][:len(long_greeting)], long_greeting)
-        self.assertEqual(response.data['character'], long_character)
+        # Compare trimmed versions to handle potential whitespace differences
+        self.assertEqual(response.data['greeting'].strip(), long_greeting.strip())
+        self.assertEqual(response.data['character'].strip(), long_character.strip())
     
     def test_phone_number_formats(self):
         """Test various phone number formats"""

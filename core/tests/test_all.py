@@ -2,7 +2,7 @@
 Test suite runner for all API tests.
 Run this to execute all test cases at once.
 """
-from django.test import TestSuite
+import unittest
 from django.test.runner import DiscoverRunner
 
 # Import all test cases
@@ -17,7 +17,7 @@ from .test_calendar_api import CalendarAPITestCase
 
 def suite():
     """Create test suite with all API tests"""
-    test_suite = TestSuite()
+    test_suite = unittest.TestSuite()
     
     # Add all test classes
     test_classes = [
@@ -30,8 +30,9 @@ def suite():
         CalendarAPITestCase,
     ]
     
+    loader = unittest.TestLoader()
     for test_class in test_classes:
-        tests = DiscoverRunner().build_suite(test_class)
+        tests = loader.loadTestsFromTestCase(test_class)
         test_suite.addTests(tests)
     
     return test_suite
@@ -39,6 +40,5 @@ def suite():
 
 if __name__ == '__main__':
     # Run all tests
-    import unittest
     runner = unittest.TextTestRunner(verbosity=2)
     runner.run(suite()) 
