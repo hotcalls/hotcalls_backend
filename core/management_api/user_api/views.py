@@ -1,14 +1,15 @@
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
 from core.models import User, Blacklist
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
-    UserStatusChangeSerializer, BlacklistSerializer, BlacklistCreateSerializer
+    UserStatusChangeSerializer, AdminUserCreateSerializer,
+    BlacklistSerializer, BlacklistCreateSerializer
 )
 from .filters import UserFilter, BlacklistFilter
 from .permissions import UserPermission, BlacklistPermission
@@ -277,10 +278,19 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
         if self.action == 'create':
+            # UserCreateSerializer enforces basic user creation only
             return UserCreateSerializer
         elif self.action in ['update', 'partial_update']:
             return UserUpdateSerializer
         return UserSerializer
+    
+    def get_permissions(self):
+        """Return appropriate permissions based on action"""
+        if self.action == 'create':
+            # User registration is public
+            # SECURITY: UserCreateSerializer ensures only basic users are created
+            return [AllowAny()]
+        return super().get_permissions()
     
     def get_queryset(self):
         """Filter queryset based on user permissions"""
@@ -462,6 +472,43 @@ class UserViewSet(viewsets.ModelViewSet):
         user.save()
         
         return Response(UserSerializer(user).data)
+    
+    @extend_schema(
+        summary="➕ Create privileged user (Admin only)",
+        description="""
+        Create a user with elevated privileges (Staff/Superuser only).
+        
+        **🔐 Permission Requirements**: 
+        - **❌ Regular Users**: No access
+        - **❌ Staff Members**: No access  
+        - **✅ Superuser ONLY**: Can create staff/superuser accounts
+        
+        **⚠️ SECURITY WARNING**:
+        - This endpoint allows creating staff and superuser accounts
+        - Use with extreme caution
+        - Consider using Django Admin instead
+        """,
+        request=AdminUserCreateSerializer,
+        responses={
+            201: OpenApiResponse(response=UserSerializer, description="✅ Privileged user created"),
+            403: OpenApiResponse(description="🚫 Permission denied - Superuser access required")
+        },
+        tags=["User Management"]
+    )
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def create_privileged(self, request):
+        """Create a user with elevated privileges (superuser only)"""
+        if not request.user.is_superuser:
+            return Response(
+                {'error': 'Only superusers can create privileged accounts'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = AdminUserCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response(UserSerializer(user).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema_view(
