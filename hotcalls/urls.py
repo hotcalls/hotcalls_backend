@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/subscriptions/', include('core.management_api.subscription_api.urls')),
     path('api/workspaces/', include('core.management_api.workspace_api.urls')),
     path('api/agents/', include('core.management_api.agent_api.urls')),
+    path('api/voices/', include('core.management_api.voice_api.urls')),
     path('api/leads/', include('core.management_api.lead_api.urls')),
     path('api/calls/', include('core.management_api.call_api.urls')),
     path('api/calendars/', include('core.management_api.calendar_api.urls')),

@@ -6,10 +6,8 @@ agents -
 neue felder -> status (active, paused) 
 agent level callogs data
 name in db
-chracter handling (BL)
 voices rausnormalisieren mit crud
 greeting inbound / outbound / followup
-skript in db (BL)
 
 
 calconfig - add event name
@@ -33,6 +31,8 @@ leads, appointments, erriechte leads, conversion rate mit zeitraum filter (BL)
 call log mit lead verbinden durch get calllogs_for_lead (BL)
 !!!user specifische call zeiten (BL)- !!!! 
 BL for workspace hadling
+chracter handling (BL)
+skript in db (BL)
 
 Usage tabelle
 

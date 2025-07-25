@@ -6,7 +6,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 
 from core.models import Agent, PhoneNumber
 from .serializers import (
-    AgentSerializer, AgentCreateSerializer, PhoneNumberSerializer,
+    AgentSerializer, AgentCreateSerializer, AgentUpdateSerializer, PhoneNumberSerializer,
     AgentPhoneAssignmentSerializer, AgentConfigSerializer
 )
 from .filters import AgentFilter, PhoneNumberFilter
@@ -252,14 +252,23 @@ class AgentViewSet(viewsets.ModelViewSet):
     permission_classes = [AgentPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = AgentFilter
-    search_fields = ['greeting', 'voice', 'language', 'character', 'workspace__workspace_name']
-    ordering_fields = ['created_at', 'updated_at', 'voice', 'language']
+    search_fields = [
+        'name', 'status', 'greeting_inbound', 'greeting_outbound', 
+        'language', 'character', 'workspace__workspace_name',
+        'voice__provider', 'voice__voice_external_id'
+    ]
+    ordering_fields = [
+        'created_at', 'updated_at', 'name', 'status', 'language',
+        'voice__provider', 'voice__voice_external_id'
+    ]
     ordering = ['-created_at']
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
         if self.action == 'create':
             return AgentCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return AgentUpdateSerializer
         return AgentSerializer
     
     def get_queryset(self):

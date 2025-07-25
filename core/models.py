@@ -28,6 +28,11 @@ CALL_STATUS_CHOICES = [
     ('reached', 'Reached'),
 ]
 
+AGENT_STATUS_CHOICES = [
+    ('active', 'Active'),
+    ('paused', 'Paused'),
+]
+
 SOCIAL_PROVIDER_CHOICES = [
     ('google', 'Google'),
     ('apple', 'Apple'),
@@ -75,6 +80,24 @@ class User(AbstractUser):
     
     def __str__(self):
         return f"{self.username} ({self.email})"
+
+
+class Voice(models.Model):
+    """Voice configurations for agents"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    voice_external_id = models.CharField(
+        max_length=255, 
+        help_text="External voice ID from provider (e.g., ElevenLabs voice ID)"
+    )
+    provider = models.CharField(
+        max_length=50, 
+        help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.provider}: {self.voice_external_id}"
 
 
 class Plan(models.Model):
@@ -133,8 +156,33 @@ class Agent(models.Model):
     """AI agents for each workspace"""
     agent_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='mapping_workspace_agents')
-    greeting = models.TextField(help_text="Agent greeting message")
-    voice = models.CharField(max_length=255, help_text="Voice setting for the agent")
+    
+    # NEW: Agent identification and status
+    name = models.CharField(
+        max_length=255,
+        help_text="Agent name for display"
+    )
+    status = models.CharField(
+        max_length=10,
+        choices=AGENT_STATUS_CHOICES,
+        default='active',
+        help_text="Agent status"
+    )
+    
+    # UPDATED: Multiple greeting types
+    greeting_inbound = models.TextField(help_text="Greeting for inbound calls")
+    greeting_outbound = models.TextField(help_text="Greeting for outbound calls")
+    
+    # UPDATED: Voice as relationship to Voice model
+    voice = models.ForeignKey(
+        Voice,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mapping_voice_agents',
+        help_text="Voice configuration for this agent"
+    )
+    
     language = models.CharField(max_length=50, help_text="Agent language")
     retry_interval = models.IntegerField(
         help_text="Retry interval in minutes",
@@ -166,7 +214,7 @@ class Agent(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Agent for {self.workspace.workspace_name}"
+        return f"{self.name} ({self.workspace.workspace_name})"
 
 
 class PhoneNumber(models.Model):

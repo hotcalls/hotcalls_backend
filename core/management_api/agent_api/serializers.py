@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration
+from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice
 
 
 class PhoneNumberSerializer(serializers.ModelSerializer):
@@ -19,10 +19,19 @@ class AgentSerializer(serializers.ModelSerializer):
     phone_number_count = serializers.SerializerMethodField()
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
+    # NEW: Voice-related fields
+    voice_provider = serializers.CharField(source='voice.provider', read_only=True)
+    voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
+    
     class Meta:
         model = Agent
         fields = [
-            'agent_id', 'workspace', 'workspace_name', 'greeting', 'voice', 
+            'agent_id', 'workspace', 'workspace_name', 
+            # NEW FIELDS
+            'name', 'status', 'greeting_inbound', 'greeting_outbound',
+            # UPDATED VOICE FIELD (now FK to Voice)  
+            'voice', 'voice_provider', 'voice_external_id',
+            # EXISTING FIELDS
             'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_numbers', 'phone_number_count',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
@@ -41,9 +50,14 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Agent
         fields = [
-            'workspace', 'greeting', 'voice', 'language', 'retry_interval',
-            'workdays', 'call_from', 'call_to', 'character', 'config_id',
-            'calendar_configuration'
+            'workspace', 
+            # NEW FIELDS
+            'name', 'status', 'greeting_inbound', 'greeting_outbound',
+            # UPDATED VOICE FIELD
+            'voice', 
+            # EXISTING FIELDS
+            'language', 'retry_interval', 'workdays', 'call_from', 'call_to', 
+            'character', 'config_id', 'calendar_configuration'
         ]
     
     def validate_workdays(self, value):
@@ -60,6 +74,26 @@ class AgentCreateSerializer(serializers.ModelSerializer):
                 )
         
         return value
+    
+    def validate_name(self, value):
+        """Validate agent name"""
+        if not value or len(value.strip()) == 0:
+            raise serializers.ValidationError("Agent name cannot be empty")
+        
+        if len(value) > 255:
+            raise serializers.ValidationError("Agent name cannot exceed 255 characters")
+        
+        return value.strip()
+    
+    def validate_voice(self, value):
+        """Validate voice exists and is active"""
+        if value is None:
+            return value  # Allow None for voice
+        
+        if not Voice.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError("Selected voice does not exist")
+        
+        return value
 
 
 class AgentUpdateSerializer(serializers.ModelSerializer):
@@ -68,10 +102,49 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Agent
         fields = [
-            'greeting', 'voice', 'language', 'retry_interval',
-            'workdays', 'call_from', 'call_to', 'character', 'config_id',
-            'calendar_configuration'
+            # NEW FIELDS  
+            'name', 'status', 'greeting_inbound', 'greeting_outbound',
+            # UPDATED VOICE FIELD
+            'voice',
+            # EXISTING FIELDS
+            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'character', 'config_id', 'calendar_configuration'
         ]
+    
+    def validate_workdays(self, value):
+        """Validate workdays contains only valid day names"""
+        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Workdays must be a list")
+        
+        for day in value:
+            if day.lower() not in valid_days:
+                raise serializers.ValidationError(
+                    f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
+                )
+        
+        return value
+    
+    def validate_name(self, value):
+        """Validate agent name"""
+        if not value or len(value.strip()) == 0:
+            raise serializers.ValidationError("Agent name cannot be empty")
+        
+        if len(value) > 255:
+            raise serializers.ValidationError("Agent name cannot exceed 255 characters")
+        
+        return value.strip()
+    
+    def validate_voice(self, value):
+        """Validate voice exists and is active"""
+        if value is None:
+            return value  # Allow None for voice
+        
+        if not Voice.objects.filter(id=value.id).exists():
+            raise serializers.ValidationError("Selected voice does not exist")
+        
+        return value
 
 
 class PhoneNumberCreateSerializer(serializers.ModelSerializer):
@@ -115,10 +188,19 @@ class AgentConfigSerializer(serializers.ModelSerializer):
     calendar_config_id = serializers.CharField(source='calendar_configuration.id', read_only=True)
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
+    # NEW: Voice-related fields
+    voice_provider = serializers.CharField(source='voice.provider', read_only=True)
+    voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
+    
     class Meta:
         model = Agent
         fields = [
-            'agent_id', 'workspace', 'workspace_name', 'greeting', 'voice', 
+            'agent_id', 'workspace', 'workspace_name',
+            # NEW FIELDS
+            'name', 'status', 'greeting_inbound', 'greeting_outbound',
+            # UPDATED VOICE FIELD
+            'voice', 'voice_provider', 'voice_external_id',
+            # EXISTING FIELDS  
             'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_numbers', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
