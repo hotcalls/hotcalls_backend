@@ -21,6 +21,13 @@ CALL_DIRECTION_CHOICES = [
     ('outbound', 'Outbound'),
 ]
 
+CALL_STATUS_CHOICES = [
+    ('terminvereinbart', 'Terminvereinbart'),
+    ('nicht erreicht', 'Nicht erreicht'),
+    ('kein interesse', 'Kein Interesse'),
+    ('erreicht', 'Erreicht'),
+]
+
 SOCIAL_PROVIDER_CHOICES = [
     ('google', 'Google'),
     ('apple', 'Apple'),
@@ -219,6 +226,12 @@ class CallLog(models.Model):
     """Call logs for tracking all calls"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs')
+    agent = models.ForeignKey(
+        Agent, 
+        on_delete=models.CASCADE, 
+        related_name='mapping_agent_calllogs',
+        help_text="Agent who made/received the call"
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")
@@ -233,6 +246,18 @@ class CallLog(models.Model):
         max_length=10, 
         choices=CALL_DIRECTION_CHOICES, 
         help_text="Call direction"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=CALL_STATUS_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Call outcome status"
+    )
+    appointment_datetime = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Scheduled appointment datetime when status is 'terminvereinbart'"
     )
     updated_at = models.DateTimeField(auto_now=True)
     
