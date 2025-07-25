@@ -56,6 +56,10 @@ INSTALLED_APPS = [
     "core",
     "django_celery_beat",
     "drf_yasg",
+    # DRF and API packages
+    'rest_framework',
+    'drf_spectacular',
+    'django_filters',
 ]
 
 MIDDLEWARE = [
@@ -114,7 +118,56 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
 }
+
+# Spectacular (Swagger) Settings
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'HotCalls API',
+    'DESCRIPTION': 'Comprehensive API for HotCalls - AI Agent Call Management System',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SORT_OPERATIONS': False,
+    'TAGS': [
+        {'name': 'User Management', 'description': 'User accounts and blacklist management'},
+        {'name': 'Subscription Management', 'description': 'Plans, features, and subscription management'},
+        {'name': 'Workspace Management', 'description': 'Workspace and user association management'},
+        {'name': 'Agent Management', 'description': 'AI agents and phone number management'},
+        {'name': 'Lead Management', 'description': 'Lead management and bulk operations'},
+        {'name': 'Call Management', 'description': 'Call logs and analytics'},
+        {'name': 'Calendar Management', 'description': 'Calendar integration and scheduling'},
+    ],
+}
+
+# CORS Settings (for frontend development)
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",  # React development server
+    "http://127.0.0.1:3000",
+    "http://localhost:8080",  # Vue development server
+    "http://127.0.0.1:8080",
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 
 LOGGING = {
