@@ -27,6 +27,11 @@ SOCIAL_PROVIDER_CHOICES = [
     ('facebook', 'Facebook'),
 ]
 
+CALENDAR_TYPE_CHOICES = [
+    ('google', 'Google'),
+    ('outlook', 'Outlook'),
+]
+
 
 class User(AbstractUser):
     """Custom User model extending Django's AbstractUser"""
@@ -142,6 +147,14 @@ class Agent(models.Model):
         help_text="Configuration ID for agent settings"
     )
     phone_numbers = models.ManyToManyField('PhoneNumber', related_name='mapping_agent_phonenumbers', blank=True)
+    calendar_configuration = models.ForeignKey(
+        'CalendarConfiguration',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='mapping_config_agents',
+        help_text="Calendar configuration for this agent"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -228,3 +241,74 @@ class CallLog(models.Model):
     
     def __str__(self):
         return f"Call: {self.from_number} → {self.to_number} ({self.timestamp})"
+
+
+class Calendar(models.Model):
+    """Calendar integration for scheduling"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace, 
+        on_delete=models.CASCADE, 
+        related_name='mapping_workspace_calendars',
+        null=True,
+        blank=True
+    )
+    calendar_type = models.CharField(
+        max_length=20,
+        choices=CALENDAR_TYPE_CHOICES,
+        help_text="Calendar provider type"
+    )
+    account_id = models.CharField(
+        max_length=255,
+        help_text="Account ID for the calendar service"
+    )
+    auth_token = models.TextField(
+        help_text="Authentication token for calendar access"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['workspace', 'calendar_type', 'account_id']
+    
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.calendar_type.title()} ({self.account_id})"
+
+
+class CalendarConfiguration(models.Model):
+    """Configuration settings for calendar scheduling"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    calendar = models.ForeignKey(
+        Calendar, 
+        on_delete=models.CASCADE, 
+        related_name='mapping_calendar_configurations'
+    )
+    sub_calendar_id = models.CharField(
+        max_length=255,
+        help_text="Google subcalendar or actual calendar ID"
+    )
+    duration = models.IntegerField(
+        help_text="Duration of appointments in minutes"
+    )
+    prep_time = models.IntegerField(
+        help_text="Preparation time in minutes before appointments"
+    )
+    days_buffer = models.IntegerField(
+        default=0,
+        help_text="Days buffer for scheduling (0 = same day)"
+    )
+    from_time = models.TimeField(
+        help_text="Start time for scheduling availability"
+    )
+    to_time = models.TimeField(
+        help_text="End time for scheduling availability"
+    )
+    workdays = models.JSONField(
+        default=list,
+        help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"Config for {self.calendar} - {self.sub_calendar_id}"

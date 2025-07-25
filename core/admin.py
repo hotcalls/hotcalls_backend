@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog
+from .models import User, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 
 
 @admin.register(User)
@@ -34,17 +34,31 @@ class FeatureAdmin(admin.ModelAdmin):
     ordering = ('feature_name',)
 
 
-class PlanFeatureInline(admin.TabularInline):
-    model = PlanFeature
-    extra = 1
-
-
 @admin.register(PlanFeature)
 class PlanFeatureAdmin(admin.ModelAdmin):
     list_display = ('plan', 'feature', 'limit', 'created_at')
     list_filter = ('plan', 'feature', 'created_at')
     search_fields = ('plan__plan_name', 'feature__feature_name')
     ordering = ('plan', 'feature')
+
+
+# Inline classes need to be defined first
+class PlanFeatureInline(admin.TabularInline):
+    model = PlanFeature
+    extra = 1
+
+
+class CalendarInline(admin.TabularInline):
+    model = Calendar
+    extra = 0
+    fields = ('calendar_type', 'account_id')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+class CalendarConfigurationInline(admin.TabularInline):
+    model = CalendarConfiguration
+    extra = 0
+    fields = ('sub_calendar_id', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
 
 
 @admin.register(Plan)
@@ -61,16 +75,21 @@ class PlanAdmin(admin.ModelAdmin):
 
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):
-    list_display = ('workspace_name', 'created_at', 'updated_at')
+    list_display = ('workspace_name', 'get_calendars_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
+    inlines = [CalendarInline]
+    
+    def get_calendars_count(self, obj):
+        return obj.mapping_workspace_calendars.count()
+    get_calendars_count.short_description = 'Calendars'
 
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'voice', 'language', 'get_phone_numbers', 'created_at')
-    list_filter = ('voice', 'language', 'created_at')
+    list_display = ('agent_id', 'workspace', 'voice', 'language', 'get_phone_numbers', 'calendar_configuration', 'created_at')
+    list_filter = ('voice', 'language', 'calendar_configuration', 'created_at')
     search_fields = ('workspace__workspace_name', 'voice')
     filter_horizontal = ('phone_numbers',)
     ordering = ('-created_at',)
@@ -78,6 +97,20 @@ class AgentAdmin(admin.ModelAdmin):
     def get_phone_numbers(self, obj):
         return ", ".join([phone.phonenumber for phone in obj.phone_numbers.all()])
     get_phone_numbers.short_description = 'Phone Numbers'
+    
+    def formfield_for_foreignkey(self, db_field, request, **kwargs):
+        if db_field.name == "calendar_configuration":
+            # Only show calendar configurations from the agent's workspace
+            if hasattr(request, '_obj_'):
+                kwargs["queryset"] = CalendarConfiguration.objects.filter(
+                    calendar__workspace=request._obj_.workspace
+                )
+        return super().formfield_for_foreignkey(db_field, request, **kwargs)
+    
+    def get_form(self, request, obj=None, **kwargs):
+        # Store the object in request for use in formfield_for_foreignkey
+        request._obj_ = obj
+        return super().get_form(request, obj, **kwargs)
 
 
 @admin.register(PhoneNumber)
@@ -115,3 +148,30 @@ class CallLogAdmin(admin.ModelAdmin):
     search_fields = ('lead__name', 'from_number', 'to_number')
     ordering = ('-timestamp',)
     readonly_fields = ('timestamp', 'updated_at')
+
+
+@admin.register(Calendar)
+class CalendarAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'calendar_type', 'account_id', 'get_configs_count', 'created_at', 'updated_at')
+    list_filter = ('calendar_type', 'workspace', 'created_at')
+    search_fields = ('workspace__workspace_name', 'account_id', 'calendar_type')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [CalendarConfigurationInline]
+    
+    def get_configs_count(self, obj):
+        return obj.mapping_calendar_configurations.count()
+    get_configs_count.short_description = 'Configurations'
+
+
+@admin.register(CalendarConfiguration)
+class CalendarConfigurationAdmin(admin.ModelAdmin):
+    list_display = ('get_workspace', 'calendar', 'sub_calendar_id', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+    list_filter = ('calendar__calendar_type', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
+    search_fields = ('calendar__workspace__workspace_name', 'calendar__account_id', 'sub_calendar_id')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    
+    def get_workspace(self, obj):
+        return obj.calendar.workspace.workspace_name
+    get_workspace.short_description = 'Workspace'
