@@ -22,10 +22,10 @@ CALL_DIRECTION_CHOICES = [
 ]
 
 CALL_STATUS_CHOICES = [
-    ('terminvereinbart', 'Terminvereinbart'),
-    ('nicht erreicht', 'Nicht erreicht'),
-    ('kein interesse', 'Kein Interesse'),
-    ('erreicht', 'Erreicht'),
+    ('appointment_scheduled', 'Appointment Scheduled'),
+    ('not_reached', 'Not Reached'),
+    ('no_interest', 'No Interest'),
+    ('reached', 'Reached'),
 ]
 
 SOCIAL_PROVIDER_CHOICES = [
@@ -248,7 +248,7 @@ class CallLog(models.Model):
         help_text="Call direction"
     )
     status = models.CharField(
-        max_length=20,
+        max_length=25,
         choices=CALL_STATUS_CHOICES,
         null=True,
         blank=True,

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import CallLog, Lead
+from core.models import CallLog, Lead, Agent
 
 
 class CallLogSerializer(serializers.ModelSerializer):
@@ -8,14 +8,17 @@ class CallLogSerializer(serializers.ModelSerializer):
     lead_name = serializers.CharField(source='lead.name', read_only=True)
     lead_surname = serializers.CharField(source='lead.surname', read_only=True)
     lead_email = serializers.CharField(source='lead.email', read_only=True)
+    agent_workspace_name = serializers.CharField(source='agent.workspace.workspace_name', read_only=True)
     duration_formatted = serializers.SerializerMethodField()
     
     class Meta:
         model = CallLog
         fields = [
-            'id', 'lead', 'lead_name', 'lead_surname', 'lead_email',
+            'id', 'lead', 'lead_name', 'lead_surname', 'lead_email', 
+            'agent', 'agent_workspace_name',
             'timestamp', 'from_number', 'to_number', 'duration', 
-            'duration_formatted', 'disconnection_reason', 'direction', 'updated_at'
+            'duration_formatted', 'disconnection_reason', 'direction', 
+            'status', 'appointment_datetime', 'updated_at'
         ]
         read_only_fields = ['id', 'timestamp', 'updated_at']
     
@@ -24,6 +27,40 @@ class CallLogSerializer(serializers.ModelSerializer):
         if value < 0:
             raise serializers.ValidationError("Duration cannot be negative")
         return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for appointment logic and agent workspace"""
+        status = attrs.get('status')
+        appointment_datetime = attrs.get('appointment_datetime')
+        agent = attrs.get('agent')
+        lead = attrs.get('lead')
+        
+        # If updating, get existing values for fields not being updated
+        if self.instance:
+            status = status or self.instance.status
+            appointment_datetime = appointment_datetime if 'appointment_datetime' in attrs else self.instance.appointment_datetime
+            agent = agent or self.instance.agent
+            lead = lead or self.instance.lead
+        
+        # Appointment datetime validation
+        if status == 'appointment_scheduled':
+            if not appointment_datetime:
+                raise serializers.ValidationError({
+                    'appointment_datetime': 'Appointment datetime is required when status is "appointment_scheduled"'
+                })
+        elif appointment_datetime:
+            raise serializers.ValidationError({
+                'appointment_datetime': 'Appointment datetime should only be set when status is "appointment_scheduled"'
+            })
+        
+        # Agent workspace validation
+        if agent and lead:
+            # Check if agent belongs to a workspace that the lead could be associated with
+            # For now, we'll just validate that agent exists and is active
+            # TODO: Add proper workspace validation when lead-workspace relationship is clarified
+            pass
+        
+        return attrs
     
     @extend_schema_field(serializers.CharField)
     def get_duration_formatted(self, obj) -> str:
@@ -39,8 +76,8 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = CallLog
         fields = [
-            'lead', 'from_number', 'to_number', 'duration',
-            'disconnection_reason', 'direction'
+            'lead', 'agent', 'from_number', 'to_number', 'duration',
+            'disconnection_reason', 'direction', 'status', 'appointment_datetime'
         ]
     
     def validate_duration(self, value):
@@ -48,6 +85,24 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         if value < 0:
             raise serializers.ValidationError("Duration cannot be negative")
         return value
+    
+    def validate(self, attrs):
+        """Cross-field validation for appointment logic"""
+        status = attrs.get('status')
+        appointment_datetime = attrs.get('appointment_datetime')
+        
+        # Appointment datetime validation
+        if status == 'appointment_scheduled':
+            if not appointment_datetime:
+                raise serializers.ValidationError({
+                    'appointment_datetime': 'Appointment datetime is required when status is "appointment_scheduled"'
+                })
+        elif appointment_datetime:
+            raise serializers.ValidationError({
+                'appointment_datetime': 'Appointment datetime should only be set when status is "appointment_scheduled"'
+            })
+        
+        return attrs
 
 
 class CallLogAnalyticsSerializer(serializers.Serializer):
@@ -59,4 +114,35 @@ class CallLogAnalyticsSerializer(serializers.Serializer):
     avg_duration = serializers.FloatField(read_only=True)
     total_duration = serializers.IntegerField(read_only=True)
     inbound_calls = serializers.IntegerField(read_only=True)
-    outbound_calls = serializers.IntegerField(read_only=True) 
+    outbound_calls = serializers.IntegerField(read_only=True)
+    # New status analytics
+    status_breakdown = serializers.DictField(read_only=True)
+    appointments_scheduled = serializers.IntegerField(read_only=True)
+    appointments_today = serializers.IntegerField(read_only=True)
+
+
+class CallLogStatusAnalyticsSerializer(serializers.Serializer):
+    """Serializer for call status analytics"""
+    total_calls = serializers.IntegerField(read_only=True)
+    status_breakdown = serializers.DictField(read_only=True)
+    success_rate = serializers.FloatField(read_only=True)
+
+
+class CallLogAgentPerformanceSerializer(serializers.Serializer):
+    """Serializer for agent performance analytics"""
+    agent_id = serializers.UUIDField(read_only=True)
+    agent_workspace = serializers.CharField(read_only=True)
+    total_calls = serializers.IntegerField(read_only=True)
+    avg_duration = serializers.FloatField(read_only=True)
+    status_breakdown = serializers.DictField(read_only=True)
+    appointments_scheduled = serializers.IntegerField(read_only=True)
+
+
+class CallLogAppointmentStatsSerializer(serializers.Serializer):
+    """Serializer for appointment statistics"""
+    total_appointments = serializers.IntegerField(read_only=True)
+    appointments_today = serializers.IntegerField(read_only=True)
+    appointments_this_week = serializers.IntegerField(read_only=True)
+    appointments_this_month = serializers.IntegerField(read_only=True)
+    upcoming_appointments = serializers.IntegerField(read_only=True)
+    past_appointments = serializers.IntegerField(read_only=True) 
