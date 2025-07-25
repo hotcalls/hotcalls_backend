@@ -388,9 +388,11 @@ class CallAPITestCase(BaseAPITestCase):
                     duration=60 + j*20,
                     direction="outbound"
                 )
-                # Set specific date
+                # Set specific date with timezone awareness
+                naive_datetime = datetime.combine(call_date, time(10, 0))
+                aware_datetime = timezone.make_aware(naive_datetime)
                 CallLog.objects.filter(id=call.id).update(
-                    timestamp=datetime.combine(call_date, time(10, 0))
+                    timestamp=aware_datetime
                 )
         
         response = self.admin_client.get(f"{self.call_logs_url}daily_stats/")

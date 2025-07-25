@@ -361,13 +361,30 @@ class AgentViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             phone_number_ids = serializer.validated_data['phone_number_ids']
             phone_numbers = PhoneNumber.objects.filter(id__in=phone_number_ids)
-            agent.phone_numbers.add(*phone_numbers)
             
-            return Response({
+            # Track already assigned numbers
+            current_phone_ids = set(agent.phone_numbers.values_list('id', flat=True))
+            requested_phone_ids = set(phone_numbers.values_list('id', flat=True))
+            
+            already_assigned_ids = current_phone_ids.intersection(requested_phone_ids)
+            new_assignment_ids = requested_phone_ids - current_phone_ids
+            
+            # Only add new assignments
+            new_phones = phone_numbers.filter(id__in=new_assignment_ids)
+            agent.phone_numbers.add(*new_phones)
+            
+            response_data = {
                 'message': 'Phone numbers assigned successfully',
-                'assigned_numbers': [pn.phonenumber for pn in phone_numbers],
-                'total_assigned': len(phone_numbers)
-            })
+                'assigned_numbers': [pn.phonenumber for pn in new_phones],
+                'total_assigned': len(new_phones)
+            }
+            
+            # Include already assigned numbers if any
+            if already_assigned_ids:
+                already_assigned_phones = phone_numbers.filter(id__in=already_assigned_ids)
+                response_data['already_assigned'] = [pn.phonenumber for pn in already_assigned_phones]
+            
+            return Response(response_data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
@@ -408,13 +425,30 @@ class AgentViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             phone_number_ids = serializer.validated_data['phone_number_ids']
             phone_numbers = PhoneNumber.objects.filter(id__in=phone_number_ids)
-            agent.phone_numbers.remove(*phone_numbers)
             
-            return Response({
+            # Track which numbers are actually assigned
+            current_phone_ids = set(agent.phone_numbers.values_list('id', flat=True))
+            requested_phone_ids = set(phone_numbers.values_list('id', flat=True))
+            
+            assigned_ids = current_phone_ids.intersection(requested_phone_ids)
+            not_assigned_ids = requested_phone_ids - current_phone_ids
+            
+            # Only remove numbers that are actually assigned
+            phones_to_remove = phone_numbers.filter(id__in=assigned_ids)
+            agent.phone_numbers.remove(*phones_to_remove)
+            
+            response_data = {
                 'message': 'Phone numbers removed successfully',
-                'removed_numbers': [pn.phonenumber for pn in phone_numbers],
-                'total_removed': len(phone_numbers)
-            })
+                'removed_numbers': [pn.phonenumber for pn in phones_to_remove],
+                'total_removed': len(phones_to_remove)
+            }
+            
+            # Include not assigned numbers if any
+            if not_assigned_ids:
+                not_assigned_phones = phone_numbers.filter(id__in=not_assigned_ids)
+                response_data['not_assigned'] = [pn.phonenumber for pn in not_assigned_phones]
+            
+            return Response(response_data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     

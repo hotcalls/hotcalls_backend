@@ -111,7 +111,7 @@ class AgentPhoneAssignmentSerializer(serializers.Serializer):
 class AgentConfigSerializer(serializers.ModelSerializer):
     """Serializer for agent configuration details"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
-    phone_numbers = PhoneNumberSerializer(many=True, read_only=True)
+    phone_numbers = serializers.SerializerMethodField()
     calendar_config_id = serializers.CharField(source='calendar_configuration.id', read_only=True)
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
@@ -123,4 +123,8 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'character', 'config_id', 'phone_numbers', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at'] 
+        read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at']
+    
+    def get_phone_numbers(self, obj):
+        """Return phone numbers as strings instead of objects"""
+        return [pn.phonenumber for pn in obj.phone_numbers.all()] 
