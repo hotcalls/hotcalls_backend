@@ -45,6 +45,21 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'workdays', 'call_from', 'call_to', 'character', 'config_id',
             'calendar_configuration'
         ]
+    
+    def validate_workdays(self, value):
+        """Validate workdays contains only valid day names"""
+        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Workdays must be a list")
+        
+        for day in value:
+            if day.lower() not in valid_days:
+                raise serializers.ValidationError(
+                    f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
+                )
+        
+        return value
 
 
 class AgentUpdateSerializer(serializers.ModelSerializer):
