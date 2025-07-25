@@ -2,10 +2,12 @@ Django>=5.0
 psycopg2-binary    # PostgreSQL database adapter
 python-dotenv        # For environment variables
 pillow              # For image handling
-djangorestframework # For REST APIs
+djangorestframework>=3.14.0
+drf-spectacular>=0.26.0
+django-filter>=22.1
+django-cors-headers>=4.0.0
 gunicorn           # Production WSGI server for containers
 twilio
-django-cors-headers
 django-stub
 apscheduler
 python-dateutil>=2.8.2
