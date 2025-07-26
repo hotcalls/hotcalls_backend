@@ -59,10 +59,8 @@ class EmailOrUsernameBackend(BaseBackend):
             return None
         
         try:
-            # Try to find user by email first, then by username
-            user = User.objects.get(
-                Q(email=username) | Q(username=username) if hasattr(User, 'username') else Q(email=username)
-            )
+            # Try to find user by email (username parameter contains email in our case)
+            user = User.objects.get(email=username)
         except User.DoesNotExist:
             # Run the default password hasher once to reduce timing attacks
             User().set_password(password)

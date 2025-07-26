@@ -398,7 +398,7 @@ class Blacklist(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Blacklist: {self.user.username} ({self.status})"
+        return f"Blacklist: {self.user.email} ({self.status})"
 
 
 class CallLog(models.Model):

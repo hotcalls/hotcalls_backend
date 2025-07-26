@@ -56,8 +56,8 @@ try:
 except ImportError:
     pass
 
-# Email backend for development
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email backend for development - USE .ENV CONFIGURATION
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # DISABLED - using .env instead
 
 # Cache configuration (use Redis for development to match production)
 CACHES = {
