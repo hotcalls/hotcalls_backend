@@ -28,17 +28,26 @@ metadata:
 spec:
   tls:
   - hosts:
-    - api.hotcalls.com  # Replace with your domain
+    - app1.hotcalls.ai  # Updated domain
     secretName: hotcalls-tls-secret
   rules:
-  - host: api.hotcalls.com  # Replace with your domain
+  - host: app1.hotcalls.ai  # Updated domain
     http:
       paths:
-      - path: /
+      # API routes go to backend (more specific path first)
+      - path: /api
         pathType: Prefix
         backend:
           service:
             name: hotcalls-backend-service
+            port:
+              number: 80
+      # All other routes go to frontend
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hotcalls-frontend-service
             port:
               number: 80
 
@@ -68,7 +77,7 @@ metadata:
     
     # CORS
     nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.hotcalls.com"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app1.hotcalls.ai"
     nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
     
@@ -77,16 +86,25 @@ metadata:
 spec:
   tls:
   - hosts:
-    - api.hotcalls.com  # Replace with your domain
+    - app1.hotcalls.ai  # Updated domain
     secretName: hotcalls-nginx-tls
   rules:
-  - host: api.hotcalls.com  # Replace with your domain
+  - host: app1.hotcalls.ai  # Updated domain
     http:
       paths:
-      - path: /
+      # API routes go to backend (more specific path first)
+      - path: /api
         pathType: Prefix
         backend:
           service:
             name: hotcalls-backend-service
+            port:
+              number: 80
+      # All other routes go to frontend
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hotcalls-frontend-service
             port:
               number: 80 

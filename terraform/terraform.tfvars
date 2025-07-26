@@ -1,6 +1,6 @@
 # Project Configuration - Dynamic Environment
 project_name    = "hotcalls"
-environment     = "development"  # Can be: development, staging, production
+environment     = "staging"  # Can be: development, staging, production
 location        = "North Europe"
 
 # Short location code used in resource names
@@ -46,7 +46,7 @@ apim_publisher_email = "einfach@malmachen.com"
 # Tags - Dynamic based on environment variable
 tags = {
   Project     = "HotCalls"
-  Environment = "Development"  # Will be overridden by environment
+  Environment = "Staging"  # Will be overridden by environment
   Owner       = "einfach@malmachen.com"
   ManagedBy   = "Terraform"
 } 
