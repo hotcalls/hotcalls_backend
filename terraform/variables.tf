@@ -162,6 +162,12 @@ variable "apim_publisher_email" {
   default     = "admin@hotcalls.com"
 }
 
+variable "backend_internal_url" {
+  description = "Cluster-internal URL of the backend service to be exposed through API Management"
+  type        = string
+  default     = ""
+}
+
 # Domain and DNS variables
 variable "custom_domain" {
   description = "Custom domain for the application (optional)"

@@ -3,7 +3,7 @@
 
 # Project Configuration
 project_name    = "hotcalls"
-environment     = "dev"
+environment     = "development"
 location        = "North Europe"
 
 location_short  = "ne"
@@ -42,9 +42,10 @@ app_replica_count     = 1
 
 # Features (disabled for dev to save costs)
 enable_api_management = false
+backend_internal_url  = "http://hotcalls-backend-service.hotcalls-dev.svc.cluster.local"
 apim_sku_name = "Developer_1"
 enable_monitoring_alerts = true
-log_retention_days    = 7  # Short retention for dev
+log_retention_days    = 30  # Minimum for Log Analytics
 
 # Tags
 tags = {

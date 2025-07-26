@@ -181,7 +181,7 @@ module "apim" {
   publisher_name   = var.apim_publisher_name
   publisher_email  = var.apim_publisher_email
   
-  backend_service_url = ""  # Will be set after AKS deployment
+  backend_service_url = var.backend_internal_url
   
   tags = local.common_tags
   

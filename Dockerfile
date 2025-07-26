@@ -31,14 +31,14 @@ COPY . .
 RUN mkdir -p /app/staticfiles && \
     chown -R django:django /app
 
-# Production stage
+# Production stage (used for BOTH dev and prod environments)
 FROM base as production
 
 # Switch to non-root user
 USER django
 
 # Collect static files
-RUN python manage.py collectstatic --noinput --settings=hotcalls.settings.production
+RUN ALLOWED_HOSTS=localhost python manage.py collectstatic --noinput --settings=hotcalls.settings.production
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
@@ -47,18 +47,5 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Run application with Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "2", "--worker-connections", "1000", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "--access-logfile", "-", "--error-logfile", "-", "hotcalls.wsgi:application"]
-
-# Development stage
-FROM base as development
-
-# Install development dependencies
-COPY requirements/requirements-dev.txt ./requirements/
-RUN pip install --no-cache-dir -r requirements/requirements-dev.txt
-
-# Switch to non-root user
-USER django
-
-# Run development server
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"] 
+# Run application with Gunicorn - ALWAYS production mode
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "2", "--worker-connections", "1000", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "--access-logfile", "-", "--error-logfile", "-", "hotcalls.wsgi:application"] 
