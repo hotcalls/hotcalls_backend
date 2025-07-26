@@ -19,6 +19,7 @@ openapi-spec-validator>=0.5.0
 celery>=5.3.1             # Task queue
 django-celery-beat>=2.5.0 # For periodic task scheduling
 redis>=4.5.0              # Redis client for Celery broker (K8s-friendly)
+django-redis>=5.4.0       # Django Redis cache backend
 
 # Azure-specific dependencies
 django-storages[azure]>=1.14.0  # Azure Blob Storage integration

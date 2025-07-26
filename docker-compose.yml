@@ -21,10 +21,13 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    environment:
+      - REDIS_PASSWORD=hotcalls_redis_pass
+    command: redis-server --requirepass hotcalls_redis_pass
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "hotcalls_redis_pass", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -42,6 +45,9 @@ services:
       - DB_USER=hotcalls_user
       - DB_PASSWORD=hotcalls_pass
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=hotcalls_redis_pass
+      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
       - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
       - CORS_ALLOW_ALL_ORIGINS=True
     volumes:
@@ -68,6 +74,9 @@ services:
       - DB_USER=hotcalls_user
       - DB_PASSWORD=hotcalls_pass
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=hotcalls_redis_pass
+      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
     volumes:
       - .:/app
     depends_on:
@@ -88,6 +97,9 @@ services:
       - DB_USER=hotcalls_user
       - DB_PASSWORD=hotcalls_pass
       - REDIS_HOST=redis
+      - REDIS_PASSWORD=hotcalls_redis_pass
+      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
     volumes:
       - .:/app
     depends_on:
