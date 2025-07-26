@@ -14,9 +14,6 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
-RUN groupadd -r django && useradd -r -g django django
-
 # Create application directory
 WORKDIR /app
 
@@ -27,12 +24,28 @@ RUN pip install --no-cache-dir -r requirements/requirements.txt
 # Copy application code
 COPY . .
 
-# Create static files directory and set permissions
+# Development stage
+FROM base as development
+
+# Create static files directory
+RUN mkdir -p /app/staticfiles
+
+# Development doesn't need non-root user for simplicity
+# Expose port
+EXPOSE 8000
+
+# Run Django development server
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+
+# Production stage
+FROM base as production
+
+# Create non-root user
+RUN groupadd -r django && useradd -r -g django django
+
+# Set permissions
 RUN mkdir -p /app/staticfiles && \
     chown -R django:django /app
-
-# Production stage (used for BOTH dev and prod environments)
-FROM base as production
 
 # Switch to non-root user
 USER django
@@ -47,5 +60,5 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 # Expose port
 EXPOSE 8000
 
-# Run application with Gunicorn - ALWAYS production mode
+# Run application with Gunicorn
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "3", "--worker-class", "gthread", "--threads", "2", "--worker-connections", "1000", "--max-requests", "1000", "--max-requests-jitter", "100", "--preload", "--access-logfile", "-", "--error-logfile", "-", "hotcalls.wsgi:application"] 

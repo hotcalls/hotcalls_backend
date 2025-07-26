@@ -32,9 +32,8 @@ CORS_ALLOW_CREDENTIALS = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
+# Removed STATICFILES_DIRS since we don't have a static directory
+# All static files come from Django and third-party packages
 
 # Media files
 MEDIA_URL = '/media/'

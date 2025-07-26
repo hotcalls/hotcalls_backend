@@ -25,6 +25,7 @@ from .permissions import UserPermission, BlacklistPermission
         - **Regular Users**: Can only see their own profile (filtered response)
         - **Staff Members**: Can view all users in the system
         - **Superusers**: Full access to all user data
+        - **⚠️ Email Verification Required**: Must have verified email to access
         
         **📊 Response Filtering**:
         - Regular users receive only 1 result (themselves)
@@ -34,6 +35,8 @@ from .permissions import UserPermission, BlacklistPermission
         - User profile management
         - Staff user administration
         - System user overview
+        
+        **📧 Note**: This API now works with email-based authentication instead of username
         """,
         responses={
             200: OpenApiResponse(
@@ -50,11 +53,12 @@ from .permissions import UserPermission, BlacklistPermission
                             'previous': None,
                             'results': [{
                                 'id': 'user-uuid-here',
-                                'username': 'current_user',
+                                'email': 'current_user@example.com',
                                 'first_name': 'John',
                                 'last_name': 'Doe',
-                                'email': 'john@example.com',
-                                'status': 'active'
+                                'phone': '+1234567890',
+                                'status': 'active',
+                                'is_email_verified': True
                             }]
                         }
                     ),
@@ -67,41 +71,42 @@ from .permissions import UserPermission, BlacklistPermission
                             'next': 'http://localhost:8001/api/users/users/?page=2',
                             'previous': None,
                             'results': [
-                                {'id': 'uuid1', 'username': 'user1', 'status': 'active'},
-                                {'id': 'uuid2', 'username': 'user2', 'status': 'suspended'}
+                                {'id': 'uuid1', 'email': 'user1@example.com', 'status': 'active', 'is_email_verified': True},
+                                {'id': 'uuid2', 'email': 'user2@example.com', 'status': 'suspended', 'is_email_verified': False}
                             ]
                         }
                     )
                 ]
             ),
             401: OpenApiResponse(description="🚫 Authentication required - Please login to access user data"),
-            403: OpenApiResponse(description="🚫 Permission denied - Authentication required for user access")
+            403: OpenApiResponse(description="🚫 Permission denied or email not verified")
         },
         tags=["User Management"]
     ),
     create=extend_schema(
-        summary="➕ Create new user",
+        summary="➕ Create new user (Admin)",
         description="""
-        Create a new user account - **Public endpoint, no authentication required**.
+        Create a new user account via admin interface. 
+        
+        **⚠️ Note**: Regular users should use `/api/auth/register/` instead for proper email verification flow.
         
         **🔐 Permission Requirements**: 
-        - **Public Access**: Anyone can create a new user account (registration)
-        - No authentication needed for account creation
+        - **Staff/Admin Access**: Only staff and admin can create users via this endpoint
+        - **Email Verification Required**: Creator must have verified email
         
         **📝 Required Fields**:
-        - `username`: Unique username (required)
-        - `email`: Valid email address (required)  
-        - `password`: Secure password min 8 characters (required)
-        - `first_name`, `last_name`: User's name (required)
-        - `phone`: Contact phone number (required)
+        - `email`: Valid email address (will be username)
+        - `password`: Secure password min 8 characters
+        - `first_name`, `last_name`: User's name
+        - `phone`: Contact phone number
         
         **⚙️ Optional Fields**:
         - `social_id`, `social_provider`: For social media login integration
         
         **🔒 Security Notes**:
         - Password is automatically hashed
-        - New users created with `is_staff=False`, `is_superuser=False`
-        - Account created with `status=active` by default
+        - New users created with `is_email_verified=False` by default
+        - Created users must still verify their email to login
         """,
         request=UserCreateSerializer,
         responses={
@@ -110,18 +115,18 @@ from .permissions import UserPermission, BlacklistPermission
                 description="✅ User account created successfully",
                 examples=[
                     OpenApiExample(
-                        'Successful Registration',
-                        summary='New user account created',
-                        description='User successfully registered and account is active',
+                        'Successful Creation',
+                        summary='New user account created by admin',
+                        description='User successfully created but must still verify email',
                         value={
                             'id': 'new-user-uuid',
-                            'username': 'new_user123',
+                            'email': 'newuser@example.com',
                             'first_name': 'Jane',
                             'last_name': 'Smith',
-                            'email': 'jane@example.com',
                             'phone': '+1234567890',
                             'status': 'active',
                             'is_active': True,
+                            'is_email_verified': False,
                             'date_joined': '2024-01-15T10:30:00Z'
                         }
                     )
@@ -134,13 +139,14 @@ from .permissions import UserPermission, BlacklistPermission
                         'Validation Error',
                         summary='Invalid input data',
                         value={
-                            'username': ['This field is required.'],
-                            'password': ['Ensure this field has at least 8 characters.'],
-                            'email': ['Enter a valid email address.']
+                            'email': ['Enter a valid email address.'],
+                            'password': ['Ensure this field has at least 8 characters.']
                         }
                     )
                 ]
-            )
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Staff access required or email not verified")
         },
         tags=["User Management"]
     ),
@@ -153,18 +159,19 @@ from .permissions import UserPermission, BlacklistPermission
         - **Regular Users**: Can only access their own profile
         - **Staff Members**: Can access any user's profile  
         - **Superusers**: Full access to any user's profile
+        - **⚠️ Email Verification Required**: Must have verified email
         
         **🛡️ Access Control**:
         - Users attempting to access other profiles get 404 (not 403 for security)
-        - Staff can see all user details including sensitive information
-        - Response includes role-based field filtering
+        - Staff can see all user details including email verification status
+        - Response includes email-based authentication fields
         """,
         responses={
             200: OpenApiResponse(
                 response=UserSerializer,
                 description="✅ User details retrieved successfully"
             ),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Cannot access other user's profile"),
             404: OpenApiResponse(description="🚫 User not found or access denied")
         },
@@ -179,18 +186,21 @@ from .permissions import UserPermission, BlacklistPermission
         - **Regular Users**: Can only update their own profile
         - **Staff Members**: Can update any user's profile
         - **Superusers**: Can update any user's profile
+        - **⚠️ Email Verification Required**: Must have verified email
         
         **🔄 Update Scope**:
         - Replaces all editable fields with new values
-        - Cannot modify: `id`, `date_joined`, `last_login`
+        - Cannot modify: `id`, `email`, `date_joined`, `last_login`, `is_email_verified`
         - Staff can modify: `status`, admin flags
         - Users can modify: personal information only
+        
+        **📧 Email Changes**: Email addresses cannot be changed after registration for security
         """,
         request=UserUpdateSerializer,
         responses={
             200: OpenApiResponse(response=UserSerializer, description="✅ User updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Cannot edit other user's profile"),
             404: OpenApiResponse(description="🚫 User not found")
         },
@@ -204,6 +214,7 @@ from .permissions import UserPermission, BlacklistPermission
         **🔐 Permission Requirements**: Same as full update
         - **Regular Users**: Own profile only
         - **Staff/Superuser**: Any user profile
+        - **⚠️ Email Verification Required**: Must have verified email
         
         **🎯 Partial Update Benefits**:
         - Only send fields you want to change
@@ -214,7 +225,7 @@ from .permissions import UserPermission, BlacklistPermission
         responses={
             200: OpenApiResponse(response=UserSerializer, description="✅ User updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied"),
             404: OpenApiResponse(description="🚫 User not found")
         },
@@ -229,6 +240,7 @@ from .permissions import UserPermission, BlacklistPermission
         - **❌ Regular Users**: No access to delete operations
         - **❌ Staff Members**: Cannot delete user accounts
         - **✅ Superuser ONLY**: Can delete any user account
+        - **⚠️ Email Verification Required**: Superuser must have verified email
         
         **💥 Consequences**:
         - User account permanently removed
@@ -242,7 +254,7 @@ from .permissions import UserPermission, BlacklistPermission
         """,
         responses={
             204: OpenApiResponse(description="✅ User deleted successfully"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(
                 description="🚫 Permission denied - Only superusers can delete users",
                 examples=[
@@ -260,19 +272,21 @@ from .permissions import UserPermission, BlacklistPermission
 )
 class UserViewSet(viewsets.ModelViewSet):
     """
-    🔐 **User Management ViewSet with Role-Based Access Control**
+    🔐 **User Management ViewSet with Email-Based Authentication**
     
-    Provides comprehensive user management with different access levels:
-    - **👤 Regular Users**: Self-management only
-    - **👔 Staff**: Full user administration  
-    - **🔧 Superusers**: Complete system control
+    Provides comprehensive user management with email-based authentication:
+    - **📧 Email as Username**: Users login with email instead of username
+    - **✅ Email Verification Required**: All users must verify email to access APIs
+    - **👤 Regular Users**: Self-management only (with verified email)
+    - **👔 Staff**: Full user administration (with verified email)
+    - **🔧 Superusers**: Complete system control (auto-verified email)
     """
     queryset = User.objects.all()
     permission_classes = [UserPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = UserFilter
-    search_fields = ['username', 'email', 'first_name', 'last_name', 'phone']
-    ordering_fields = ['username', 'email', 'date_joined', 'last_login']
+    search_fields = ['email', 'first_name', 'last_name', 'phone']
+    ordering_fields = ['email', 'date_joined', 'last_login']
     ordering = ['-date_joined']
     
     def get_serializer_class(self):
@@ -287,9 +301,9 @@ class UserViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         """Return appropriate permissions based on action"""
         if self.action == 'create':
-            # User registration is public
-            # SECURITY: UserCreateSerializer ensures only basic users are created
-            return [AllowAny()]
+            # User creation via this endpoint requires authentication
+            # Regular users should use /api/auth/register/ instead
+            return [IsAuthenticated()]
         return super().get_permissions()
     
     def get_queryset(self):
@@ -307,17 +321,19 @@ class UserViewSet(viewsets.ModelViewSet):
         Get the profile of the currently authenticated user.
         
         **🔐 Permission Requirements**: 
-        - **Authenticated User**: Any logged-in user can access their own profile
+        - **Authenticated User**: Any logged-in user with verified email can access their own profile
         
         **📋 Use Cases**:
         - Profile page display
         - User settings retrieval
         - Current user context
+        - Check email verification status
         
         **✨ Benefits**:
         - No need to know your own user ID
         - Always returns current user's data
         - Safe endpoint for user self-service
+        - Shows email verification status
         """,
         responses={
             200: OpenApiResponse(
@@ -329,16 +345,17 @@ class UserViewSet(viewsets.ModelViewSet):
                         summary='Your profile information',
                         value={
                             'id': 'current-user-uuid',
-                            'username': 'your_username',
+                            'email': 'your@email.com',
                             'first_name': 'Your',
                             'last_name': 'Name',
-                            'email': 'your@email.com',
-                            'status': 'active'
+                            'phone': '+1234567890',
+                            'status': 'active',
+                            'is_email_verified': True
                         }
                     )
                 ]
             ),
-            401: OpenApiResponse(description="🚫 Authentication required - Please login first")
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified")
         },
         tags=["User Management"]
     )
@@ -354,22 +371,23 @@ class UserViewSet(viewsets.ModelViewSet):
         Update the profile of the currently authenticated user.
         
         **🔐 Permission Requirements**: 
-        - **Authenticated User**: Any logged-in user can update their own profile
+        - **Authenticated User**: Any logged-in user with verified email can update their own profile
         
         **📝 Updatable Fields**:
-        - Personal information (name, email, phone)
-        - Account preferences
+        - Personal information (name, phone)
         - Contact details
+        - Account preferences
         
         **🚫 Restricted Fields**:
-        - Cannot change: username, status, admin flags
+        - Cannot change: `email`, `status`, admin flags, `is_email_verified`
         - Staff-only fields require staff permissions
+        - Email changes not allowed for security
         """,
         request=UserUpdateSerializer,
         responses={
             200: OpenApiResponse(response=UserSerializer, description="✅ Profile updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required")
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified")
         },
         tags=["User Management"]
     )
@@ -391,6 +409,7 @@ class UserViewSet(viewsets.ModelViewSet):
         - **❌ Regular Users**: No access to status changes
         - **✅ Staff Members**: Can change any user's status
         - **✅ Superusers**: Can change any user's status
+        - **⚠️ Email Verification Required**: Staff must have verified email
         
         **📊 Available Status Values**:
         - `active`: Normal active user account
@@ -406,6 +425,7 @@ class UserViewSet(viewsets.ModelViewSet):
         - Status changes are logged
         - Affects user's ability to login
         - Consider impact on active sessions
+        - Does not affect email verification status
         """,
         request=UserStatusChangeSerializer,
         responses={
@@ -418,7 +438,7 @@ class UserViewSet(viewsets.ModelViewSet):
                         summary='User account suspended',
                         value={
                             'id': 'user-uuid',
-                            'username': 'problem_user',
+                            'email': 'problem_user@example.com',
                             'status': 'suspended',
                             'updated_at': '2024-01-15T11:00:00Z'
                         }
@@ -435,7 +455,7 @@ class UserViewSet(viewsets.ModelViewSet):
                     )
                 ]
             ),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(
                 description="🚫 Permission denied - Staff access required",
                 examples=[
@@ -482,15 +502,18 @@ class UserViewSet(viewsets.ModelViewSet):
         - **❌ Regular Users**: No access
         - **❌ Staff Members**: No access  
         - **✅ Superuser ONLY**: Can create staff/superuser accounts
+        - **⚠️ Email Verification Required**: Superuser must have verified email
         
         **⚠️ SECURITY WARNING**:
         - This endpoint allows creating staff and superuser accounts
         - Use with extreme caution
         - Consider using Django Admin instead
+        - Created users still need to verify their email unless explicitly set
         """,
         request=AdminUserCreateSerializer,
         responses={
             201: OpenApiResponse(response=UserSerializer, description="✅ Privileged user created"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Superuser access required")
         },
         tags=["User Management"]
@@ -521,6 +544,7 @@ class UserViewSet(viewsets.ModelViewSet):
         - **❌ Regular Users**: No access to blacklist data
         - **✅ Staff Members**: Can view all blacklist entries
         - **✅ Superusers**: Full access to blacklist data
+        - **⚠️ Email Verification Required**: Staff must have verified email
         
         **🛡️ Security Feature**:
         - High-security operation for user safety
@@ -528,13 +552,13 @@ class UserViewSet(viewsets.ModelViewSet):
         - Used for automated access control
         
         **📊 Response Data**:
-        - Blacklisted user information
+        - Blacklisted user information (email-based)
         - Restriction reasons and types
         - Blacklist creation and update dates
         """,
         responses={
             200: OpenApiResponse(response=BlacklistSerializer(many=True), description="✅ Blacklist entries retrieved"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(
                 description="🚫 Permission denied - Staff access required for blacklist",
                 examples=[
@@ -557,6 +581,7 @@ class UserViewSet(viewsets.ModelViewSet):
         - **❌ Regular Users**: No access to blacklist operations
         - **✅ Staff Members**: Can create blacklist entries
         - **✅ Superusers**: Can create blacklist entries
+        - **⚠️ Email Verification Required**: Staff must have verified email
         
         **📝 Required Information**:
         - `user`: User ID to blacklist
@@ -572,7 +597,7 @@ class UserViewSet(viewsets.ModelViewSet):
         responses={
             201: OpenApiResponse(response=BlacklistSerializer, description="✅ User added to blacklist"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required")
         },
         tags=["User Management"]
@@ -582,11 +607,11 @@ class UserViewSet(viewsets.ModelViewSet):
         description="""
         Retrieve detailed information about a specific blacklist entry.
         
-        **🔐 Permission Requirements**: Staff access required
+        **🔐 Permission Requirements**: Staff access required with verified email
         """,
         responses={
             200: OpenApiResponse(response=BlacklistSerializer, description="✅ Blacklist entry details retrieved"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
             404: OpenApiResponse(description="🚫 Blacklist entry not found")
         },
@@ -600,12 +625,13 @@ class UserViewSet(viewsets.ModelViewSet):
         **🔐 Permission Requirements**: 
         - **❌ Regular Users**: No access
         - **✅ Staff/Superuser**: Can modify blacklist entries
+        - **⚠️ Email Verification Required**: Staff must have verified email
         """,
         request=BlacklistSerializer,
         responses={
             200: OpenApiResponse(response=BlacklistSerializer, description="✅ Blacklist entry updated"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
             404: OpenApiResponse(description="🚫 Blacklist entry not found")
         },
@@ -616,13 +642,13 @@ class UserViewSet(viewsets.ModelViewSet):
         description="""
         Update specific fields of a blacklist entry (Staff only).
         
-        **🔐 Permission Requirements**: Staff access required
+        **🔐 Permission Requirements**: Staff access required with verified email
         """,
         request=BlacklistSerializer,
         responses={
             200: OpenApiResponse(response=BlacklistSerializer, description="✅ Blacklist entry updated"),
             400: OpenApiResponse(description="❌ Validation error"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied"),
             404: OpenApiResponse(description="🚫 Blacklist entry not found")
         },
@@ -636,6 +662,7 @@ class UserViewSet(viewsets.ModelViewSet):
         **🔐 Permission Requirements**: 
         - **❌ Regular Users**: No access
         - **✅ Staff/Superuser**: Can remove blacklist entries
+        - **⚠️ Email Verification Required**: Staff must have verified email
         
         **📋 Use Cases**:
         - User appeal approved
@@ -644,7 +671,7 @@ class UserViewSet(viewsets.ModelViewSet):
         """,
         responses={
             204: OpenApiResponse(description="✅ User removed from blacklist"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
+            401: OpenApiResponse(description="🚫 Authentication required or email not verified"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
             404: OpenApiResponse(description="🚫 Blacklist entry not found")
         },
@@ -657,6 +684,7 @@ class BlacklistViewSet(viewsets.ModelViewSet):
     
     Manages user blacklist entries with strict staff-only access:
     - **🔒 Staff Only**: All blacklist operations require staff privileges
+    - **📧 Email Verification Required**: Staff must have verified email
     - **📊 Security Logging**: All operations should be logged
     - **⚡ Access Control**: Affects user system access immediately
     """
@@ -664,7 +692,7 @@ class BlacklistViewSet(viewsets.ModelViewSet):
     permission_classes = [BlacklistPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = BlacklistFilter
-    search_fields = ['reason', 'user__username', 'user__email']
+    search_fields = ['reason', 'user__email', 'user__first_name', 'user__last_name']
     ordering_fields = ['created_at', 'updated_at', 'status']
     ordering = ['-created_at']
     

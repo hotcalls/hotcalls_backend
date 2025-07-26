@@ -1,1 +1,1 @@
-# Management API modules 
+# Management API package 
