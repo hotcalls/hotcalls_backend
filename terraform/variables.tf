@@ -188,6 +188,26 @@ variable "log_retention_days" {
   default     = 30
 }
 
+# New variables (added to align with terraform.tfvars)
+
+variable "log_analytics_sku" {
+  description = "SKU tier for Log Analytics workspace"
+  type        = string
+  default     = "PerGB2018"
+}
+
+variable "app_image_tag" {
+  description = "Docker image tag for application deployments"
+  type        = string
+  default     = "latest"
+}
+
+variable "app_replica_count" {
+  description = "Number of application replicas"
+  type        = number
+  default     = 1
+}
+
 # Tags
 variable "default_tags" {
   description = "Default tags to apply to all resources"
@@ -220,4 +240,16 @@ variable "alert_email_addresses" {
   description = "Email addresses for alerts"
   type        = list(string)
   default     = []
+}
+
+variable "enable_api_management" {
+  description = "Enable API Management service"
+  type        = bool
+  default     = false
+}
+
+variable "enable_monitoring_alerts" {
+  description = "Enable monitoring alerts"
+  type        = bool
+  default     = true
 } 

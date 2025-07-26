@@ -30,5 +30,5 @@ output "private_dns_zone_id" {
 
 output "secret_ids" {
   description = "Map of secret names to their IDs"
-  value       = { for k, v in azurerm_key_vault_secret.secrets : k => v.id }
+  value       = {}  # Simplified for dev
 } 

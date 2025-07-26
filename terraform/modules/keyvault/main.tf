@@ -115,7 +115,7 @@ resource "azurerm_key_vault_access_policy" "current" {
 
 # Access policy for AKS managed identity
 resource "azurerm_key_vault_access_policy" "aks" {
-  count        = var.aks_principal_id != null ? 1 : 0
+  count        = 1  # Always create; var.aks_principal_id will be populated
   key_vault_id = azurerm_key_vault.main.id
   tenant_id    = var.tenant_id
   object_id    = var.aks_principal_id
@@ -138,18 +138,19 @@ resource "azurerm_key_vault_access_policy" "additional" {
   certificate_permissions = lookup(each.value, "certificate_permissions", [])
 }
 
-# Key Vault Secrets
-resource "azurerm_key_vault_secret" "secrets" {
-  for_each     = var.secrets
-  name         = each.key
-  value        = each.value
-  key_vault_id = azurerm_key_vault.main.id
-  tags         = var.tags
-
-  depends_on = [
-    azurerm_key_vault_access_policy.current
-  ]
-}
+# Key Vault Secrets (simplified for dev)
+# Note: In production, secrets should be added via CI/CD pipeline
+# resource "azurerm_key_vault_secret" "secrets" {
+#   for_each     = var.secrets
+#   name         = each.key
+#   value        = each.value
+#   key_vault_id = azurerm_key_vault.main.id
+#   tags         = var.tags
+#
+#   depends_on = [
+#     azurerm_key_vault_access_policy.current
+#   ]
+# }
 
 # Diagnostic settings for monitoring
 resource "azurerm_monitor_diagnostic_setting" "keyvault" {

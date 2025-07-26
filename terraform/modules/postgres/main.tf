@@ -1,15 +1,17 @@
 # Private DNS Zone for PostgreSQL
 resource "azurerm_private_dns_zone" "postgres" {
+  count               = var.virtual_network_id != null ? 1 : 0
   name                = "${var.name}.private.postgres.database.azure.com"
   resource_group_name = var.resource_group_name
   tags                = var.tags
 }
 
-# Private DNS Zone Virtual Network Link
+# Private DNS Zone Virtual Network Link (only if VNet provided)
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
+  count                 = var.virtual_network_id != null ? 1 : 0
   name                  = "${var.name}-dns-link"
   resource_group_name   = var.resource_group_name
-  private_dns_zone_name = azurerm_private_dns_zone.postgres.name
+  private_dns_zone_name = azurerm_private_dns_zone.postgres[0].name
   virtual_network_id    = var.virtual_network_id
   registration_enabled  = false
   tags                  = var.tags
@@ -38,7 +40,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   
   # Network configuration - private access
   delegated_subnet_id = var.delegated_subnet_id
-  private_dns_zone_id = azurerm_private_dns_zone.postgres.id
+  private_dns_zone_id = var.virtual_network_id != null ? azurerm_private_dns_zone.postgres[0].id : null
   
   # High availability (optional)
   dynamic "high_availability" {

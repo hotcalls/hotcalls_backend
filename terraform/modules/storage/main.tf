@@ -25,14 +25,15 @@ resource "azurerm_storage_account" "main" {
 resource "azurerm_storage_container" "static" {
   name                  = "static"
   storage_account_name  = azurerm_storage_account.main.name
-  container_access_type = "blob"
+  # Private access (public blobs not permitted)
+  container_access_type = "private"
 }
 
 # Container for media files
 resource "azurerm_storage_container" "media" {
   name                  = "media"
   storage_account_name  = azurerm_storage_account.main.name
-  container_access_type = "blob"
+  container_access_type = "private"
 }
 
 # Container for backups

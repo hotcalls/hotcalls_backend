@@ -65,10 +65,7 @@ resource "azurerm_kubernetes_cluster" "main" {
     azure_rbac_enabled = true
   }
 
-  # Add-ons
-  oms_agent {
-    log_analytics_workspace_id = var.log_analytics_workspace_id
-  }
+# Add-ons (OMS agent removed – will be added later when workspace is available)
 
   key_vault_secrets_provider {
     secret_rotation_enabled = true

@@ -19,8 +19,8 @@ output "database_name" {
 }
 
 output "private_dns_zone_id" {
-  description = "ID of the private DNS zone"
-  value       = azurerm_private_dns_zone.postgres.id
+  description = "ID of the private DNS zone (if created)"
+  value       = length(azurerm_private_dns_zone.postgres) > 0 ? azurerm_private_dns_zone.postgres[0].id : null
 }
 
 output "connection_string" {

@@ -65,8 +65,9 @@ module "acr" {
   source = "./modules/acr"
   
   resource_group_name = azurerm_resource_group.main.name
-  location           = var.location
-  name               = "${local.resource_prefix}-acr-${local.unique_suffix}"
+  location            = var.location
+  # ACR name must be 5-50 characters, lowercase letters/numbers only – remove hyphens and trim length
+  name = lower(substr(replace("${local.resource_prefix}acr${local.unique_suffix}", "-", ""), 0, 50))
   
   tags = local.common_tags
 }
@@ -97,19 +98,20 @@ module "postgres" {
   source = "./modules/postgres"
   
   resource_group_name = azurerm_resource_group.main.name
-  location           = var.location
-  name               = "${local.resource_prefix}-postgres"
+  location            = var.location
+  name                = "${local.resource_prefix}-postgres"
   
   admin_username = var.postgres_admin_username
   admin_password = local.postgres_password
   
-  sku_name               = var.postgres_sku_name
-  storage_mb             = var.postgres_storage_mb
-  backup_retention_days  = var.postgres_backup_retention_days
-  postgres_version       = var.postgres_version
+  sku_name              = var.postgres_sku_name
+  storage_mb            = var.postgres_storage_mb
+  backup_retention_days = var.postgres_backup_retention_days
+  postgres_version      = var.postgres_version
   
-  virtual_network_id         = module.network.vnet_id
-  private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
+  # Use public network access for initial deployment; VNet integration requires delegated subnet
+  virtual_network_id         = null
+  private_endpoint_subnet_id = null
   
   tags = local.common_tags
   
@@ -122,7 +124,8 @@ module "keyvault" {
   
   resource_group_name = azurerm_resource_group.main.name
   location           = var.location
-  name               = "${local.resource_prefix}-kv-${local.unique_suffix}"
+  # Key Vault name: 3-24 characters, only alphanumeric and dashes (no hyphen at start or end).
+  name = lower(substr(replace("${local.resource_prefix}kv${local.unique_suffix}", "-", ""), 0, 24))
   
   tenant_id = data.azurerm_client_config.current.tenant_id
   
@@ -149,7 +152,8 @@ module "keyvault" {
 module "storage" {
   source = "./modules/storage"
   
-  storage_account_name = "${var.project_name}${var.environment}st${local.unique_suffix}"
+  # Storage account names: 3-24 chars, lowercase letters/numbers only
+  storage_account_name = lower(substr("${var.project_name}st${local.unique_suffix}",0,24))
   resource_group_name  = azurerm_resource_group.main.name
   location            = var.location
   

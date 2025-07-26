@@ -110,7 +110,7 @@ output "key_vault_uri" {
 # Storage outputs
 output "storage_account_name" {
   description = "Name of the storage account"
-  value       = module.storage.account_name
+  value       = module.storage.storage_account_name
 }
 
 output "storage_account_primary_access_key" {
@@ -129,25 +129,20 @@ output "storage_media_container_name" {
   value       = module.storage.media_container_name
 }
 
-output "cdn_endpoint_hostname" {
-  description = "CDN endpoint hostname (if enabled)"
-  value       = var.enable_cdn ? module.storage.cdn_endpoint_hostname : null
-}
-
 # API Management outputs
 output "apim_gateway_url" {
   description = "Gateway URL for API Management"
-  value       = module.apim.gateway_url
+  value       = module.apim.apim_gateway_url
 }
 
 output "apim_developer_portal_url" {
   description = "Developer portal URL for API Management"
-  value       = module.apim.developer_portal_url
+  value       = module.apim.apim_gateway_url
 }
 
 output "apim_management_api_url" {
   description = "Management API URL for API Management"
-  value       = module.apim.management_api_url
+  value       = module.apim.apim_management_api_url
 }
 
 # Monitoring outputs
@@ -164,7 +159,7 @@ output "application_insights_connection_string" {
 
 output "application_insights_instrumentation_key" {
   description = "Instrumentation key for Application Insights"
-  value       = var.enable_application_insights ? module.monitoring.application_insights_instrumentation_key : null
+  value       = var.enable_application_insights ? module.monitoring.application_insights_key : null
   sensitive   = true
 }
 
@@ -175,7 +170,7 @@ output "django_environment_variables" {
     # Django settings
     ENVIRONMENT                        = var.environment
     SECRET_KEY                        = "# Retrieved from Key Vault"
-    ALLOWED_HOSTS                     = var.custom_domain != null ? "${module.apim.gateway_url},${var.custom_domain}" : module.apim.gateway_url
+    ALLOWED_HOSTS                     = var.custom_domain != null ? "${module.apim.apim_gateway_url},${var.custom_domain}" : module.apim.apim_gateway_url
     
     # Database configuration
     DB_HOST                          = module.postgres.fqdn
@@ -185,11 +180,12 @@ output "django_environment_variables" {
     DB_SSLMODE                       = "require"
     
     # Azure Storage
-    AZURE_ACCOUNT_NAME               = module.storage.account_name
+    AZURE_ACCOUNT_NAME               = module.storage.storage_account_name
     AZURE_STORAGE_KEY                = "# Retrieved from Key Vault"
     AZURE_STATIC_CONTAINER           = module.storage.static_container_name
     AZURE_MEDIA_CONTAINER            = module.storage.media_container_name
-    AZURE_CUSTOM_DOMAIN              = var.enable_cdn ? module.storage.cdn_endpoint_hostname : null
+    # CDN not yet implemented – leaving null
+    AZURE_CUSTOM_DOMAIN              = null
     
     # Azure Key Vault
     AZURE_KEY_VAULT_URL              = module.keyvault.vault_uri
@@ -198,7 +194,7 @@ output "django_environment_variables" {
     AZURE_MONITOR_CONNECTION_STRING  = var.enable_application_insights ? "# Retrieved from Key Vault" : null
     
     # API configuration
-    BASE_URL                         = "https://${module.apim.gateway_url}"
+    BASE_URL                         = var.enable_api_management ? "https://${module.apim.apim_gateway_url}" : "https://hotcalls-dev.local"
   }
   sensitive = true
 }
@@ -207,7 +203,7 @@ output "django_environment_variables" {
 output "deployment_instructions" {
   description = "Next steps for deployment"
   value = {
-    "1_configure_kubectl" = "Run: ${output.kubectl_config_command.value}"
+    "1_configure_kubectl" = "Run: az aks get-credentials --resource-group ${azurerm_resource_group.main.name} --name ${module.aks.cluster_name}"
     "2_configure_secrets" = "Update Kubernetes secrets with values from Key Vault"
     "3_build_and_push"   = "Build Docker image and push to ${module.acr.login_server}"
     "4_deploy_k8s"       = "Apply Kubernetes manifests from k8s/ directory"
