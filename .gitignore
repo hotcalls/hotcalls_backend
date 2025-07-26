@@ -222,3 +222,6 @@ cython_debug/
 hotcalls/__pycache__/__init__.cpython-312.pyc
 
 pyrightconfig.json
+# Secret files
+create-staging-secrets.sh
+secrets.yaml
