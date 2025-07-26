@@ -3,13 +3,76 @@ set -e
 
 echo "🚀 Starting staging deployment..."
 
-# Variables
-ENVIRONMENT=${1:-staging}
-RESOURCE_GROUP="hotcalls-${ENVIRONMENT}-ne-rg"
-AKS_CLUSTER="hotcalls-${ENVIRONMENT}-ne-aks"
+# Default values
+ENVIRONMENT="staging"
+FORCE_ALL=false
+RG_INDEX=""
 
-# Terraform outputs
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --force-all)
+      FORCE_ALL=true
+      shift
+      ;;
+    --rg-index)
+      RG_INDEX="-index-$2"
+      shift 2
+      ;;
+    *)
+      ENVIRONMENT="$1"
+      shift
+      ;;
+  esac
+done
+
+# Variables
+RESOURCE_GROUP="hotcalls-${ENVIRONMENT}-ne-rg${RG_INDEX}"
+AKS_CLUSTER="hotcalls-${ENVIRONMENT}-ne-aks${RG_INDEX}"
+BRANCH=${ENVIRONMENT}  # Use environment name as branch name
+
+echo "📋 Deployment Configuration:"
+echo "   Environment: ${ENVIRONMENT}"
+echo "   Resource Group: ${RESOURCE_GROUP}"
+echo "   AKS Cluster: ${AKS_CLUSTER}"
+echo "   Force Terraform: ${FORCE_ALL}"
+echo "   Branch: ${BRANCH}"
+
+# Ensure we're on the correct branch and have latest code
+echo "🔄 Switching to ${BRANCH} branch and pulling latest changes..."
+git checkout $BRANCH
+git pull origin $BRANCH
+
+# Terraform management
 cd terraform
+
+if [ "$FORCE_ALL" = true ]; then
+  echo "💥 Force mode: Destroying and recreating infrastructure..."
+  
+  # Check if infrastructure exists and destroy it
+  if terraform state list &> /dev/null && [ $(terraform state list | wc -l) -gt 0 ]; then
+    echo "🗑️ Destroying existing infrastructure..."
+    terraform destroy -auto-approve -var-file="staging.tfvars" \
+      -var="environment=${ENVIRONMENT}" \
+      -var="tags={Environment=\"${ENVIRONMENT^}\",Project=\"HotCalls\",ManagedBy=\"Terraform\"}"
+  fi
+  
+  echo "🏗️ Creating new infrastructure..."
+  terraform init
+  terraform apply -auto-approve -var-file="staging.tfvars" \
+    -var="environment=${ENVIRONMENT}" \
+    -var="tags={Environment=\"${ENVIRONMENT^}\",Project=\"HotCalls\",ManagedBy=\"Terraform\"}"
+    
+elif ! terraform state list &> /dev/null || [ $(terraform state list | wc -l) -eq 0 ]; then
+  echo "🏗️ No infrastructure found, creating new infrastructure..."
+  terraform init
+  terraform apply -auto-approve -var-file="staging.tfvars" \
+    -var="environment=${ENVIRONMENT}" \
+    -var="tags={Environment=\"${ENVIRONMENT^}\",Project=\"HotCalls\",ManagedBy=\"Terraform\"}"
+else
+  echo "✅ Infrastructure exists, skipping Terraform deployment..."
+fi
+
 echo "📦 Getting Terraform outputs..."
 ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
 ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
@@ -172,6 +235,12 @@ EOF
 echo "🏗️ Building frontend..."
 if [ -d "../hotcalls-visual-prototype" ]; then
   cd ../hotcalls-visual-prototype
+  
+  # Switch to the correct branch and pull latest changes
+  echo "🔄 Switching frontend repo to ${BRANCH} branch..."
+  git checkout $BRANCH
+  git pull origin $BRANCH
+  
   docker build -f ../hotcalls/frontend-deploy/Dockerfile -t ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT} .
   docker push ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT}
   cd ../hotcalls
@@ -292,4 +361,11 @@ if [ ! -z "$EXTERNAL_IP" ]; then
 else
   echo "⚠️ External IP not yet assigned. Check with:"
   echo "kubectl get svc -n ingress-nginx ingress-nginx-controller"
-fi 
+fi
+
+echo ""
+echo "💡 Usage examples:"
+echo "   ./redeploy-staging.sh                    # Deploy to default staging"
+echo "   ./redeploy-staging.sh --force-all        # Recreate infrastructure + deploy"
+echo "   ./redeploy-staging.sh --rg-index 2       # Deploy to hotcalls-staging-ne-rg-index-2"
+echo "   ./redeploy-staging.sh staging --rg-index 1 --force-all  # Full recreate with index" 
