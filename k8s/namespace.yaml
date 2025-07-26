@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hotcalls-production
+  labels:
+    name: hotcalls-production
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/part-of: hotcalls
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hotcalls-staging
+  labels:
+    name: hotcalls-staging
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/part-of: hotcalls
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hotcalls-development
+  labels:
+    name: hotcalls-development
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/part-of: hotcalls 

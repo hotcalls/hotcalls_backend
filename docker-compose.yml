@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: hotcalls_db
+      POSTGRES_USER: hotcalls_user
+      POSTGRES_PASSWORD: hotcalls_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hotcalls_user -d hotcalls_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8000:8000"
+    environment:
+      - DEBUG=True
+      - DB_HOST=db
+      - DB_NAME=hotcalls_db
+      - DB_USER=hotcalls_user
+      - DB_PASSWORD=hotcalls_pass
+      - REDIS_HOST=redis
+      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+      - CORS_ALLOW_ALL_ORIGINS=True
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  celery:
+    build:
+      context: .
+      target: development
+    environment:
+      - DEBUG=True
+      - DB_HOST=db
+      - DB_NAME=hotcalls_db
+      - DB_USER=hotcalls_user
+      - DB_PASSWORD=hotcalls_pass
+      - REDIS_HOST=redis
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A hotcalls worker -l info
+
+  celery-beat:
+    build:
+      context: .
+      target: development
+    environment:
+      - DEBUG=True
+      - DB_HOST=db
+      - DB_NAME=hotcalls_db
+      - DB_USER=hotcalls_user
+      - DB_PASSWORD=hotcalls_pass
+      - REDIS_HOST=redis
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A hotcalls beat -l info
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume: 

@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: hotcalls-backend-service
+  namespace: hotcalls-production
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: backend
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: backend
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hotcalls-backend-headless
+  namespace: hotcalls-production
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: backend
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: backend 

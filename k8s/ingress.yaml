@@ -1,0 +1,92 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hotcalls-ingress
+  namespace: hotcalls-production
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: ingress
+  annotations:
+    # Application Gateway Ingress Controller annotations
+    kubernetes.io/ingress.class: azure/application-gateway
+    appgw.ingress.kubernetes.io/ssl-redirect: "true"
+    appgw.ingress.kubernetes.io/connection-draining: "true"
+    appgw.ingress.kubernetes.io/connection-draining-timeout: "30"
+    appgw.ingress.kubernetes.io/cookie-based-affinity: "false"
+    appgw.ingress.kubernetes.io/request-timeout: "30"
+    appgw.ingress.kubernetes.io/use-private-ip: "false"
+    
+    # Health checks
+    appgw.ingress.kubernetes.io/health-probe-path: "/health/"
+    appgw.ingress.kubernetes.io/health-probe-port: "80"
+    appgw.ingress.kubernetes.io/health-probe-interval: "30"
+    appgw.ingress.kubernetes.io/health-probe-timeout: "5"
+    appgw.ingress.kubernetes.io/health-probe-unhealthy-threshold: "3"
+    
+    # WAF policies
+    appgw.ingress.kubernetes.io/waf-policy-for-path: "/subscriptions/{subscription-id}/resourceGroups/{resource-group}/providers/Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies/{waf-policy-name}"
+spec:
+  tls:
+  - hosts:
+    - api.hotcalls.com  # Replace with your domain
+    secretName: hotcalls-tls-secret
+  rules:
+  - host: api.hotcalls.com  # Replace with your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hotcalls-backend-service
+            port:
+              number: 80
+
+---
+# Alternative Ingress for NGINX (if not using Application Gateway)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: hotcalls-nginx-ingress
+  namespace: hotcalls-production
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: ingress
+  annotations:
+    # NGINX Ingress Controller annotations
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    
+    # CORS
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://app.hotcalls.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization"
+    
+    # Certificate manager (if using cert-manager)
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  tls:
+  - hosts:
+    - api.hotcalls.com  # Replace with your domain
+    secretName: hotcalls-nginx-tls
+  rules:
+  - host: api.hotcalls.com  # Replace with your domain
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: hotcalls-backend-service
+            port:
+              number: 80 
