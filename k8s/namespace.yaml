@@ -1,26 +1,13 @@
+# Dynamic Namespace Template
+# Usage: envsubst < namespace.yaml | kubectl apply -f -
+# Set ENVIRONMENT variable first: export ENVIRONMENT=dev|staging|prod
+
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: hotcalls-production
+  name: hotcalls-${ENVIRONMENT:-dev}
   labels:
-    name: hotcalls-production
+    name: hotcalls-${ENVIRONMENT:-dev}
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/part-of: hotcalls
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: hotcalls-staging
-  labels:
-    name: hotcalls-staging
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/part-of: hotcalls
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: hotcalls-development
-  labels:
-    name: hotcalls-development
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/part-of: hotcalls 
+    environment: ${ENVIRONMENT:-dev} 

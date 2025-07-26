@@ -28,14 +28,13 @@ terraform {
     }
   }
 
-  backend "azurerm" {
-    # These values should be set via environment variables or terraform init -backend-config
-    # resource_group_name  = "hotcalls-tfstate-rg"
-    # storage_account_name = "hotcallstfstate"
-    # container_name       = "tfstate"
-    # key                  = "hotcalls.tfstate"
-    
-    # Enable state locking
-    use_msi = false
-  }
+  # Backend configuration commented out for local development
+  # Uncomment and configure for production team environments
+  # backend "azurerm" {
+  #   resource_group_name  = "hotcalls-tfstate-rg"
+  #   storage_account_name = "hotcallstfstate"
+  #   container_name       = "tfstate"
+  #   key                  = "hotcalls.tfstate"
+  #   use_msi = false
+  # }
 } 

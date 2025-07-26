@@ -1,23 +1,27 @@
+# Dynamic ConfigMap Template
+# Usage: envsubst < configmap.yaml | kubectl apply -f -
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: hotcalls-config
-  namespace: hotcalls-production
+  namespace: hotcalls-${ENVIRONMENT:-dev}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: config
+    environment: ${ENVIRONMENT:-dev}
 data:
   # Django settings
-  ENVIRONMENT: "production"
-  DEBUG: "False"
-  TIME_ZONE: "Europe/Berlin"
+  ENVIRONMENT: "${ENVIRONMENT:-dev}"
+  DEBUG: "${DEBUG:-True}"
+  TIME_ZONE: "${TIME_ZONE:-Europe/Berlin}"
   
   # Database configuration (non-sensitive)
   DB_ENGINE: "django.db.backends.postgresql"
   DB_PORT: "5432"
-  DB_SSLMODE: "require"
+  DB_SSLMODE: "${DB_SSLMODE:-prefer}"
   
-  # Redis configuration (non-sensitive)
+  # Redis configuration (non-sensitive)  
   REDIS_PORT: "6379"
   REDIS_DB: "0"
   
@@ -26,102 +30,17 @@ data:
   AZURE_MEDIA_CONTAINER: "media"
   
   # Security settings
-  SECURE_SSL_REDIRECT: "True"
-  SESSION_COOKIE_SECURE: "True"
-  CSRF_COOKIE_SECURE: "True"
-  SECURE_BROWSER_XSS_FILTER: "True"
-  SECURE_CONTENT_TYPE_NOSNIFF: "True"
-  X_FRAME_OPTIONS: "DENY"
+  SECURE_SSL_REDIRECT: "${SECURE_SSL_REDIRECT:-False}"
+  SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-False}"
+  CSRF_COOKIE_SECURE: "${CSRF_COOKIE_SECURE:-False}"
+  SECURE_BROWSER_XSS_FILTER: "${SECURE_BROWSER_XSS_FILTER:-True}"
+  SECURE_CONTENT_TYPE_NOSNIFF: "${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+  X_FRAME_OPTIONS: "${X_FRAME_OPTIONS:-DENY}"
   
-  # CORS settings
-  CORS_ALLOW_ALL_ORIGINS: "False"
-  CORS_ALLOW_CREDENTIALS: "True"
-  
-  # Logging
-  DJANGO_LOG_LEVEL: "INFO"
-  
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hotcalls-config
-  namespace: hotcalls-staging
-  labels:
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: config
-data:
-  # Django settings
-  ENVIRONMENT: "staging"
-  DEBUG: "False"
-  TIME_ZONE: "Europe/Berlin"
-  
-  # Database configuration (non-sensitive)
-  DB_ENGINE: "django.db.backends.postgresql"
-  DB_PORT: "5432"
-  DB_SSLMODE: "require"
-  
-  # Redis configuration (non-sensitive)
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
-  
-  # Storage configuration
-  AZURE_STATIC_CONTAINER: "static"
-  AZURE_MEDIA_CONTAINER: "media"
-  
-  # Security settings (relaxed for staging)
-  SECURE_SSL_REDIRECT: "False"
-  SESSION_COOKIE_SECURE: "False"
-  CSRF_COOKIE_SECURE: "False"
-  SECURE_BROWSER_XSS_FILTER: "True"
-  SECURE_CONTENT_TYPE_NOSNIFF: "True"
-  X_FRAME_OPTIONS: "DENY"
-  
-  # CORS settings
-  CORS_ALLOW_ALL_ORIGINS: "True"
-  CORS_ALLOW_CREDENTIALS: "True"
+  # Celery settings
+  CELERY_TASK_ALWAYS_EAGER: "${CELERY_TASK_ALWAYS_EAGER:-False}"
+  CELERY_TASK_EAGER_PROPAGATES: "${CELERY_TASK_EAGER_PROPAGATES:-True}"
   
   # Logging
-  DJANGO_LOG_LEVEL: "DEBUG"
-  
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hotcalls-config
-  namespace: hotcalls-development
-  labels:
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: config
-data:
-  # Django settings
-  ENVIRONMENT: "development"
-  DEBUG: "True"
-  TIME_ZONE: "Europe/Berlin"
-  
-  # Database configuration (non-sensitive)
-  DB_ENGINE: "django.db.backends.postgresql"
-  DB_PORT: "5432"
-  DB_SSLMODE: "prefer"
-  
-  # Redis configuration (non-sensitive)
-  REDIS_PORT: "6379"
-  REDIS_DB: "0"
-  
-  # Storage configuration
-  AZURE_STATIC_CONTAINER: "static"
-  AZURE_MEDIA_CONTAINER: "media"
-  
-  # Security settings (relaxed for development)
-  SECURE_SSL_REDIRECT: "False"
-  SESSION_COOKIE_SECURE: "False"
-  CSRF_COOKIE_SECURE: "False"
-  SECURE_BROWSER_XSS_FILTER: "False"
-  SECURE_CONTENT_TYPE_NOSNIFF: "False"
-  X_FRAME_OPTIONS: "DENY"
-  
-  # CORS settings
-  CORS_ALLOW_ALL_ORIGINS: "True"
-  CORS_ALLOW_CREDENTIALS: "True"
-  
-  # Logging
-  DJANGO_LOG_LEVEL: "DEBUG" 
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  DJANGO_LOG_LEVEL: "${DJANGO_LOG_LEVEL:-INFO}" 

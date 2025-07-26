@@ -198,3 +198,26 @@ variable "default_tags" {
     Repository  = "hotcalls"
   }
 } 
+
+variable "tags" {
+  description = "A map of tags to assign to the resources"
+  type        = map(string)
+  default = {
+    Project     = "HotCalls"
+    ManagedBy   = "Terraform"
+    Repository  = "hotcalls"
+  }
+}
+
+# Additional missing variables
+variable "kubernetes_version" {
+  description = "Kubernetes version for AKS"
+  type        = string
+  default     = "1.28"
+}
+
+variable "alert_email_addresses" {
+  description = "Email addresses for alerts"
+  type        = list(string)
+  default     = []
+} 

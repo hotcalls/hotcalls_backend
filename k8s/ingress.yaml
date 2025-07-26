@@ -2,7 +2,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hotcalls-ingress
-  namespace: hotcalls-production
+  namespace: hotcalls-${ENVIRONMENT:-dev}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: ingress
@@ -48,7 +48,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: hotcalls-nginx-ingress
-  namespace: hotcalls-production
+  namespace: hotcalls-${ENVIRONMENT:-dev}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: ingress

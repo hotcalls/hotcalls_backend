@@ -149,17 +149,15 @@ module "keyvault" {
 module "storage" {
   source = "./modules/storage"
   
-  resource_group_name = azurerm_resource_group.main.name
-  location           = var.location
-  name               = "${var.project_name}${var.environment}st${local.unique_suffix}"
+  storage_account_name = "${var.project_name}${var.environment}st${local.unique_suffix}"
+  resource_group_name  = azurerm_resource_group.main.name
+  location            = var.location
   
-  account_tier             = var.storage_account_tier
-  account_replication_type = var.storage_account_replication_type
+  account_tier       = var.storage_account_tier
+  replication_type   = var.storage_account_replication_type
   
-  enable_cdn = var.enable_cdn
-  
-  virtual_network_id         = module.network.vnet_id
-  private_endpoint_subnet_id = module.network.private_endpoint_subnet_id
+  private_endpoint_enabled   = false  # Simplified for dev
+  private_endpoint_subnet_id = ""
   
   tags = local.common_tags
   
@@ -170,18 +168,16 @@ module "storage" {
 module "apim" {
   source = "./modules/apim"
   
+  enable_apim         = var.enable_api_management
+  apim_name          = "${local.resource_prefix}-apim"
   resource_group_name = azurerm_resource_group.main.name
   location           = var.location
-  name               = "${local.resource_prefix}-apim"
   
   sku_name         = var.apim_sku_name
   publisher_name   = var.apim_publisher_name
   publisher_email  = var.apim_publisher_email
   
-  custom_domain = var.custom_domain
-  
-  virtual_network_id = module.network.vnet_id
-  subnet_id         = module.network.aks_subnet_id
+  backend_service_url = ""  # Will be set after AKS deployment
   
   tags = local.common_tags
   
@@ -192,12 +188,15 @@ module "apim" {
 module "monitoring" {
   source = "./modules/monitoring"
   
+  project_name        = var.project_name
+  log_analytics_name  = "${local.resource_prefix}-logs"
+  app_insights_name   = "${local.resource_prefix}-appinsights"
   resource_group_name = azurerm_resource_group.main.name
   location           = var.location
-  name_prefix        = local.resource_prefix
   
-  enable_application_insights = var.enable_application_insights
-  log_retention_days         = var.log_retention_days
+  enable_alerts         = var.enable_monitoring_alerts
+  retention_days        = var.log_retention_days
+  alert_email_addresses = var.alert_email_addresses
   
   # Connect to AKS for container insights
   aks_cluster_id = module.aks.cluster_id
