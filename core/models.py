@@ -460,14 +460,17 @@ class Calendar(models.Model):
     calendar_type = models.CharField(
         max_length=20,
         choices=CALENDAR_TYPE_CHOICES,
-        help_text="Calendar provider type"
+        help_text="Calendar provider type",
+        default="google"
     )
     account_id = models.CharField(
         max_length=255,
-        help_text="Account ID for the calendar service"
+        help_text="Account ID for the calendar service",
+        default="default@calendar.com"
     )
     auth_token = models.TextField(
-        help_text="Authentication token for calendar access"
+        help_text="Authentication token for calendar access",
+        default="default_token"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -489,23 +492,28 @@ class CalendarConfiguration(models.Model):
     )
     sub_calendar_id = models.CharField(
         max_length=255,
-        help_text="Google subcalendar or actual calendar ID"
+        help_text="Google subcalendar or actual calendar ID",
+        default="primary"
     )
     duration = models.IntegerField(
-        help_text="Duration of appointments in minutes"
+        help_text="Duration of appointments in minutes",
+        default=30
     )
     prep_time = models.IntegerField(
-        help_text="Preparation time in minutes before appointments"
+        help_text="Preparation time in minutes before appointments",
+        default=5
     )
     days_buffer = models.IntegerField(
         default=0,
         help_text="Days buffer for scheduling (0 = same day)"
     )
     from_time = models.TimeField(
-        help_text="Start time for scheduling availability"
+        help_text="Start time for scheduling availability",
+        default="09:00:00"
     )
     to_time = models.TimeField(
-        help_text="End time for scheduling availability"
+        help_text="End time for scheduling availability", 
+        default="17:00:00"
     )
     workdays = models.JSONField(
         default=list,
