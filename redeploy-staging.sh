@@ -543,7 +543,7 @@ for i in {1..24}; do
     # Update BASE_URL if --map-ip flag is specified
     if [ "$MAP_IP" = true ]; then
       echo "🔄 Updating BASE_URL to use external IP..."
-      kubectl patch secret hotcalls-secrets -n hotcalls-${ENVIRONMENT} -p "{\"data\":{\"BASE_URL\":\"$(echo -n "http://$EXTERNAL_IP/" | base64 -w 0)\"}}"
+      kubectl patch secret hotcalls-secrets -n hotcalls-${ENVIRONMENT} -p "{\"data\":{\"BASE_URL\":\"$(echo -n "http://$EXTERNAL_IP/" | base64)\"}}"
       kubectl rollout restart deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT}
       echo "✅ BASE_URL updated to http://$EXTERNAL_IP/"
     fi
