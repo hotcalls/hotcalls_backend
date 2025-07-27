@@ -80,7 +80,7 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         Create a new AI agent for a workspace.
         
         **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot create agents
+        - **✅ Regular Users**: Can create agents in workspaces they belong to
         - **✅ Staff Members**: Can create agents for any workspace
         - **✅ Superusers**: Can create agents for any workspace
         
@@ -91,8 +91,10 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         - Calendar integration options
         
         **📝 Required Information**:
-        - `workspace`: Target workspace ID
-        - `greeting`: Agent greeting message
+        - `workspace`: Target workspace ID (must be a workspace you belong to)
+        - `name`: Agent name
+        - `greeting_inbound`: Greeting for inbound calls
+        - `greeting_outbound`: Greeting for outbound calls
         - `voice`: Voice configuration
         - `language`: Agent language
         - `workdays`: Available working days
@@ -111,7 +113,9 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
                         value={
                             'agent_id': 'new-agent-uuid',
                             'workspace_name': 'Customer Support',
-                            'greeting': 'Hi! I\'m your AI assistant. How can I help you today?',
+                            'name': 'Sales Assistant',
+                            'greeting_inbound': 'Hi! I\'m your AI assistant. How can I help you today?',
+                            'greeting_outbound': 'Hello! I\'m calling from [Company]. Is this a good time to talk?',
                             'voice': 'en-US-AriaNeural',
                             'language': 'English',
                             'phone_number_count': 0,
@@ -120,15 +124,15 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
                     )
                 ]
             ),
-            400: OpenApiResponse(description="❌ Validation error - Check agent configuration"),
+            400: OpenApiResponse(description="❌ Validation error - Check agent configuration or workspace access"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(
-                description="🚫 Permission denied - Staff access required for agent creation",
+                description="🚫 Permission denied - You can only create agents in workspaces you belong to",
                 examples=[
                     OpenApiExample(
-                        'Access Denied',
-                        summary='Regular user attempted agent creation',
-                        value={'detail': 'You do not have permission to perform this action.'}
+                        'Workspace Access Denied',
+                        summary='User attempted to create agent in workspace they don\'t belong to',
+                        value={'workspace': ['You can only create agents in workspaces you belong to']}
                     )
                 ]
             )
@@ -244,7 +248,7 @@ class AgentViewSet(viewsets.ModelViewSet):
     🤖 **AI Agent Management with Workspace-Based Access Control**
     
     Manages AI agents with workspace-filtered access:
-    - **👤 Regular Users**: Access only agents in their workspaces
+    - **👤 Regular Users**: Can view and create agents in their workspaces
     - **👔 Staff**: Full agent administration across all workspaces
     - **🔧 Superusers**: Complete agent control including deletion
     """

@@ -156,12 +156,12 @@ from .permissions import WorkspacePermission, WorkspaceUserManagementPermission
     update=extend_schema(
         summary="✏️ Update workspace",
         description="""
-        Update workspace information (Staff only).
+        Update workspace information.
         
         **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot modify workspaces
-        - **✅ Staff Members**: Can update workspace details
-        - **✅ Superusers**: Can update workspace details
+        - **✅ Regular Users**: Can update workspaces they belong to
+        - **✅ Staff Members**: Can update any workspace details
+        - **✅ Superusers**: Can update any workspace details
         
         **⚠️ Organizational Impact**:
         - May affect all workspace members
@@ -173,7 +173,16 @@ from .permissions import WorkspacePermission, WorkspaceUserManagementPermission
             200: OpenApiResponse(response=WorkspaceSerializer, description="✅ Workspace updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
             401: OpenApiResponse(description="🚫 Authentication required"),
-            403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
+            403: OpenApiResponse(
+                description="🚫 Permission denied - You can only update workspaces you belong to",
+                examples=[
+                    OpenApiExample(
+                        'Not a workspace member',
+                        summary='User attempted to update workspace they don\'t belong to',
+                        value={'detail': 'You do not have permission to perform this action.'}
+                    )
+                ]
+            ),
             404: OpenApiResponse(description="🚫 Workspace not found")
         },
         tags=["Workspace Management"]
@@ -181,16 +190,21 @@ from .permissions import WorkspacePermission, WorkspaceUserManagementPermission
     partial_update=extend_schema(
         summary="✏️ Partially update workspace",
         description="""
-        Update specific fields of a workspace (Staff only).
+        Update specific fields of a workspace.
         
-        **🔐 Permission Requirements**: Staff access required
+        **🔐 Permission Requirements**:
+        - **✅ Regular Users**: Can update workspaces they belong to
+        - **✅ Staff Members**: Can update any workspace details
+        - **✅ Superusers**: Can update any workspace details
         """,
         request=WorkspaceCreateSerializer,
         responses={
             200: OpenApiResponse(response=WorkspaceSerializer, description="✅ Workspace updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
             401: OpenApiResponse(description="🚫 Authentication required"),
-            403: OpenApiResponse(description="🚫 Permission denied"),
+            403: OpenApiResponse(
+                description="🚫 Permission denied - You can only update workspaces you belong to"
+            ),
             404: OpenApiResponse(description="🚫 Workspace not found")
         },
         tags=["Workspace Management"]
@@ -238,8 +252,8 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     🏢 **Workspace Management with Role-Based Access Control**
     
     Manages organizational workspaces with filtered access:
-    - **👤 Regular Users**: Access only their workspace memberships
-    - **👔 Staff**: Full workspace administration
+    - **👤 Regular Users**: Can view and modify workspaces they belong to
+    - **👔 Staff**: Full workspace administration across all workspaces
     - **🔧 Superusers**: Complete workspace control including deletion
     """
     queryset = Workspace.objects.all()
@@ -505,4 +519,69 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             'updated_at': workspace.updated_at,
         }
         # Return stats data directly - no serializer validation needed for computed data
-        return Response(stats) 
+        return Response(stats)
+
+    @extend_schema(
+        summary="🏠 Get my workspaces",
+        description="""
+        Retrieve all workspaces that the authenticated user belongs to.
+        
+        **🔐 Permission Requirements**:
+        - **✅ Authenticated Users**: Get their own workspace memberships
+        - **✅ Staff Members**: Get all workspaces in the system
+        - **✅ Superusers**: Get all workspaces in the system
+        
+        **📊 Response Details**:
+        - Only workspaces where user is a member
+        - Complete workspace information
+        - User count and basic statistics
+        
+        **🎯 Use Cases**:
+        - User workspace selection
+        - Dashboard workspace listing
+        - Navigation and routing
+        - Frontend workspace initialization
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=WorkspaceSerializer(many=True),
+                description="✅ User workspaces retrieved successfully",
+                examples=[
+                    OpenApiExample(
+                        'My Workspaces',
+                        summary='User\'s workspace memberships',
+                        value=[
+                            {
+                                'id': 'workspace-uuid-1',
+                                'workspace_name': 'John Doe Workspace',
+                                'user_count': 1,
+                                'created_at': '2024-01-10T09:00:00Z',
+                                'updated_at': '2024-01-10T09:00:00Z'
+                            },
+                            {
+                                'id': 'workspace-uuid-2',
+                                'workspace_name': 'Team Project Alpha',
+                                'user_count': 3,
+                                'created_at': '2024-01-12T14:30:00Z',
+                                'updated_at': '2024-01-15T10:20:00Z'
+                            }
+                        ]
+                    )
+                ]
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required - Please login to access workspaces")
+        },
+        tags=["Workspace Management"]
+    )
+    @action(detail=False, methods=['get'])
+    def my_workspaces(self, request):
+        """Get workspaces that the authenticated user belongs to"""
+        # Get user's workspaces (same logic as get_queryset but explicit)
+        user = request.user
+        if user.is_staff:
+            workspaces = Workspace.objects.all()
+        else:
+            workspaces = Workspace.objects.filter(users=user)
+        
+        serializer = WorkspaceSerializer(workspaces, many=True)
+        return Response(serializer.data) 

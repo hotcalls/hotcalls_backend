@@ -60,6 +60,25 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
+    def validate_workspace(self, value):
+        """Validate user can create agents in this workspace"""
+        request = self.context.get('request')
+        
+        if not request or not request.user:
+            raise serializers.ValidationError("Authentication required")
+        
+        # Staff can create agents in any workspace
+        if request.user.is_staff:
+            return value
+        
+        # Regular users can only create agents in workspaces they belong to
+        if request.user not in value.users.all():
+            raise serializers.ValidationError(
+                "You can only create agents in workspaces you belong to"
+            )
+        
+        return value
+    
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
         valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']

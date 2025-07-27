@@ -5,45 +5,46 @@ class AgentPermission(permissions.BasePermission):
     """
     Custom permission for Agent operations
     - Users can view agents in their workspaces
-    - Staff can view all agents
-    - Only staff can create/modify agents
+    - Users can create agents in workspaces they belong to
+    - Staff can view all agents and create agents in any workspace
+    - Only staff can modify agents
     - Only superusers can delete agents
     """
     
     def has_permission(self, request, view):
-        # Read operations: authenticated users only
+        # All operations require authentication
+        if not (request.user and request.user.is_authenticated):
+            return False
+            
+        # Read operations: authenticated users can access
         if request.method in permissions.SAFE_METHODS:
-            return request.user and request.user.is_authenticated
+            return True
         
-        # Create operations: allow anonymous access
+        # Create operations: authenticated users can create (workspace validation in serializer)
         if request.method == 'POST':
             return True
         
         # Update operations: require staff privileges
-        return (request.user and 
-                request.user.is_authenticated and 
-                request.user.is_staff)
+        return request.user.is_staff
     
     def has_object_permission(self, request, view, obj):
         # Read permissions
         if request.method in permissions.SAFE_METHODS:
-            # Authenticated users can view agents in their workspaces, staff can view all
-            if request.user and request.user.is_authenticated:
-                return (request.user in obj.workspace.users.all() or 
-                       request.user.is_staff)
-            return False
+            # Users can view agents in their workspaces, staff can view all
+            return (request.user in obj.workspace.users.all() or 
+                   request.user.is_staff)
         
-        # Create operations don't need object permissions (handled by has_permission)
+        # Create operations don't need object permissions (handled by has_permission + serializer validation)
         if request.method == 'POST':
             return True
         
         # Update permissions only for staff
         if request.method in ['PUT', 'PATCH']:
-            return request.user and request.user.is_authenticated and request.user.is_staff
+            return request.user.is_staff
         
         # Delete permissions only for superusers
         if request.method == 'DELETE':
-            return request.user and request.user.is_authenticated and request.user.is_superuser
+            return request.user.is_superuser
         
         return False
 

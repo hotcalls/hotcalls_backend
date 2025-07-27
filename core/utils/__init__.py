@@ -15,6 +15,48 @@ import mimetypes
 logger = logging.getLogger(__name__)
 
 
+def create_user_workspace(user):
+    """
+    Create a default workspace for a newly registered user
+    
+    Args:
+        user: User instance for whom to create workspace
+        
+    Returns:
+        Workspace instance or None if creation failed
+        
+    Raises:
+        Exception: If workspace creation fails critically
+    """
+    from core.models import Workspace
+    
+    try:
+        # Generate workspace name
+        base_name = f"{user.first_name} {user.last_name} Workspace".strip()
+        
+        # Ensure uniqueness by checking for existing names
+        workspace_name = base_name
+        counter = 1
+        
+        while Workspace.objects.filter(workspace_name=workspace_name).exists():
+            workspace_name = f"{base_name} {counter}"
+            counter += 1
+            
+        # Create workspace
+        workspace = Workspace.objects.create(workspace_name=workspace_name)
+        
+        # Link user to workspace
+        workspace.users.add(user)
+        
+        logger.info(f"Successfully created workspace '{workspace_name}' for user {user.email}")
+        return workspace
+        
+    except Exception as e:
+        logger.error(f"Failed to create workspace for user {user.email}: {str(e)}")
+        # Don't raise exception to avoid breaking registration flow
+        return None
+
+
 def send_email_verification(user, request=None):
     """
     Send email verification email to user
