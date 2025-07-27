@@ -6,7 +6,7 @@ app_name = 'auth_api'
 urlpatterns = [
     # User registration and authentication
     path('register/', views.register, name='register'),
-    path('login/', views.login_view, name='login'),
+    path('login/', views.LoginView.as_view(), name='login'),
     path('logout/', views.logout_view, name='logout'),
     
     # Email verification
@@ -17,6 +17,6 @@ urlpatterns = [
     path('profile/', views.profile, name='profile'),
     
     # Password reset
-    path('password-reset/', views.password_reset_request, name='password_reset_request'),
-    path('reset-password/<str:token>/', views.password_reset_confirm, name='password_reset_confirm'),
+    path('password-reset/', views.PasswordResetRequestView.as_view(), name='password_reset_request'),
+    path('reset-password/<str:token>/', views.PasswordResetConfirmView.as_view(), name='password_reset_confirm'),
 ] 

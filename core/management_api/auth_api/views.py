@@ -2,8 +2,13 @@ from rest_framework import status, generics
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
+from django.shortcuts import render, get_object_or_404
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.contrib.auth import login, logout
-from django.shortcuts import get_object_or_404, render
+from django.http import JsonResponse
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 import secrets
 from datetime import timedelta
@@ -100,100 +105,183 @@ def register(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@extend_schema(
-    summary="🔑 Email-Based Login",
-    description="""
-    Login with email and password. **Email verification is mandatory**.
-    
-    **🔐 Requirements**:
-    - Valid email and password
-    - Email MUST be verified (click link from registration email)
-    - Account must be active and not suspended
-    
-    **❌ Login Blocked If**:
-    - Email is not verified
-    - Account is suspended or disabled
-    - Invalid credentials provided
-    
-    **✅ Success Response**:
-    - User session created
-    - User profile data returned
-    - Can access protected endpoints
-    
-    **📧 If Email Not Verified**:
-    - Use `/resend-verification/` to get new verification email
-    - Check spam/junk folders
-    - Verify email address is correct
-    """,
-    request=EmailLoginSerializer,
-    responses={
-        200: OpenApiResponse(
-            response=UserProfileSerializer,
-            description="✅ Login successful - User authenticated",
-            examples=[
-                OpenApiExample(
-                    'Login Success',
-                    summary='User successfully logged in',
-                    value={
-                        'message': 'Login successful',
-                        'user': {
-                            'id': 'user-uuid',
-                            'email': 'user@example.com',
-                            'first_name': 'John',
-                            'last_name': 'Doe',
-                            'is_email_verified': True
+@extend_schema_view(
+    get=extend_schema(
+        summary="📝 Login Form",
+        description="""
+        Show login form (HTML) or return instructions (API).
+        
+        **📝 GET Request**: Display login form for browsers
+        **📨 Use Case**: User visits login page
+        """,
+        responses={
+            200: OpenApiResponse(description="✅ Login form displayed or instructions provided")
+        },
+        tags=["Authentication"]
+    ),
+    post=extend_schema(
+        summary="🔑 Email-Based Login",
+        description="""
+        Login with email and password. **Email verification is mandatory**.
+        
+        **🔐 Requirements**:
+        - Valid email and password
+        - Email MUST be verified (click link from registration email)
+        - Account must be active and not suspended
+        
+        **❌ Login Blocked If**:
+        - Email is not verified
+        - Account is suspended or disabled
+        - Invalid credentials provided
+        
+        **✅ Success Response**:
+        - User session created
+        - User profile data returned
+        - Can access protected endpoints
+        
+        **📧 If Email Not Verified**:
+        - Use `/resend-verification/` to get new verification email
+        - Check spam/junk folders
+        - Verify email address is correct
+        """,
+        request=EmailLoginSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=UserProfileSerializer,
+                description="✅ Login successful - User authenticated",
+                examples=[
+                    OpenApiExample(
+                        'Login Success',
+                        summary='User successfully logged in',
+                        value={
+                            'message': 'Login successful',
+                            'user': {
+                                'id': 'user-uuid',
+                                'email': 'user@example.com',
+                                'first_name': 'John',
+                                'last_name': 'Doe',
+                                'is_email_verified': True
+                            }
                         }
-                    }
-                )
-            ]
-        ),
-        400: OpenApiResponse(
-            description="❌ Login failed - Validation or verification errors",
-            examples=[
-                OpenApiExample(
-                    'Email Not Verified',
-                    summary='User must verify email first',
-                    value={
-                        'email': ['Please verify your email address before logging in. Check your inbox for the verification email.']
-                    }
-                ),
-                OpenApiExample(
-                    'Invalid Credentials',
-                    summary='Wrong email or password',
-                    value={
-                        'non_field_errors': ['Invalid email or password.']
-                    }
-                ),
-                OpenApiExample(
-                    'Account Suspended',
-                    summary='Account has been suspended',
-                    value={
-                        'non_field_errors': ['Your account has been suspended. Please contact support.']
-                    }
-                )
-            ]
-        )
-    },
-    tags=["Authentication"]
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="❌ Login failed - Validation or verification errors",
+                examples=[
+                    OpenApiExample(
+                        'Email Not Verified',
+                        summary='User must verify email first',
+                        value={
+                            'email': ['Please verify your email address before logging in. Check your inbox for the verification email.']
+                        }
+                    ),
+                    OpenApiExample(
+                        'Invalid Credentials',
+                        summary='Wrong email or password',
+                        value={
+                            'non_field_errors': ['Invalid email or password.']
+                        }
+                    ),
+                    OpenApiExample(
+                        'Account Suspended',
+                        summary='Account has been suspended',
+                        value={
+                            'non_field_errors': ['Your account has been suspended. Please contact support.']
+                        }
+                    )
+                ]
+            )
+        },
+        tags=["Authentication"]
+    ),
 )
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def login_view(request):
-    """Login with email and password (email verification required)"""
-    serializer = EmailLoginSerializer(data=request.data)
-    if serializer.is_valid():
-        user = serializer.validated_data['user']
-        login(request, user)
-        
-        # Update last login
-        user.last_login = timezone.now()
-        user.save(update_fields=['last_login'])
-        
-        return Response({
-            'message': 'Login successful',
-            'user': UserProfileSerializer(user).data
-        }, status=status.HTTP_200_OK)
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+class LoginView(APIView):
+    """Handle user login with both HTML and API support"""
+    permission_classes = [AllowAny]
+    serializer_class = EmailLoginSerializer
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+    
+    def is_browser_request(self, request):
+        """Check if request is from browser (HTML) or API (JSON)"""
+        accept_header = request.META.get('HTTP_ACCEPT', '')
+        return 'text/html' in accept_header
+    
+    def get(self, request):
+        """GET request - Show login form"""
+        if self.is_browser_request(request):
+            return render(request, 'auth/login_form.html', {
+                'email': '',
+                'error': None,
+                'success': None
+            })
+        else:
+            return JsonResponse({
+                'message': 'Send POST request with email and password to login.'
+            })
+    
+    def post(self, request):
+        """POST request - Process login"""
+        # Handle both form data and JSON data
+        if request.content_type == 'application/x-www-form-urlencoded' or 'multipart/form-data' in request.content_type:
+            # HTML form submission
+            email = request.POST.get('email')
+            password = request.POST.get('password')
+            
+            if not email or not password:
+                return render(request, 'auth/login_form.html', {
+                    'error': 'Email and password are required.',
+                    'email': email or '',
+                    'success': None
+                })
+            
+            # Create serializer data from form
+            serializer_data = {'email': email, 'password': password}
+            serializer = EmailLoginSerializer(data=serializer_data)
+            
+            if serializer.is_valid():
+                user = serializer.validated_data['user']
+                login(request, user)
+                
+                # Update last login
+                user.last_login = timezone.now()
+                user.save(update_fields=['last_login'])
+                
+                # For successful login from form, show a success page or redirect
+                return render(request, 'auth/login_form.html', {
+                    'success': f'Welcome back, {user.get_full_name()}! You are now logged in.',
+                    'email': email,
+                    'error': None
+                })
+            else:
+                # Extract error messages from serializer
+                error_messages = []
+                for field, errors in serializer.errors.items():
+                    for error in errors:
+                        error_messages.append(str(error))
+                
+                return render(request, 'auth/login_form.html', {
+                    'error': '; '.join(error_messages),
+                    'email': email,
+                    'success': None
+                })
+        else:
+            # JSON API request - use DRF's request.data to avoid body parsing conflicts
+            serializer = EmailLoginSerializer(data=request.data)
+            if serializer.is_valid():
+                user = serializer.validated_data['user']
+                login(request, user)
+                
+                # Update last login
+                user.last_login = timezone.now()
+                user.save(update_fields=['last_login'])
+                
+                return JsonResponse({
+                    'message': 'Login successful',
+                    'user': UserProfileSerializer(user).data
+                })
+            
+            return JsonResponse(serializer.errors, status=400)
 
 
 @extend_schema(
@@ -451,68 +539,304 @@ def profile(request):
     },
     tags=["Authentication"]
 )
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def password_reset_request(request):
-    """Request password reset email"""
-    serializer = PasswordResetRequestSerializer(data=request.data)
-    if serializer.is_valid():
-        email = serializer.validated_data['email']
+@extend_schema_view(
+    get=extend_schema(
+        summary="📝 Password Reset Form",
+        description="""
+        Show password reset request form (HTML) or return instructions (API).
         
-        try:
-            user = User.objects.get(email=email)
-            # Generate reset token (you might want to create a separate model for this)
-            reset_token = secrets.token_urlsafe(32)
-            # Store token with expiration (implement based on your needs)
-            # send_password_reset_email(user, reset_token, request)
-        except User.DoesNotExist:
-            pass  # Don't reveal if email exists
+        **📝 GET Request**: Display password reset form for browsers
+        **📨 Use Case**: User visits link to request password reset
+        """,
+        responses={
+            200: OpenApiResponse(description="✅ Password reset form displayed or instructions provided")
+        },
+        tags=["Authentication"]
+    ),
+    post=extend_schema(
+        summary="🔄 Request Password Reset",
+        description="""
+        Request a password reset email for the given email address.
         
-        return Response({
-            'message': 'If an account with this email exists, a password reset link has been sent.'
-        }, status=status.HTTP_200_OK)
-    
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-
-@extend_schema(
-    summary="🔐 Reset Password",
-    description="""
-    Reset password using reset token.
-    
-    **📝 Requirements**:
-    - Valid reset token from email
-    - New password meeting requirements
-    - Password confirmation
-    """,
-    request=PasswordResetConfirmSerializer,
-    responses={
-        200: OpenApiResponse(
-            description="✅ Password reset successful",
-            examples=[
-                OpenApiExample(
-                    'Reset Success',
-                    summary='Password changed successfully',
-                    value={
-                        'message': 'Password reset successful! You can now login with your new password.'
-                    }
-                )
-            ]
-        ),
-        400: OpenApiResponse(description="❌ Invalid token or validation errors")
-    },
-    tags=["Authentication"]
+        **🔒 Security Note**: 
+        - Does not reveal if email exists or not
+        - Always returns success message
+        - Only sends email if user actually exists
+        """,
+        request=PasswordResetRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Reset email sent (if email exists)",
+                examples=[
+                    OpenApiExample(
+                        'Reset Requested',
+                        summary='Password reset email sent',
+                        value={
+                            'message': 'If an account with this email exists, a password reset link has been sent.'
+                        }
+                    )
+                ]
+            )
+        },
+        tags=["Authentication"]
+    ),
 )
-@api_view(['POST'])
-@permission_classes([AllowAny])
-def password_reset_confirm(request, token):
-    """Reset password using token"""
-    serializer = PasswordResetConfirmSerializer(data=request.data)
-    if serializer.is_valid():
-        # Implement password reset logic here
-        # This would require a password reset token model
-        return Response({
-            'message': 'Password reset successful! You can now login with your new password.'
-        }, status=status.HTTP_200_OK)
+class PasswordResetRequestView(APIView):
+    """Handle password reset requests with both HTML and API support"""
+    permission_classes = [AllowAny]
+    serializer_class = PasswordResetRequestSerializer
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
     
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST) 
+    def is_browser_request(self, request):
+        """Check if request is from browser (HTML) or API (JSON)"""
+        accept_header = request.META.get('HTTP_ACCEPT', '')
+        return 'text/html' in accept_header
+    
+    def get(self, request):
+        """GET request - Show password reset request form"""
+        if self.is_browser_request(request):
+            return render(request, 'auth/password_reset_request.html', {
+                'email': '',
+                'error': None,
+                'success': None
+            })
+        else:
+            return JsonResponse({
+                'message': 'Send POST request with email to request password reset.'
+            })
+    
+    def post(self, request):
+        """POST request - Process password reset"""
+        # Handle both form data and JSON data
+        if request.content_type == 'application/x-www-form-urlencoded' or 'multipart/form-data' in request.content_type:
+            # HTML form submission
+            email = request.POST.get('email')
+            
+            if not email:
+                return render(request, 'auth/password_reset_request.html', {
+                    'error': 'Email address is required.',
+                    'email': '',
+                    'success': None
+                })
+            
+            try:
+                user = User.objects.get(email=email)
+                # Generate and store reset token
+                reset_token = user.generate_password_reset_token()
+                # Send password reset email
+                send_password_reset_email(user, reset_token, request)
+            except User.DoesNotExist:
+                pass  # Don't reveal if email exists
+            
+            return render(request, 'auth/password_reset_request.html', {
+                'success': 'If an account with this email exists, a password reset link has been sent to your email.',
+                'email': email or '',
+                'error': None
+            })
+        else:
+            # JSON API request - use DRF's request.data to avoid body parsing conflicts
+            serializer = PasswordResetRequestSerializer(data=request.data)
+            if serializer.is_valid():
+                email = serializer.validated_data['email']
+                
+                try:
+                    user = User.objects.get(email=email)
+                    # Generate and store reset token
+                    reset_token = user.generate_password_reset_token()
+                    # Send password reset email
+                    send_password_reset_email(user, reset_token, request)
+                except User.DoesNotExist:
+                    pass  # Don't reveal if email exists
+                
+                return JsonResponse({
+                    'message': 'If an account with this email exists, a password reset link has been sent.'
+                })
+            
+            return JsonResponse(serializer.errors, status=400)
+
+
+
+
+@extend_schema_view(
+    get=extend_schema(
+        summary="🔍 Validate Reset Token",
+        description="""
+        Validate password reset token and show form (HTML) or return validation (API).
+        
+        **📝 GET Request**: Validate token and show password reset form for browsers
+        **🔑 Token Validation**: Checks if token is valid and not expired (24 hours)
+        """,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Token valid - form displayed or validation confirmed",
+                examples=[
+                    OpenApiExample(
+                        'Token Valid',
+                        summary='Token is valid and ready for password reset',
+                        value={
+                            'message': 'Valid reset token. You can now set a new password.',
+                            'token': 'abc123...',
+                            'user_email': 'user@example.com'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(description="❌ Invalid or expired token")
+        },
+        tags=["Authentication"]
+    ),
+    post=extend_schema(
+        summary="🔐 Reset Password",
+        description="""
+        Reset password using validated token.
+        
+        **📝 Requirements**:
+        - Valid reset token from email
+        - New password meeting requirements
+        - Password confirmation
+        """,
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Password reset successful",
+                examples=[
+                    OpenApiExample(
+                        'Reset Success',
+                        summary='Password changed successfully',
+                        value={
+                            'message': 'Password reset successful! You can now login with your new password.'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(description="❌ Invalid token or validation errors")
+        },
+        tags=["Authentication"]
+    ),
+)
+class PasswordResetConfirmView(APIView):
+    """Handle password reset confirmation with both HTML and API support"""
+    permission_classes = [AllowAny]
+    serializer_class = PasswordResetConfirmSerializer
+    parser_classes = [JSONParser, FormParser, MultiPartParser]
+    
+
+    
+    def is_browser_request(self, request):
+        """Check if request is from browser (HTML) or API (JSON)"""
+        accept_header = request.META.get('HTTP_ACCEPT', '')
+        return 'text/html' in accept_header
+    
+    def get(self, request, token):
+        """GET request - Validate token and show form"""
+        try:
+            user = User.objects.get(password_reset_token=token)
+            # Check if token is valid and not expired
+            if user.verify_password_reset_token(token):
+                if self.is_browser_request(request):
+                    # Return HTML form for browser requests
+                    return render(request, 'auth/password_reset_form.html', {
+                        'token': token,
+                        'user_email': user.email
+                    })
+                else:
+                    # Return JSON for API requests
+                    return JsonResponse({
+                        'message': 'Valid reset token. You can now set a new password.',
+                        'token': token,
+                        'user_email': user.email
+                    })
+            else:
+                error_msg = 'Invalid or expired reset token.'
+                if self.is_browser_request(request):
+                    return render(request, 'auth/password_reset_error.html', {
+                        'error': error_msg
+                    })
+                else:
+                    return JsonResponse({'error': error_msg}, status=400)
+        except User.DoesNotExist:
+            error_msg = 'Invalid reset token.'
+            if self.is_browser_request(request):
+                return render(request, 'auth/password_reset_error.html', {
+                    'error': error_msg
+                })
+            else:
+                return JsonResponse({'error': error_msg}, status=400)
+    
+    def post(self, request, token):
+        """POST request - Actually reset the password"""
+        # Handle both form data and JSON data
+        if request.content_type == 'application/x-www-form-urlencoded' or 'multipart/form-data' in request.content_type:
+            # HTML form submission
+            password = request.POST.get('password')
+            password_confirm = request.POST.get('password_confirm')
+            
+            # Validate passwords match
+            if password != password_confirm:
+                # Get user email for template
+                try:
+                    user = User.objects.get(password_reset_token=token)
+                    user_email = user.email
+                except User.DoesNotExist:
+                    user_email = ''
+                return render(request, 'auth/password_reset_form.html', {
+                    'token': token,
+                    'error': 'Passwords do not match.',
+                    'user_email': user_email
+                })
+            
+            # Validate password strength
+            try:
+                validate_password(password)
+            except ValidationError as e:
+                # Get user email for template
+                try:
+                    user = User.objects.get(password_reset_token=token)
+                    user_email = user.email
+                except User.DoesNotExist:
+                    user_email = ''
+                return render(request, 'auth/password_reset_form.html', {
+                    'token': token,
+                    'error': '; '.join(e.messages),
+                    'user_email': user_email
+                })
+            
+            # Find user and reset password
+            try:
+                user = User.objects.get(password_reset_token=token)
+                if user.reset_password_with_token(token, password):
+                    return render(request, 'auth/password_reset_success.html')
+                else:
+                    return render(request, 'auth/password_reset_error.html', {
+                        'error': 'Invalid or expired reset token.'
+                    })
+            except User.DoesNotExist:
+                return render(request, 'auth/password_reset_error.html', {
+                    'error': 'Invalid reset token.'
+                })
+        else:
+            # JSON API request - use DRF's request.data to avoid body parsing conflicts
+            serializer = PasswordResetConfirmSerializer(data=request.data)
+            if serializer.is_valid():
+                password = serializer.validated_data['password']
+                
+                # Find user with this reset token
+                try:
+                    user = User.objects.get(password_reset_token=token)
+                    # Reset password using the token
+                    if user.reset_password_with_token(token, password):
+                        return JsonResponse({
+                            'message': 'Password reset successful! You can now login with your new password.'
+                        })
+                    else:
+                        return JsonResponse({
+                            'error': 'Invalid or expired reset token.'
+                        }, status=400)
+                except User.DoesNotExist:
+                    return JsonResponse({
+                        'error': 'Invalid reset token.'
+                    }, status=400)
+            
+            return JsonResponse(serializer.errors, status=400)
+
+ 

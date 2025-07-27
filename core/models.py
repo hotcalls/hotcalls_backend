@@ -107,6 +107,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="When the verification email was last sent"
     )
     
+    # Password reset fields
+    password_reset_token = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Token for password reset"
+    )
+    password_reset_sent_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the password reset email was last sent"
+    )
+    
     # User profile fields
     first_name = models.CharField(
         max_length=150,
@@ -205,6 +218,36 @@ class User(AbstractBaseUser, PermissionsMixin):
             self.email_verification_token = None
             self.email_verification_sent_at = None
             self.save(update_fields=['is_email_verified', 'email_verification_token', 'email_verification_sent_at'])
+            return True
+        return False
+    
+    def generate_password_reset_token(self):
+        """Generate a new password reset token"""
+        self.password_reset_token = secrets.token_urlsafe(32)
+        self.password_reset_sent_at = timezone.now()
+        self.save(update_fields=['password_reset_token', 'password_reset_sent_at'])
+        return self.password_reset_token
+    
+    def verify_password_reset_token(self, token):
+        """Verify password reset token and check if it's still valid (24 hours)"""
+        if not self.password_reset_token or self.password_reset_token != token:
+            return False
+        
+        # Check if token is expired (24 hours)
+        if self.password_reset_sent_at:
+            expiry_time = self.password_reset_sent_at + timezone.timedelta(hours=24)
+            if timezone.now() > expiry_time:
+                return False
+        
+        return True
+    
+    def reset_password_with_token(self, token, new_password):
+        """Reset password using the provided token"""
+        if self.verify_password_reset_token(token):
+            self.set_password(new_password)
+            self.password_reset_token = None
+            self.password_reset_sent_at = None
+            self.save(update_fields=['password', 'password_reset_token', 'password_reset_sent_at'])
             return True
         return False
     
