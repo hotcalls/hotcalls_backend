@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verification Error - HotCalls</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            padding: 60px 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            background: #ef4444;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            animation: shake 0.5s ease-in-out;
+        }
+        
+        .error-icon::after {
+            content: "✗";
+            color: white;
+            font-size: 40px;
+            font-weight: bold;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        h1 {
+            color: #1f2937;
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .subtitle {
+            color: #6b7280;
+            font-size: 18px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+        
+        .error-message {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            padding: 16px 20px;
+            border-radius: 10px;
+            color: #991b1b;
+            margin-bottom: 30px;
+            font-size: 16px;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 32px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            transition: transform 0.2s;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+        }
+        
+        .button.secondary {
+            background: #6b7280;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="error-icon"></div>
+        <h1>Verification Failed</h1>
+        <p class="subtitle">
+            We couldn't verify your email address. This could be due to an invalid or expired verification link.
+        </p>
+        <div class="error-message">{{ error_message }}</div>
+        <a href="/api/auth/resend-verification/" class="button">Resend Verification</a>
+        <a href="/api/docs/" class="button secondary">Go to API</a>
+        <div class="footer">
+            Need help? Contact support 📧
+        </div>
+    </div>
+</body>
+</html> 

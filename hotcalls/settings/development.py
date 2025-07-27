@@ -32,9 +32,8 @@ CORS_ALLOW_CREDENTIALS = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
+# Removed STATICFILES_DIRS since we don't have a static directory
+# All static files come from Django and third-party packages
 
 # Media files
 MEDIA_URL = '/media/'
@@ -57,8 +56,8 @@ try:
 except ImportError:
     pass
 
-# Email backend for development
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Email backend for development - USE .ENV CONFIGURATION
+# EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # DISABLED - using .env instead
 
 # Cache configuration (use Redis for development to match production)
 CACHES = {

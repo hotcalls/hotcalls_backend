@@ -9,6 +9,8 @@ FORCE_ALL=false
 RG_INDEX=""
 DESTROY_MODE=false
 DESTROY_RG=""
+DESTROY_MODE=false
+DESTROY_RG=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -26,12 +28,84 @@ while [[ $# -gt 0 ]]; do
       DESTROY_RG="$2"
       shift 2
       ;;
+    --destroy)
+      DESTROY_MODE=true
+      DESTROY_RG="$2"
+      shift 2
+      ;;
     *)
       ENVIRONMENT="$1"
       shift
       ;;
   esac
 done
+
+# Handle destroy mode
+if [ "$DESTROY_MODE" = true ]; then
+  if [ -z "$DESTROY_RG" ]; then
+    echo "❌ Error: --destroy requires a resource group name"
+    echo "Usage: $0 --destroy <resource-group-name>"
+    echo "Example: $0 --destroy hotcalls-staging-index-1-ne-rg"
+    exit 1
+  fi
+  
+  echo "🚨 DESTRUCTION MODE ACTIVATED 🚨"
+  echo ""
+  echo "Resource Group to destroy: $DESTROY_RG"
+  echo ""
+  echo "⚠️  WARNING: This will PERMANENTLY DELETE all resources in the resource group:"
+  echo "   - AKS Cluster and all applications"
+  echo "   - PostgreSQL database and all data"
+  echo "   - Storage accounts and all files"
+  echo "   - Container registries and all images"
+  echo "   - All networking components"
+  echo "   - All monitoring and logging data"
+  echo ""
+  echo "💀 THIS ACTION CANNOT BE UNDONE! 💀"
+  echo ""
+  
+  # Check if resource group exists
+  if ! az group show --name "$DESTROY_RG" &> /dev/null; then
+    echo "❌ Resource group '$DESTROY_RG' does not exist or you don't have access to it."
+    exit 1
+  fi
+  
+  # Show resources in the group
+  echo "📋 Resources found in '$DESTROY_RG':"
+  az resource list --resource-group "$DESTROY_RG" --query "[].{Name:name, Type:type}" --output table
+  echo ""
+  
+  # First confirmation
+  read -p "❓ Are you absolutely sure you want to destroy resource group '$DESTROY_RG'? (type 'yes' to confirm): " -r
+  if [[ ! $REPLY == "yes" ]]; then
+    echo "✅ Destruction cancelled."
+    exit 0
+  fi
+  
+  # Second confirmation
+  read -p "❓ This is your final warning. Type the resource group name to confirm: " -r
+  if [[ ! $REPLY == "$DESTROY_RG" ]]; then
+    echo "✅ Destruction cancelled (resource group name mismatch)."
+    exit 0
+  fi
+  
+  echo ""
+  echo "💥 Starting destruction of resource group '$DESTROY_RG'..."
+  echo "⏳ This may take several minutes..."
+  
+  if az group delete --name "$DESTROY_RG" --yes --no-wait; then
+    echo "✅ Destruction initiated successfully!"
+    echo "📊 You can monitor progress with:"
+    echo "   az group show --name '$DESTROY_RG' --query 'properties.provisioningState'"
+    echo ""
+    echo "🕐 The resource group will be completely removed in 5-15 minutes."
+  else
+    echo "❌ Failed to initiate destruction. Check your permissions and try again."
+    exit 1
+  fi
+  
+  exit 0
+fi
 
 # Handle destroy mode
 if [ "$DESTROY_MODE" = true ]; then
@@ -160,16 +234,25 @@ if [ "$FORCE_ALL" = true ]; then
   if terraform state list &> /dev/null && [ $(terraform state list | wc -l) -gt 0 ]; then
     echo "🗑️ Destroying existing infrastructure..."
     terraform destroy -auto-approve -var-file="$TFVARS_FILE"
+    terraform destroy -auto-approve -var-file="$TFVARS_FILE"
   fi
   
   echo "🏗️ Creating new infrastructure..."
   terraform apply -auto-approve -var-file="$TFVARS_FILE"
+  terraform apply -auto-approve -var-file="$TFVARS_FILE"
     
+elif ! terraform state list &> /dev/null || [ $(terraform state list | wc -l) -eq 0 ] || ! terraform output acr_login_server &> /dev/null; then
 elif ! terraform state list &> /dev/null || [ $(terraform state list | wc -l) -eq 0 ] || ! terraform output acr_login_server &> /dev/null; then
   echo "🏗️ No infrastructure found, creating new infrastructure..."
   terraform apply -auto-approve -var-file="$TFVARS_FILE"
+  terraform apply -auto-approve -var-file="$TFVARS_FILE"
 else
   echo "✅ Infrastructure exists, skipping Terraform deployment..."
+fi
+
+# Clean up temporary tfvars file
+if [ ! -z "$RG_INDEX" ] && [ -f "$TFVARS_FILE" ]; then
+  rm "$TFVARS_FILE"
 fi
 
 # Clean up temporary tfvars file
@@ -182,7 +265,18 @@ ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
 ACR_NAME=$(echo $ACR_LOGIN_SERVER | cut -d'.' -f1)
 POSTGRES_FQDN=$(terraform output -raw postgres_fqdn)
 POSTGRES_SERVER_NAME=$(echo $POSTGRES_FQDN | cut -d'.' -f1)
+POSTGRES_SERVER_NAME=$(echo $POSTGRES_FQDN | cut -d'.' -f1)
 STORAGE_ACCOUNT=$(terraform output -raw storage_account_name)
+STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
+
+echo "🔓 Configuring PostgreSQL firewall to allow Azure services..."
+az postgres flexible-server firewall-rule create \
+  --resource-group $RESOURCE_GROUP \
+  --name $POSTGRES_SERVER_NAME \
+  --rule-name "AllowAzureServices" \
+  --start-ip-address 0.0.0.0 \
+  --end-ip-address 0.0.0.0 || echo "Firewall rule already exists"
+
 STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
 
 echo "🔓 Configuring PostgreSQL firewall to allow Azure services..."
@@ -347,6 +441,18 @@ if [ -d "../hotcalls-visual-prototype" ]; then
   
   # Switch to the correct branch and pull latest changes
   echo "🔄 Switching frontend repo to ${BRANCH} branch..."
+  
+  # Check if branch exists, otherwise use default branch
+  if git show-ref --verify --quiet refs/heads/$BRANCH; then
+    git checkout $BRANCH
+    git pull origin $BRANCH
+  elif git show-ref --verify --quiet refs/remotes/origin/$BRANCH; then
+    git checkout -b $BRANCH origin/$BRANCH
+  else
+    echo "⚠️ Branch $BRANCH not found, using default branch..."
+    git checkout $(git symbolic-ref refs/remotes/origin/HEAD | sed 's@^refs/remotes/origin/@@') 2>/dev/null || git checkout main 2>/dev/null || git checkout master
+    git pull
+  fi
   
   # Check if branch exists, otherwise use default branch
   if git show-ref --verify --quiet refs/heads/$BRANCH; then
@@ -578,6 +684,11 @@ echo "💡 Usage examples:"
 echo "   ./redeploy-staging.sh                    # Deploy to default staging"
 echo "   ./redeploy-staging.sh --force-all        # Recreate infrastructure + deploy"
 echo "   ./redeploy-staging.sh --rg-index 2       # Deploy to hotcalls-staging-ne-rg-index-2"
+echo "   ./redeploy-staging.sh staging --rg-index 1 --force-all  # Full recreate with index"
+echo ""
+echo "🗑️  Destroy examples:"
+echo "   ./redeploy-staging.sh --destroy hotcalls-staging-index-1-ne-rg    # Destroy specific RG"
+echo "   ./redeploy-staging.sh --destroy hotcalls-staging-ne-rg           # Destroy default staging" 
 echo "   ./redeploy-staging.sh staging --rg-index 1 --force-all  # Full recreate with index"
 echo ""
 echo "🗑️  Destroy examples:"

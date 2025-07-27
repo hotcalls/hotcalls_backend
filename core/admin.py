@@ -1,29 +1,70 @@
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
-from .models import User, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 
 
 @admin.register(User)
-class CustomUserAdmin(UserAdmin):
-    """Custom admin for User model"""
-    list_display = ('username', 'email', 'phone', 'status', 'is_staff', 'date_joined')
-    list_filter = ('status', 'is_staff', 'is_superuser', 'is_active', 'date_joined')
-    search_fields = ('username', 'email', 'phone')
+class CustomUserAdmin(BaseUserAdmin):
+    """Custom admin for email-based User model"""
+    
+    # Display settings
+    list_display = ('email', 'first_name', 'last_name', 'phone', 'status', 'is_email_verified', 'is_staff', 'date_joined')
+    list_filter = ('status', 'is_staff', 'is_superuser', 'is_active', 'is_email_verified', 'date_joined', 'social_provider')
+    search_fields = ('email', 'first_name', 'last_name', 'phone')
     ordering = ('-date_joined',)
     
-    # Add custom fields to the fieldsets
-    fieldsets = UserAdmin.fieldsets + (
+    # Form fieldsets for editing existing users
+    fieldsets = (
+        (None, {
+            'fields': ('email', 'password')
+        }),
+        ('Personal info', {
+            'fields': ('first_name', 'last_name', 'phone')
+        }),
+        ('Email Verification', {
+            'fields': ('is_email_verified', 'email_verification_token', 'email_verification_sent_at'),
+            'classes': ('collapse',)
+        }),
+        ('Permissions', {
+            'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions'),
+        }),
+        ('Important dates', {
+            'fields': ('last_login', 'date_joined')
+        }),
         ('Custom Fields', {
-            'fields': ('phone', 'stripe_customer_id', 'status', 'social_id', 'social_provider')
+            'fields': ('status', 'stripe_customer_id', 'social_id', 'social_provider')
         }),
     )
     
-    # Add custom fields to add form
-    add_fieldsets = UserAdmin.add_fieldsets + (
+    # Form fieldsets for adding new users
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('email', 'first_name', 'last_name', 'phone', 'password1', 'password2'),
+        }),
+        ('Permissions', {
+            'fields': ('is_staff', 'is_superuser'),
+        }),
         ('Custom Fields', {
-            'fields': ('phone', 'stripe_customer_id', 'status', 'social_id', 'social_provider')
+            'fields': ('status', 'stripe_customer_id', 'social_id', 'social_provider'),
         }),
     )
+    
+    # Read-only fields
+    readonly_fields = ('date_joined', 'last_login', 'email_verification_sent_at')
+    
+    # Filter horizontal for many-to-many fields
+    filter_horizontal = ('groups', 'user_permissions')
+
+
+@admin.register(Voice)
+class VoiceAdmin(admin.ModelAdmin):
+    """Admin for Voice model"""
+    list_display = ('voice_external_id', 'provider', 'created_at', 'updated_at')
+    list_filter = ('provider', 'created_at')
+    search_fields = ('voice_external_id', 'provider')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(Feature)
@@ -88,9 +129,9 @@ class WorkspaceAdmin(admin.ModelAdmin):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'voice', 'language', 'get_phone_numbers', 'calendar_configuration', 'created_at')
-    list_filter = ('voice', 'language', 'calendar_configuration', 'created_at')
-    search_fields = ('workspace__workspace_name', 'voice')
+    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_numbers', 'calendar_configuration', 'created_at')
+    list_filter = ('status', 'voice', 'language', 'calendar_configuration', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id')
     filter_horizontal = ('phone_numbers',)
     ordering = ('-created_at',)
     
@@ -137,15 +178,15 @@ class LeadAdmin(admin.ModelAdmin):
 class BlacklistAdmin(admin.ModelAdmin):
     list_display = ('user', 'status', 'reason', 'created_at')
     list_filter = ('status', 'created_at')
-    search_fields = ('user__username', 'user__email', 'reason')
+    search_fields = ('user__email', 'user__first_name', 'user__last_name', 'reason')
     ordering = ('-created_at',)
 
 
 @admin.register(CallLog)
 class CallLogAdmin(admin.ModelAdmin):
-    list_display = ('lead', 'from_number', 'to_number', 'direction', 'duration', 'timestamp')
-    list_filter = ('direction', 'timestamp', 'disconnection_reason')
-    search_fields = ('lead__name', 'from_number', 'to_number')
+    list_display = ('lead', 'agent', 'from_number', 'to_number', 'direction', 'status', 'duration', 'timestamp')
+    list_filter = ('direction', 'status', 'timestamp', 'disconnection_reason')
+    search_fields = ('lead__name', 'lead__surname', 'agent__name', 'from_number', 'to_number')
     ordering = ('-timestamp',)
     readonly_fields = ('timestamp', 'updated_at')
 

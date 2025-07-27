@@ -1,6 +1,8 @@
 from django.db import models
-from django.contrib.auth.models import AbstractUser
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
+from django.utils import timezone
+import secrets
 
 
 # Enum Choices
@@ -45,13 +47,91 @@ CALENDAR_TYPE_CHOICES = [
 ]
 
 
-class User(AbstractUser):
-    """Custom User model extending Django's AbstractUser"""
+class CustomUserManager(BaseUserManager):
+    """Custom manager for User model with email-based authentication"""
+    
+    def create_user(self, email, password=None, **extra_fields):
+        """Create and return a regular user with an email and password"""
+        if not email:
+            raise ValueError('The Email field must be set')
+        
+        email = self.normalize_email(email)
+        extra_fields.setdefault('is_active', True)
+        extra_fields.setdefault('status', 'active')
+        
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+    
+    def create_superuser(self, email, password=None, **extra_fields):
+        """Create and return a superuser with an email and password"""
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+        extra_fields.setdefault('is_active', True)
+        extra_fields.setdefault('status', 'active')
+        extra_fields.setdefault('is_email_verified', True)  # Superusers are automatically verified
+        
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True.')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True.')
+        
+        return self.create_user(email, password, **extra_fields)
+
+
+class User(AbstractBaseUser, PermissionsMixin):
+    """Custom User model with email-based authentication and verification"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Core authentication fields
+    email = models.EmailField(
+        unique=True,
+        help_text="Email address used for login"
+    )
+    
+    # Email verification fields
+    is_email_verified = models.BooleanField(
+        default=False,
+        help_text="Whether the user's email has been verified"
+    )
+    email_verification_token = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Token for email verification"
+    )
+    email_verification_sent_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the verification email was last sent"
+    )
+    
+    # User profile fields
+    first_name = models.CharField(
+        max_length=150,
+        help_text="User's first name"
+    )
+    last_name = models.CharField(
+        max_length=150,
+        help_text="User's last name"
+    )
     phone = models.CharField(
         max_length=50,
         help_text="Phone number in international format"
     )
+    
+    # System fields
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this user account is active"
+    )
+    is_staff = models.BooleanField(
+        default=False,
+        help_text="Whether this user can access the admin site"
+    )
+    
+    # Custom fields
     stripe_customer_id = models.CharField(
         max_length=255, 
         null=True, 
@@ -78,8 +158,77 @@ class User(AbstractUser):
         help_text="Social media provider"
     )
     
+    # Timestamps
+    date_joined = models.DateTimeField(
+        default=timezone.now,
+        help_text="When the user account was created"
+    )
+    last_login = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the user last logged in"
+    )
+    
+    # Use email as the username field
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['first_name', 'last_name']
+    
+    objects = CustomUserManager()
+    
+    class Meta:
+        verbose_name = 'User'
+        verbose_name_plural = 'Users'
+        ordering = ['-date_joined']
+    
     def __str__(self):
-        return f"{self.username} ({self.email})"
+        return f"{self.email} ({self.get_full_name()})"
+    
+    def get_full_name(self):
+        """Return the user's full name"""
+        return f"{self.first_name} {self.last_name}".strip()
+    
+    def get_short_name(self):
+        """Return the user's first name"""
+        return self.first_name
+    
+    def generate_email_verification_token(self):
+        """Generate a new email verification token"""
+        self.email_verification_token = secrets.token_urlsafe(32)
+        self.email_verification_sent_at = timezone.now()
+        self.save(update_fields=['email_verification_token', 'email_verification_sent_at'])
+        return self.email_verification_token
+    
+    def verify_email(self, token):
+        """Verify email with the provided token"""
+        if self.email_verification_token == token and self.email_verification_token:
+            self.is_email_verified = True
+            self.email_verification_token = None
+            self.email_verification_sent_at = None
+            self.save(update_fields=['is_email_verified', 'email_verification_token', 'email_verification_sent_at'])
+            return True
+        return False
+    
+    def can_login(self):
+        """Check if user can login (active and email verified)"""
+        return self.is_active and self.status == 'active' and self.is_email_verified
+
+
+class Voice(models.Model):
+    """Voice configurations for agents"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    voice_external_id = models.CharField(
+        max_length=255, 
+        help_text="External voice ID from provider (e.g., ElevenLabs voice ID)"
+    )
+    provider = models.CharField(
+        max_length=50, 
+        help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.provider}: {self.voice_external_id}"
 
 
 class Voice(models.Model):
@@ -267,7 +416,7 @@ class Blacklist(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Blacklist: {self.user.username} ({self.status})"
+        return f"Blacklist: {self.user.email} ({self.status})"
 
 
 class CallLog(models.Model):
@@ -329,14 +478,17 @@ class Calendar(models.Model):
     calendar_type = models.CharField(
         max_length=20,
         choices=CALENDAR_TYPE_CHOICES,
-        help_text="Calendar provider type"
+        help_text="Calendar provider type",
+        default="google"
     )
     account_id = models.CharField(
         max_length=255,
-        help_text="Account ID for the calendar service"
+        help_text="Account ID for the calendar service",
+        default="default@calendar.com"
     )
     auth_token = models.TextField(
-        help_text="Authentication token for calendar access"
+        help_text="Authentication token for calendar access",
+        default="default_token"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -358,23 +510,28 @@ class CalendarConfiguration(models.Model):
     )
     sub_calendar_id = models.CharField(
         max_length=255,
-        help_text="Google subcalendar or actual calendar ID"
+        help_text="Google subcalendar or actual calendar ID",
+        default="primary"
     )
     duration = models.IntegerField(
-        help_text="Duration of appointments in minutes"
+        help_text="Duration of appointments in minutes",
+        default=30
     )
     prep_time = models.IntegerField(
-        help_text="Preparation time in minutes before appointments"
+        help_text="Preparation time in minutes before appointments",
+        default=5
     )
     days_buffer = models.IntegerField(
         default=0,
         help_text="Days buffer for scheduling (0 = same day)"
     )
     from_time = models.TimeField(
-        help_text="Start time for scheduling availability"
+        help_text="Start time for scheduling availability",
+        default="09:00:00"
     )
     to_time = models.TimeField(
-        help_text="End time for scheduling availability"
+        help_text="End time for scheduling availability", 
+        default="17:00:00"
     )
     workdays = models.JSONField(
         default=list,

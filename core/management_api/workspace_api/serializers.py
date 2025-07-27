@@ -8,8 +8,8 @@ class WorkspaceUserSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'status']
-        read_only_fields = ['id', 'username', 'first_name', 'last_name', 'email', 'status']
+        fields = ['id', 'email', 'first_name', 'last_name', 'status']
+        read_only_fields = ['id', 'email', 'first_name', 'last_name', 'status']
 
 
 class WorkspaceSerializer(serializers.ModelSerializer):

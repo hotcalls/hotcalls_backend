@@ -33,7 +33,6 @@ class WorkspaceFilter(django_filters.FilterSet):
     def filter_has_user(self, queryset, name, value):
         """Filter workspaces that have a specific user"""
         return queryset.filter(
-            models.Q(mapping_user_workspaces__username__icontains=value) |
             models.Q(mapping_user_workspaces__email__icontains=value) |
             models.Q(mapping_user_workspaces__first_name__icontains=value) |
             models.Q(mapping_user_workspaces__last_name__icontains=value)

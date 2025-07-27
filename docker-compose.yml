@@ -3,31 +3,31 @@ version: '3.8'
 services:
   db:
     image: postgres:15-alpine
+    env_file: .env
     environment:
-      POSTGRES_DB: hotcalls_db
-      POSTGRES_USER: hotcalls_user
-      POSTGRES_PASSWORD: hotcalls_pass
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U hotcalls_user -d hotcalls_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
+    env_file: .env
     ports:
       - "6379:6379"
-    environment:
-      - REDIS_PASSWORD=hotcalls_redis_pass
-    command: redis-server --requirepass hotcalls_redis_pass
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "hotcalls_redis_pass", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,20 +36,13 @@ services:
     build:
       context: .
       target: development
+    env_file: .env
+    environment:
+      # Override for Docker networking
+      - DB_HOST=db
+      - REDIS_HOST=redis
     ports:
       - "8000:8000"
-    environment:
-      - DEBUG=True
-      - DB_HOST=db
-      - DB_NAME=hotcalls_db
-      - DB_USER=hotcalls_user
-      - DB_PASSWORD=hotcalls_pass
-      - REDIS_HOST=redis
-      - REDIS_PASSWORD=hotcalls_redis_pass
-      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
-      - ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
-      - CORS_ALLOW_ALL_ORIGINS=True
     volumes:
       - .:/app
       - static_volume:/app/staticfiles
@@ -67,16 +60,11 @@ services:
     build:
       context: .
       target: development
+    env_file: .env
     environment:
-      - DEBUG=True
+      # Override for Docker networking
       - DB_HOST=db
-      - DB_NAME=hotcalls_db
-      - DB_USER=hotcalls_user
-      - DB_PASSWORD=hotcalls_pass
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=hotcalls_redis_pass
-      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
     volumes:
       - .:/app
     depends_on:
@@ -90,16 +78,11 @@ services:
     build:
       context: .
       target: development
+    env_file: .env
     environment:
-      - DEBUG=True
+      # Override for Docker networking
       - DB_HOST=db
-      - DB_NAME=hotcalls_db
-      - DB_USER=hotcalls_user
-      - DB_PASSWORD=hotcalls_pass
       - REDIS_HOST=redis
-      - REDIS_PASSWORD=hotcalls_redis_pass
-      - CELERY_BROKER_URL=redis://:hotcalls_redis_pass@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:hotcalls_redis_pass@redis:6379/0
     volumes:
       - .:/app
     depends_on:
