@@ -653,10 +653,38 @@ echo "🌐 Installing NGINX Ingress Controller..."
 kubectl get namespace ingress-nginx &> /dev/null || \
   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
 
-# Create Ingress with retry logic
+# Wait for NGINX Ingress Controller to be ready
+echo "⏳ Waiting for NGINX Ingress Controller to be ready..."
+echo "🔍 Waiting for controller pods..."
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=300s
+
+# Wait for admission webhook to be ready
+echo "🔍 Waiting for admission webhook to have endpoints..."
+for i in {1..30}; do
+  if kubectl get endpoints -n ingress-nginx ingress-nginx-controller-admission --no-headers 2>/dev/null | grep -v '<none>' > /dev/null; then
+    echo "✅ Admission webhook endpoints are ready!"
+    break
+  fi
+  
+  if [ $i -eq 30 ]; then
+    echo "⚠️ Admission webhook still not ready after 5 minutes, continuing anyway..."
+  else
+    echo "⏳ Admission webhook not ready yet, waiting... (attempt $i/30)"
+    sleep 10
+  fi
+done
+
+# Extra safety: Wait a bit more for webhook to be fully operational
+echo "🛡️ Waiting extra 30 seconds for webhook to be fully operational..."
+sleep 30
+
+# Create Ingress with retry logic (reduced retries since we wait for webhook)
 echo "🌐 Creating Ingress..."
-for i in {1..5}; do
-  echo "Ingress creation attempt $i/5..."
+for i in {1..2}; do
+  echo "Ingress creation attempt $i/2..."
   if kubectl apply -n hotcalls-${ENVIRONMENT} -f - << EOF
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -688,21 +716,17 @@ EOF
     echo "✅ Ingress created successfully!"
     break
   else
-    echo "⚠️ Ingress creation attempt $i failed, retrying in 10 seconds..."
-    sleep 10
-  fi
-  if [ $i -eq 5 ]; then
-    echo "❌ All ingress creation attempts failed!"
-    exit 1
+    if [ $i -eq 2 ]; then
+      echo "❌ All ingress creation attempts failed!"
+      echo "🔍 Check NGINX controller status: kubectl get pods -n ingress-nginx"
+      echo "🔍 Check admission webhook: kubectl get endpoints -n ingress-nginx ingress-nginx-controller-admission"
+      exit 1
+    else
+      echo "⚠️ Ingress creation attempt $i failed, retrying in 10 seconds..."
+      sleep 10
+    fi
   fi
 done
-
-# Wait for NGINX Ingress Controller to be ready
-echo "⏳ Waiting for NGINX Ingress Controller to be ready..."
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=300s
 
 # Wait for pods to be ready with better timeout and error handling
 echo "⏳ Waiting for all pods to be ready (max 2 minutes)..."
