@@ -1046,6 +1046,29 @@ show_status() {
     log_info "To check nginx controller: kubectl get service -n ingress-nginx ingress-nginx-controller"
 }
 
+# Clean up Docker disk space after successful deployment
+cleanup_docker() {
+    log_info "Cleaning up Docker disk space..."
+    
+    # Show current disk usage
+    log_info "Current Docker disk usage:"
+    docker system df
+    
+    # Clean up unused images, containers, and build cache
+    log_info "Removing unused Docker resources..."
+    docker system prune -a -f --volumes
+    
+    # Clean up builder cache
+    log_info "Cleaning up Docker builder cache..."
+    docker builder prune -a -f
+    
+    # Show disk usage after cleanup
+    log_info "Docker disk usage after cleanup:"
+    docker system df
+    
+    log_success "Docker cleanup completed!"
+}
+
 # Main execution
 main() {
     log_info "Starting HotCalls deployment..."
@@ -1104,6 +1127,9 @@ main() {
         wait_for_deployment
         show_status
     fi
+    
+    # Clean up Docker disk space after successful deployment
+    cleanup_docker
     
     log_success "Deployment completed successfully! 🚀"
 }
