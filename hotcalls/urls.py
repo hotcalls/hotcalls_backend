@@ -22,6 +22,7 @@ from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from core.health import health_check
 from core.utils import CORSMediaView
+from core.management_api import api_root
 
 urlpatterns = [
     # Admin interface
@@ -30,6 +31,9 @@ urlpatterns = [
     # Health check
     path('health/', health_check, name='health_check'),
     path('health/', include('health_check.urls')),
+    
+    # API Root - shows available endpoints
+    path('api/', api_root, name='api_root'),
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
@@ -40,14 +44,14 @@ urlpatterns = [
     path('api/auth/', include('core.management_api.auth_api.urls')),
     
     # Management APIs - All require email verification
-    path('api/users/', include('core.management_api.user_api.urls')),
-    path('api/subscriptions/', include('core.management_api.subscription_api.urls')),
-    path('api/workspaces/', include('core.management_api.workspace_api.urls')),
-    path('api/agents/', include('core.management_api.agent_api.urls')),
-    path('api/leads/', include('core.management_api.lead_api.urls')),
-    path('api/calls/', include('core.management_api.call_api.urls')),
-    path('api/calendars/', include('core.management_api.calendar_api.urls')),
-    path('api/voices/', include('core.management_api.voice_api.urls')),
+    path('api/users/', include(('core.management_api.user_api.urls', 'user_api'), namespace='user_api')),
+    path('api/subscriptions/', include(('core.management_api.subscription_api.urls', 'subscription_api'), namespace='subscription_api')),
+    path('api/workspaces/', include(('core.management_api.workspace_api.urls', 'workspace_api'), namespace='workspace_api')),
+    path('api/agents/', include(('core.management_api.agent_api.urls', 'agent_api'), namespace='agent_api')),
+    path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
+    path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
+    path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
+    path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
 ]
 
 # Serve media files in development with CORS support
