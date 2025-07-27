@@ -261,6 +261,12 @@ variable "enable_monitoring_alerts" {
 }
 
 # Application configuration variables (from .env)
+variable "app_db_name" {
+  description = "Database name from .env"
+  type        = string
+  default     = "hotcalls_db"
+}
+
 variable "app_db_user" {
   description = "Database user name from .env"
   type        = string

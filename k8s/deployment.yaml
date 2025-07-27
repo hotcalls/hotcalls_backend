@@ -6,14 +6,14 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hotcalls-backend
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: backend
     app.kubernetes.io/version: "1.0.0"
-    environment: ${ENVIRONMENT:-dev}
+    environment: ${ENVIRONMENT}
 spec:
-  replicas: ${REPLICAS:-1}
+  replicas: ${REPLICAS}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -41,7 +41,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: backend
-        image: ${ACR_LOGIN_SERVER:-localhost:5000}/hotcalls-backend:${IMAGE_TAG:-latest}
+        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - name: http
@@ -69,7 +69,7 @@ spec:
         
         readinessProbe:
           httpGet:
-            path: /ready/
+            path: /health/
             port: http
             scheme: HTTP
           initialDelaySeconds: 10
@@ -80,7 +80,7 @@ spec:
         
         startupProbe:
           httpGet:
-            path: /startup/
+            path: /health/
             port: http
             scheme: HTTP
           initialDelaySeconds: 10
@@ -92,11 +92,11 @@ spec:
         # Resource requests and limits
         resources:
           requests:
-            memory: "${RESOURCES_REQUESTS_MEMORY:-128Mi}"
-            cpu: "${RESOURCES_REQUESTS_CPU:-100m}"
+            memory: "${RESOURCES_REQUESTS_MEMORY}"
+            cpu: "${RESOURCES_REQUESTS_CPU}"
           limits:
-            memory: "${RESOURCES_LIMITS_MEMORY:-512Mi}"
-            cpu: "${RESOURCES_LIMITS_CPU:-500m}"
+            memory: "${RESOURCES_LIMITS_MEMORY}"
+            cpu: "${RESOURCES_LIMITS_CPU}"
         
         # Security context
         securityContext:
@@ -143,13 +143,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hotcalls-celery-worker
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: celery-worker
     app.kubernetes.io/version: "1.0.0"
 spec:
-  replicas: ${CELERY_REPLICAS:-1}
+  replicas: ${REPLICAS}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -173,7 +173,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: celery-worker
-        image: ${ACR_LOGIN_SERVER:-localhost:5000}/hotcalls-backend:${IMAGE_TAG:-latest}
+        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
         imagePullPolicy: Always
         command: ["celery", "-A", "hotcalls", "worker", "-l", "info", "--concurrency=2"]
         
@@ -201,11 +201,11 @@ spec:
         # Resource requests and limits
         resources:
           requests:
-            memory: "${CELERY_RESOURCES_REQUESTS_MEMORY:-64Mi}"
-            cpu: "${CELERY_RESOURCES_REQUESTS_CPU:-50m}"
+            memory: "${CELERY_RESOURCES_REQUESTS_MEMORY}"
+            cpu: "${CELERY_RESOURCES_REQUESTS_CPU}"
           limits:
-            memory: "${CELERY_RESOURCES_LIMITS_MEMORY:-256Mi}"
-            cpu: "${CELERY_RESOURCES_LIMITS_CPU:-200m}"
+            memory: "${CELERY_RESOURCES_LIMITS_MEMORY}"
+            cpu: "${CELERY_RESOURCES_LIMITS_CPU}"
         
         # Security context
         securityContext:
@@ -234,7 +234,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hotcalls-celery-beat
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: celery-beat
@@ -261,7 +261,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: celery-beat
-        image: ${ACR_LOGIN_SERVER:-localhost:5000}/hotcalls-backend:${IMAGE_TAG:-latest}
+        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
         imagePullPolicy: Always
         command: ["celery", "-A", "hotcalls", "beat", "-l", "info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
         
@@ -275,11 +275,11 @@ spec:
         # Resource requests and limits
         resources:
           requests:
-            memory: "${BEAT_RESOURCES_REQUESTS_MEMORY:-32Mi}"
-            cpu: "${BEAT_RESOURCES_REQUESTS_CPU:-25m}"
+            memory: "${BEAT_RESOURCES_REQUESTS_MEMORY}"
+            cpu: "${BEAT_RESOURCES_REQUESTS_CPU}"
           limits:
-            memory: "${BEAT_RESOURCES_LIMITS_MEMORY:-128Mi}"
-            cpu: "${BEAT_RESOURCES_LIMITS_CPU:-100m}"
+            memory: "${BEAT_RESOURCES_LIMITS_MEMORY}"
+            cpu: "${BEAT_RESOURCES_LIMITS_CPU}"
         
         # Security context
         securityContext:

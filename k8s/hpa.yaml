@@ -2,7 +2,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: hotcalls-backend-hpa
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: autoscaling
@@ -11,8 +11,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: hotcalls-backend
-  minReplicas: ${HPA_MIN_REPLICAS:-1}
-  maxReplicas: ${HPA_MAX_REPLICAS:-5}
+  minReplicas: ${HPA_MIN_REPLICAS}
+  maxReplicas: ${HPA_MAX_REPLICAS}
   metrics:
   - type: Resource
     resource:
@@ -49,7 +49,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: hotcalls-celery-worker-hpa
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: autoscaling

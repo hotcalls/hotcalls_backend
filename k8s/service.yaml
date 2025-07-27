@@ -2,18 +2,16 @@ apiVersion: v1
 kind: Service
 metadata:
   name: hotcalls-backend-service
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: backend
-  annotations:
-    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   ports:
   - name: http
     port: 80
-    targetPort: http
+    targetPort: 8000
     protocol: TCP
   selector:
     app.kubernetes.io/name: hotcalls
@@ -23,20 +21,17 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: hotcalls-backend-headless
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  name: hotcalls-backend-internal
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: backend
-  annotations:
-    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+    app.kubernetes.io/component: backend-internal
 spec:
   type: ClusterIP
-  clusterIP: None
   ports:
   - name: http
     port: 80
-    targetPort: http
+    targetPort: 8000
     protocol: TCP
   selector:
     app.kubernetes.io/name: hotcalls

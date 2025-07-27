@@ -6,14 +6,14 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hotcalls-frontend
-  namespace: hotcalls-${ENVIRONMENT:-dev}
+  namespace: hotcalls-${ENVIRONMENT}
   labels:
     app.kubernetes.io/name: hotcalls
     app.kubernetes.io/component: frontend
     app.kubernetes.io/version: "1.0.0"
-    environment: ${ENVIRONMENT:-dev}
+    environment: ${ENVIRONMENT}
 spec:
-  replicas: ${FRONTEND_REPLICAS:-2}
+  replicas: ${REPLICAS}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -36,7 +36,7 @@ spec:
         fsGroup: 101
       containers:
       - name: frontend
-        image: ${ACR_LOGIN_SERVER:-localhost:5000}/hotcalls-frontend:${IMAGE_TAG:-latest}
+        image: ${ACR_LOGIN_SERVER}/hotcalls-frontend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - name: http
