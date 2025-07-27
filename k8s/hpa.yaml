@@ -1,16 +1,20 @@
+# Dynamic HPA Template
+# Usage: envsubst < hpa.yaml | kubectl apply -f -
+
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: hotcalls-backend-hpa
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-backend-hpa
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: backend
+    environment: ${ENVIRONMENT}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: hotcalls-backend
+    name: ${PROJECT_PREFIX}-backend
   minReplicas: ${HPA_MIN_REPLICAS}
   maxReplicas: ${HPA_MAX_REPLICAS}
   metrics:
@@ -31,48 +35,50 @@ spec:
       stabilizationWindowSeconds: 300
       policies:
       - type: Percent
-        value: 10
-        periodSeconds: 60
+        value: 100
+        periodSeconds: 15
     scaleUp:
-      stabilizationWindowSeconds: 60
+      stabilizationWindowSeconds: 0
       policies:
       - type: Percent
-        value: 50
-        periodSeconds: 30
+        value: 100
+        periodSeconds: 15
       - type: Pods
-        value: 2
-        periodSeconds: 60
+        value: 4
+        periodSeconds: 15
       selectPolicy: Max
 
 ---
+# Celery Worker HPA
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: hotcalls-celery-worker-hpa
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-celery-worker-hpa
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: autoscaling
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: celery-worker
+    environment: ${ENVIRONMENT}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: hotcalls-celery-worker
-  minReplicas: ${CELERY_HPA_MIN_REPLICAS:-1}
-  maxReplicas: ${CELERY_HPA_MAX_REPLICAS:-3}
+    name: ${PROJECT_PREFIX}-celery-worker
+  minReplicas: ${CELERY_HPA_MIN_REPLICAS}
+  maxReplicas: ${CELERY_HPA_MAX_REPLICAS}
   metrics:
   - type: Resource
     resource:
       name: cpu
       target:
         type: Utilization
-        averageUtilization: 80
+        averageUtilization: 70
   - type: Resource
     resource:
       name: memory
       target:
         type: Utilization
-        averageUtilization: 85
+        averageUtilization: 80
   behavior:
     scaleDown:
       stabilizationWindowSeconds: 300

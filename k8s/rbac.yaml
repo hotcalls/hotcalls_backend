@@ -1,52 +1,57 @@
 # Dynamic RBAC Template
 # Usage: envsubst < rbac.yaml | kubectl apply -f -
+# Set variables: PROJECT_PREFIX, ENVIRONMENT
 
+# Service Account
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: hotcalls-sa
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-sa
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/component: serviceaccount
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: rbac
     environment: ${ENVIRONMENT}
-  annotations:
-    azure.workload.identity/client-id: "${AZURE_CLIENT_ID:-}"
 automountServiceAccountToken: true
 
 ---
+# Role for the service account
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  namespace: hotcalls-${ENVIRONMENT}
-  name: hotcalls-role
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-role
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: rbac
     environment: ${ENVIRONMENT}
 rules:
 - apiGroups: [""]
-  resources: ["configmaps", "secrets", "pods"]
+  resources: ["pods"]
   verbs: ["get", "list", "watch"]
-- apiGroups: ["apps"]
-  resources: ["deployments"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
   verbs: ["get", "list", "watch"]
 
 ---
+# Role binding
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: hotcalls-rolebinding
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-rolebinding
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: rbac
     environment: ${ENVIRONMENT}
 subjects:
 - kind: ServiceAccount
-  name: hotcalls-sa
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-sa
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
 roleRef:
   kind: Role
-  name: hotcalls-role
+  name: ${PROJECT_PREFIX}-role
   apiGroup: rbac.authorization.k8s.io 

@@ -1,13 +1,14 @@
 # Dynamic ConfigMap Template
 # Usage: envsubst < configmap.yaml | kubectl apply -f -
+# Set variables first: PROJECT_PREFIX, ENVIRONMENT
 
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: hotcalls-config
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-config
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: config
     environment: ${ENVIRONMENT}
 data:

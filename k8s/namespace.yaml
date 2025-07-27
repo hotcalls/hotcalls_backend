@@ -1,13 +1,13 @@
 # Dynamic Namespace Template
 # Usage: envsubst < namespace.yaml | kubectl apply -f -
-# Set ENVIRONMENT variable first: export ENVIRONMENT=dev|staging|prod
+# Set PROJECT_PREFIX and ENVIRONMENT variables first: export PROJECT_PREFIX=myproject ENVIRONMENT=dev|staging|prod
 
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    name: hotcalls-${ENVIRONMENT}
-    app.kubernetes.io/name: hotcalls
-    app.kubernetes.io/part-of: hotcalls
+    name: ${PROJECT_PREFIX}-${ENVIRONMENT}
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/part-of: ${PROJECT_PREFIX}
     environment: ${ENVIRONMENT} 

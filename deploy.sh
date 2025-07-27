@@ -8,7 +8,9 @@ set -euo pipefail
 # Default values
 PROJECT_NAME="hotcalls"
 ENVIRONMENT="staging"
-LOCATION_SHORT="we"
+LOCATION_SHORT="ne"
+UPDATE_ONLY=false
+BRANCH=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -25,19 +27,31 @@ while [[ $# -gt 0 ]]; do
             LOCATION_SHORT="${1#*=}"
             shift
             ;;
+        --update-only)
+            UPDATE_ONLY=true
+            shift
+            ;;
+        --branch=*)
+            BRANCH="${1#*=}"
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
-            echo "  --project-name=NAME    Set project name (default: hotcalls)"
-            echo "                         Resource group will be: NAME-ENVIRONMENT-LOCATION-rg"
+            echo "  --project-name=NAME    Set resource group name directly (default: hotcalls)"
+            echo "                         Resource group will be: NAME"
             echo "  --environment=ENV      Set environment (default: staging)"
-            echo "  --location-short=LOC   Set location short name (default: we)"
+            echo "  --location-short=LOC   Set location short name (default: ne)"
+            echo "  --update-only          Only update Kubernetes deployment, skip infrastructure"
+            echo "  --branch=BRANCH        Git pull and checkout specified branch for both frontend and backend"
             echo "  -h, --help             Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                          # Deploy to hotcalls-staging-we-rg"
-            echo "  $0 --project-name=rg-2                     # Deploy to rg-2-staging-we-rg"  
-            echo "  $0 --project-name=myapp --environment=prod # Deploy to myapp-prod-we-rg"
+            echo "  $0                                          # Full deploy to hotcalls-staging-ne-rg"
+            echo "  $0 --project-name=rg-2                     # Full deploy to resource group: rg-2"  
+            echo "  $0 --update-only                           # Only update Kubernetes"
+            echo "  $0 --update-only --project-name=myapp      # Update K8s in myapp namespace"
+            echo "  $0 --branch=main --update-only             # Pull main branch and update K8s only"
             exit 0
             ;;
         *)
@@ -49,10 +63,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 echo "🎯 Deployment Configuration:"
-echo "   Project Name: $PROJECT_NAME"
+echo "   Resource Group Name: $PROJECT_NAME"
 echo "   Environment: $ENVIRONMENT" 
 echo "   Location: $LOCATION_SHORT"
-echo "   Resource Group: $PROJECT_NAME-$ENVIRONMENT-$LOCATION_SHORT-rg"
+echo "   Update Only: $UPDATE_ONLY"
+if [[ -n "$BRANCH" ]]; then
+    echo "   Branch: $BRANCH"
+fi
 echo ""
 
 # Colors for output
@@ -151,6 +168,54 @@ load_environment() {
     log_success "Environment variables loaded and validated!"
 }
 
+# Pull and checkout branch for both repositories
+checkout_branch() {
+    if [[ -z "$BRANCH" ]]; then
+        log_info "No branch specified, using current branches"
+        return 0
+    fi
+    
+    log_info "Checking out branch '$BRANCH' for backend and frontend..."
+    
+    # Checkout backend branch
+    log_info "Pulling and checking out backend branch: $BRANCH"
+    git fetch origin
+    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+        git checkout "$BRANCH"
+    elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+        git checkout -b "$BRANCH" "origin/$BRANCH"
+    else
+        log_error "Branch '$BRANCH' not found in backend repository"
+        exit 1
+    fi
+    git pull origin "$BRANCH"
+    
+    # Checkout frontend branch if repository exists
+    if [[ -n "${FRONTEND_REPO_URL:-}" ]]; then
+        if [[ -d "frontend" ]]; then
+            log_info "Pulling and checking out frontend branch: $BRANCH"
+            cd frontend
+            git fetch origin
+            if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
+                git checkout "$BRANCH"
+            elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+                git checkout -b "$BRANCH" "origin/$BRANCH"
+            else
+                log_warning "Branch '$BRANCH' not found in frontend repository, keeping current branch"
+                cd ..
+                return 0
+            fi
+            git pull origin "$BRANCH"
+            cd ..
+            log_success "Frontend checked out to branch: $BRANCH"
+        else
+            log_info "Frontend directory doesn't exist yet, will clone with branch $BRANCH"
+        fi
+    fi
+    
+    log_success "Branch checkout completed!"
+}
+
 # Clone and build frontend if needed
 setup_frontend() {
     log_info "Setting up frontend..."
@@ -180,12 +245,22 @@ setup_frontend() {
             exit 1
         fi
         
+        # If branch is specified, checkout that branch after cloning
+        if [[ -n "$BRANCH" ]]; then
+            cd frontend
+            git fetch origin
+            if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+                git checkout -b "$BRANCH" "origin/$BRANCH"
+                log_info "Checked out frontend to branch: $BRANCH"
+            else
+                log_warning "Branch '$BRANCH' not found in frontend repository, using default branch"
+            fi
+            cd ..
+        fi
+        
         log_success "Frontend repository cloned!"
     else
-        log_info "Frontend directory exists. Updating..."
-        cd frontend
-        git pull origin main || git pull origin master
-        cd ..
+        log_info "Frontend directory exists. Branch checkout already handled."
     fi
     
     # Build the frontend
@@ -254,9 +329,25 @@ deploy_infrastructure() {
     cd terraform
     
     # Set Terraform variables from command line and .env
+    export TF_VAR_resource_group_name="$PROJECT_NAME"
     export TF_VAR_project_name="$PROJECT_NAME"
     export TF_VAR_environment="$ENVIRONMENT"
     export TF_VAR_location_short="$LOCATION_SHORT"
+    
+    # Map location_short to full location
+    case "$LOCATION_SHORT" in
+        "we") export TF_VAR_location="West Europe" ;;
+        "ne") export TF_VAR_location="North Europe" ;;
+        "ue") export TF_VAR_location="UK South" ;;
+        *) export TF_VAR_location="North Europe" ;;
+    esac
+    
+    log_info "Terraform variables set: $PROJECT_NAME-$ENVIRONMENT-$LOCATION_SHORT in $TF_VAR_location"
+    
+    # Fix storage account naming (no hyphens allowed)
+    STORAGE_PREFIX=$(echo "${PROJECT_NAME}${ENVIRONMENT}${LOCATION_SHORT}" | tr -d '-')
+    export TF_VAR_storage_account_prefix="$STORAGE_PREFIX"
+    
     export TF_VAR_app_db_name="$DB_NAME"
     export TF_VAR_app_db_user="$DB_USER"
     export TF_VAR_app_db_password="$DB_PASSWORD"
@@ -277,6 +368,19 @@ deploy_infrastructure() {
     log_info "Initializing Terraform..."
     terraform init
     
+    # Create or select workspace based on project name and environment
+    WORKSPACE_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+    log_info "Using Terraform workspace: $WORKSPACE_NAME"
+    
+    # Create workspace if it doesn't exist, otherwise select it
+    if ! terraform workspace list | grep -q "\b$WORKSPACE_NAME\b"; then
+        log_info "Creating new workspace: $WORKSPACE_NAME"
+        terraform workspace new "$WORKSPACE_NAME"
+    else
+        log_info "Selecting existing workspace: $WORKSPACE_NAME"
+        terraform workspace select "$WORKSPACE_NAME"
+    fi
+    
     log_info "Planning Terraform deployment..."
     terraform plan -out=tfplan
     
@@ -293,6 +397,34 @@ get_infrastructure_outputs() {
     log_info "Getting infrastructure outputs..."
     
     cd terraform
+    
+    # Export outputs as environment variables for K8s deployment
+    export ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
+    export AKS_CLUSTER_NAME=$(terraform output -raw aks_cluster_name)
+    export AKS_RESOURCE_GROUP=$(terraform output -raw aks_resource_group)
+    export DB_HOST=$(terraform output -raw postgres_fqdn)
+    export AZURE_ACCOUNT_NAME=$(terraform output -raw storage_account_name)
+    export AZURE_STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
+    
+    log_success "Infrastructure outputs retrieved!"
+    
+    cd ..
+}
+
+# Get infrastructure outputs for update-only mode
+get_infrastructure_outputs_update_only() {
+    log_info "Getting infrastructure outputs for update-only deployment..."
+    
+    cd terraform
+    
+    # Select the correct workspace
+    WORKSPACE_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+    if terraform workspace list | grep -q "\b$WORKSPACE_NAME\b"; then
+        terraform workspace select "$WORKSPACE_NAME"
+    else
+        log_error "Terraform workspace '$WORKSPACE_NAME' not found. Run full deployment first."
+        exit 1
+    fi
     
     # Export outputs as environment variables for K8s deployment
     export ACR_LOGIN_SERVER=$(terraform output -raw acr_login_server)
@@ -371,8 +503,64 @@ deploy_kubernetes() {
     cd k8s
     
     # Set environment variables for K8s manifests
-    # ENVIRONMENT is already set from command line arguments
+    # Use PROJECT_NAME for namespace instead of hardcoded "hotcalls"
+    export NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    export PROJECT_PREFIX="$PROJECT_NAME"
+    
+    # Set resource defaults (can be overridden in .env)
     export REPLICAS="${REPLICAS:-1}"
+    export RESOURCES_REQUESTS_MEMORY="${RESOURCES_REQUESTS_MEMORY:-256Mi}"
+    export RESOURCES_REQUESTS_CPU="${RESOURCES_REQUESTS_CPU:-100m}"
+    export RESOURCES_LIMITS_MEMORY="${RESOURCES_LIMITS_MEMORY:-512Mi}"
+    export RESOURCES_LIMITS_CPU="${RESOURCES_LIMITS_CPU:-500m}"
+    
+    # Celery worker resources
+    export CELERY_RESOURCES_REQUESTS_MEMORY="${CELERY_RESOURCES_REQUESTS_MEMORY:-128Mi}"
+    export CELERY_RESOURCES_REQUESTS_CPU="${CELERY_RESOURCES_REQUESTS_CPU:-50m}"
+    export CELERY_RESOURCES_LIMITS_MEMORY="${CELERY_RESOURCES_LIMITS_MEMORY:-256Mi}"
+    export CELERY_RESOURCES_LIMITS_CPU="${CELERY_RESOURCES_LIMITS_CPU:-200m}"
+    
+    # Celery beat resources
+    export BEAT_RESOURCES_REQUESTS_MEMORY="${BEAT_RESOURCES_REQUESTS_MEMORY:-64Mi}"
+    export BEAT_RESOURCES_REQUESTS_CPU="${BEAT_RESOURCES_REQUESTS_CPU:-25m}"
+    export BEAT_RESOURCES_LIMITS_MEMORY="${BEAT_RESOURCES_LIMITS_MEMORY:-128Mi}"
+    export BEAT_RESOURCES_LIMITS_CPU="${BEAT_RESOURCES_LIMITS_CPU:-100m}"
+    
+    # HPA settings (as integers for YAML)
+    export HPA_MIN_REPLICAS="${HPA_MIN_REPLICAS:-1}"
+    export HPA_MAX_REPLICAS="${HPA_MAX_REPLICAS:-5}"
+    export CELERY_HPA_MIN_REPLICAS="${CELERY_HPA_MIN_REPLICAS:-1}"
+    export CELERY_HPA_MAX_REPLICAS="${CELERY_HPA_MAX_REPLICAS:-3}"
+    
+    # Application settings with defaults
+    export IMAGE_TAG="${IMAGE_TAG:-latest}"
+    export DEBUG="${DEBUG:-False}"
+    export TIME_ZONE="${TIME_ZONE:-UTC}"
+    export DB_SSLMODE="${DB_SSLMODE:-require}"
+    
+    # Security settings
+    export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
+    export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-False}"
+    export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-False}"
+    export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-True}"
+    export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+    export X_FRAME_OPTIONS="${X_FRAME_OPTIONS:-DENY}"
+    
+    # Celery settings
+    export CELERY_TASK_ALWAYS_EAGER="${CELERY_TASK_ALWAYS_EAGER:-False}"
+    export CELERY_TASK_EAGER_PROPAGATES="${CELERY_TASK_EAGER_PROPAGATES:-True}"
+    
+    # Logging settings
+    export LOG_LEVEL="${LOG_LEVEL:-INFO}"
+    export DJANGO_LOG_LEVEL="${DJANGO_LOG_LEVEL:-INFO}"
+    
+    # Debug: Show critical resource variables
+    log_info "Resource Variables Set:"
+    log_info "  NAMESPACE=$NAMESPACE"
+    log_info "  PROJECT_PREFIX=$PROJECT_PREFIX"
+    log_info "  RESOURCES_REQUESTS_MEMORY=$RESOURCES_REQUESTS_MEMORY"
+    log_info "  RESOURCES_REQUESTS_CPU=$RESOURCES_REQUESTS_CPU"
+    log_info "  HPA_MAX_REPLICAS=$HPA_MAX_REPLICAS"
     
     # Apply manifests in order with environment substitution
     log_info "Creating namespace..."
@@ -440,15 +628,18 @@ install_ingress_controller() {
 wait_for_deployment() {
     log_info "Waiting for deployment to be ready..."
     
+    # Use project-specific namespace
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
     # Wait for backend deployment
-    kubectl wait --for=condition=available deployment/hotcalls-backend \
-        -n "hotcalls-${ENVIRONMENT}" --timeout=600s
+    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-backend \
+        -n "$NAMESPACE" --timeout=600s
     
     log_info "Waiting for ingress to get external IP..."
     
     # Wait for external IP (up to 10 minutes)
     for i in {1..60}; do
-        EXTERNAL_IP=$(kubectl get ingress hotcalls-ingress -n "hotcalls-${ENVIRONMENT}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        EXTERNAL_IP=$(kubectl get ingress ${PROJECT_NAME}-ingress -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
         
         if [[ -n "$EXTERNAL_IP" ]]; then
             break
@@ -456,7 +647,7 @@ wait_for_deployment() {
         
         if [[ $i -eq 60 ]]; then
             log_warning "Ingress IP not ready after 10 minutes. Check status manually."
-            kubectl get ingress -n "hotcalls-${ENVIRONMENT}"
+            kubectl get ingress -n "$NAMESPACE"
             kubectl get service -n ingress-nginx ingress-nginx-controller
             return
         fi
@@ -473,25 +664,26 @@ wait_for_deployment() {
         log_success "   • Admin: http://$EXTERNAL_IP/admin/"
         
         # Update BASE_URL in secrets with the actual ingress IP
-        kubectl patch secret hotcalls-secrets -n "hotcalls-${ENVIRONMENT}" \
+        kubectl patch secret ${PROJECT_NAME}-secrets -n "$NAMESPACE" \
             --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
         
         # Restart deployment to pick up new BASE_URL
-        kubectl rollout restart deployment/hotcalls-backend -n "hotcalls-${ENVIRONMENT}"
+        kubectl rollout restart deployment/${PROJECT_NAME}-backend -n "$NAMESPACE"
     fi
 }
 
 # Show deployment status
 show_status() {
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
     log_info "Deployment Status:"
     echo
-    kubectl get all -n "hotcalls-${ENVIRONMENT}"
+    kubectl get all -n "$NAMESPACE"
     echo
     log_info "Ingress Status:"
-    kubectl get ingress -n "hotcalls-${ENVIRONMENT}"
+    kubectl get ingress -n "$NAMESPACE"
     echo
-    log_info "To check logs: kubectl logs -f deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT}"
-    log_info "To check ingress: kubectl get ingress -n hotcalls-${ENVIRONMENT}"
+    log_info "To check logs: kubectl logs -f deployment/${PROJECT_NAME}-backend -n $NAMESPACE"
+    log_info "To check ingress: kubectl get ingress -n $NAMESPACE"
     log_info "To check nginx controller: kubectl get service -n ingress-nginx ingress-nginx-controller"
 }
 
@@ -501,16 +693,33 @@ main() {
     
     check_prerequisites
     load_environment
-    check_azure_login
-    setup_frontend
-    deploy_infrastructure
-    get_infrastructure_outputs
-    configure_kubectl
-    install_ingress_controller
-    build_and_push_images
-    deploy_kubernetes
-    wait_for_deployment
-    show_status
+    
+    # Handle branch checkout first if specified
+    checkout_branch
+    
+    if [[ "$UPDATE_ONLY" == "true" ]]; then
+        log_info "Update-only mode: Skipping infrastructure deployment"
+        check_azure_login
+        setup_frontend
+        get_infrastructure_outputs_update_only
+        configure_kubectl
+        build_and_push_images
+        deploy_kubernetes
+        wait_for_deployment
+        show_status
+    else
+        log_info "Full deployment mode: Including infrastructure"
+        check_azure_login
+        setup_frontend
+        deploy_infrastructure
+        get_infrastructure_outputs
+        configure_kubectl
+        install_ingress_controller
+        build_and_push_images
+        deploy_kubernetes
+        wait_for_deployment
+        show_status
+    fi
     
     log_success "Deployment completed successfully! 🚀"
 }

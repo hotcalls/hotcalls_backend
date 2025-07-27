@@ -1,14 +1,14 @@
-# Frontend Deployment Template
+# Dynamic Frontend Deployment Template
 # Usage: envsubst < frontend-deployment.yaml | kubectl apply -f -
-# Set variables: ENVIRONMENT, IMAGE_TAG, ACR_LOGIN_SERVER
+# Set variables: PROJECT_PREFIX, ENVIRONMENT, REPLICAS, IMAGE_TAG
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hotcalls-frontend
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-frontend
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: frontend
     app.kubernetes.io/version: "1.0.0"
     environment: ${ENVIRONMENT}
@@ -21,14 +21,18 @@ spec:
       maxUnavailable: 25%
   selector:
     matchLabels:
-      app.kubernetes.io/name: hotcalls
+      app.kubernetes.io/name: ${PROJECT_PREFIX}
       app.kubernetes.io/component: frontend
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: hotcalls
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
         app.kubernetes.io/component: frontend
         app.kubernetes.io/version: "1.0.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
     spec:
       securityContext:
         runAsNonRoot: true
@@ -36,7 +40,7 @@ spec:
         fsGroup: 101
       containers:
       - name: frontend
-        image: ${ACR_LOGIN_SERVER}/hotcalls-frontend:${IMAGE_TAG}
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-frontend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - name: http
@@ -110,7 +114,7 @@ spec:
                 - key: app.kubernetes.io/name
                   operator: In
                   values:
-                  - hotcalls
+                  - ${PROJECT_PREFIX}
                 - key: app.kubernetes.io/component
                   operator: In
                   values:

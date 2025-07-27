@@ -1,4 +1,16 @@
 # Core variables
+variable "resource_group_name" {
+  description = "Name of the resource group (overrides default naming)"
+  type        = string
+  default     = ""
+}
+
+variable "storage_account_prefix" {
+  description = "Prefix for storage account name (cleaned of special characters)"
+  type        = string
+  default     = ""
+}
+
 variable "project_name" {
   description = "Name of the project, used as prefix for resource names"
   type        = string

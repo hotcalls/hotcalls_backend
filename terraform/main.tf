@@ -23,7 +23,7 @@ locals {
 
 # Resource Group
 resource "azurerm_resource_group" "main" {
-  name     = "${local.resource_prefix}-rg"
+  name     = var.resource_group_name != "" ? var.resource_group_name : "${local.resource_prefix}-rg"
   location = var.location
   tags     = local.common_tags
 }
@@ -118,7 +118,7 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
 module "storage" {
   source = "./modules/storage"
   
-  storage_account_name = lower(substr("${var.project_name}st${local.unique_suffix}",0,24))
+  storage_account_name = lower(substr("${var.storage_account_prefix != "" ? var.storage_account_prefix : var.project_name}st${local.unique_suffix}",0,24))
   resource_group_name  = azurerm_resource_group.main.name
   location            = var.location
   

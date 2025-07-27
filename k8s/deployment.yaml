@@ -5,10 +5,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hotcalls-backend
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-backend
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: backend
     app.kubernetes.io/version: "1.0.0"
     environment: ${ENVIRONMENT}
@@ -21,12 +21,12 @@ spec:
       maxUnavailable: 25%
   selector:
     matchLabels:
-      app.kubernetes.io/name: hotcalls
+      app.kubernetes.io/name: ${PROJECT_PREFIX}
       app.kubernetes.io/component: backend
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: hotcalls
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
         app.kubernetes.io/component: backend
         app.kubernetes.io/version: "1.0.0"
       annotations:
@@ -34,14 +34,14 @@ spec:
         prometheus.io/port: "8000"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: hotcalls-sa
+      serviceAccountName: ${PROJECT_PREFIX}-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
       - name: backend
-        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-backend:${IMAGE_TAG}
         imagePullPolicy: Always
         ports:
         - name: http
@@ -51,9 +51,9 @@ spec:
         # Environment variables from ConfigMap
         envFrom:
         - configMapRef:
-            name: hotcalls-config
+            name: ${PROJECT_PREFIX}-config
         - secretRef:
-            name: hotcalls-secrets
+            name: ${PROJECT_PREFIX}-secrets
         
         # Health checks
         livenessProbe:
@@ -131,7 +131,7 @@ spec:
                 - key: app.kubernetes.io/name
                   operator: In
                   values:
-                  - hotcalls
+                  - ${PROJECT_PREFIX}
                 - key: app.kubernetes.io/component
                   operator: In
                   values:
@@ -142,10 +142,10 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hotcalls-celery-worker
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-celery-worker
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: celery-worker
     app.kubernetes.io/version: "1.0.0"
 spec:
@@ -157,32 +157,32 @@ spec:
       maxUnavailable: 50%
   selector:
     matchLabels:
-      app.kubernetes.io/name: hotcalls
+      app.kubernetes.io/name: ${PROJECT_PREFIX}
       app.kubernetes.io/component: celery-worker
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: hotcalls
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
         app.kubernetes.io/component: celery-worker
         app.kubernetes.io/version: "1.0.0"
     spec:
-      serviceAccountName: hotcalls-sa
+      serviceAccountName: ${PROJECT_PREFIX}-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
       - name: celery-worker
-        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-backend:${IMAGE_TAG}
         imagePullPolicy: Always
-        command: ["celery", "-A", "hotcalls", "worker", "-l", "info", "--concurrency=2"]
+        command: ["celery", "-A", "${PROJECT_PREFIX}", "worker", "-l", "info", "--concurrency=2"]
         
         # Environment variables from ConfigMap
         envFrom:
         - configMapRef:
-            name: hotcalls-config
+            name: ${PROJECT_PREFIX}-config
         - secretRef:
-            name: hotcalls-secrets
+            name: ${PROJECT_PREFIX}-secrets
         
         # Health checks for Celery worker
         livenessProbe:
@@ -190,7 +190,7 @@ spec:
             command:
             - celery
             - -A
-            - hotcalls
+            - ${PROJECT_PREFIX}
             - inspect
             - ping
           initialDelaySeconds: 30
@@ -233,10 +233,10 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: hotcalls-celery-beat
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-celery-beat
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: celery-beat
     app.kubernetes.io/version: "1.0.0"
 spec:
@@ -245,32 +245,32 @@ spec:
     type: Recreate  # Only one beat instance should run
   selector:
     matchLabels:
-      app.kubernetes.io/name: hotcalls
+      app.kubernetes.io/name: ${PROJECT_PREFIX}
       app.kubernetes.io/component: celery-beat
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: hotcalls
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
         app.kubernetes.io/component: celery-beat
         app.kubernetes.io/version: "1.0.0"
     spec:
-      serviceAccountName: hotcalls-sa
+      serviceAccountName: ${PROJECT_PREFIX}-sa
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         fsGroup: 1000
       containers:
       - name: celery-beat
-        image: ${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-backend:${IMAGE_TAG}
         imagePullPolicy: Always
-        command: ["celery", "-A", "hotcalls", "beat", "-l", "info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
+        command: ["celery", "-A", "${PROJECT_PREFIX}", "beat", "-l", "info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
         
         # Environment variables from ConfigMap
         envFrom:
         - configMapRef:
-            name: hotcalls-config
+            name: ${PROJECT_PREFIX}-config
         - secretRef:
-            name: hotcalls-secrets
+            name: ${PROJECT_PREFIX}-secrets
         
         # Resource requests and limits
         resources:

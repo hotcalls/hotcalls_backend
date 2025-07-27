@@ -1,58 +1,58 @@
-# Simple NGINX Ingress for HotCalls
-# This replaces the complex Application Gateway setup
+# Simple NGINX Ingress for ${PROJECT_PREFIX}
+# This routes traffic from external load balancer to internal services
+# Frontend serves from root /, API serves from /api/, /admin/, /health/
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: hotcalls-ingress
-  namespace: hotcalls-${ENVIRONMENT}
+  name: ${PROJECT_PREFIX}-ingress
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
   labels:
-    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
     app.kubernetes.io/component: ingress
+    environment: ${ENVIRONMENT}
   annotations:
+    kubernetes.io/ingress.class: "nginx"
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
 spec:
-  ingressClassName: nginx
   rules:
   - http:
       paths:
-      # API routes go to backend
+      # API routes (order matters - most specific first)
       - path: /api
         pathType: Prefix
         backend:
           service:
-            name: hotcalls-backend-internal
+            name: ${PROJECT_PREFIX}-backend-internal
             port:
-              number: 80
-      # Health check
-      - path: /health
-        pathType: Prefix
-        backend:
-          service:
-            name: hotcalls-backend-internal
-            port:
-              number: 80
-      # Admin routes
+              number: 8000
       - path: /admin
         pathType: Prefix
         backend:
           service:
-            name: hotcalls-backend-internal
+            name: ${PROJECT_PREFIX}-backend-internal
             port:
-              number: 80
-      # Static files
+              number: 8000
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
       - path: /static
         pathType: Prefix
         backend:
           service:
-            name: hotcalls-backend-internal
+            name: ${PROJECT_PREFIX}-backend-internal
             port:
-              number: 80
-      # Frontend (catch-all)
+              number: 8000
+      # Frontend route (catch-all, must be last)
       - path: /
         pathType: Prefix
         backend:
           service:
-            name: hotcalls-frontend-service
+            name: ${PROJECT_PREFIX}-frontend-service
             port:
               number: 80 
