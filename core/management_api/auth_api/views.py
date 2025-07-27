@@ -105,183 +105,107 @@ def register(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@extend_schema_view(
-    get=extend_schema(
-        summary="📝 Login Form",
-        description="""
-        Show login form (HTML) or return instructions (API).
-        
-        **📝 GET Request**: Display login form for browsers
-        **📨 Use Case**: User visits login page
-        """,
-        responses={
-            200: OpenApiResponse(description="✅ Login form displayed or instructions provided")
-        },
-        tags=["Authentication"]
-    ),
-    post=extend_schema(
-        summary="🔑 Email-Based Login",
-        description="""
-        Login with email and password. **Email verification is mandatory**.
-        
-        **🔐 Requirements**:
-        - Valid email and password
-        - Email MUST be verified (click link from registration email)
-        - Account must be active and not suspended
-        
-        **❌ Login Blocked If**:
-        - Email is not verified
-        - Account is suspended or disabled
-        - Invalid credentials provided
-        
-        **✅ Success Response**:
-        - User session created
-        - User profile data returned
-        - Can access protected endpoints
-        
-        **📧 If Email Not Verified**:
-        - Use `/resend-verification/` to get new verification email
-        - Check spam/junk folders
-        - Verify email address is correct
-        """,
-        request=EmailLoginSerializer,
-        responses={
-            200: OpenApiResponse(
-                response=UserProfileSerializer,
-                description="✅ Login successful - User authenticated",
-                examples=[
-                    OpenApiExample(
-                        'Login Success',
-                        summary='User successfully logged in',
-                        value={
-                            'message': 'Login successful',
-                            'user': {
-                                'id': 'user-uuid',
-                                'email': 'user@example.com',
-                                'first_name': 'John',
-                                'last_name': 'Doe',
-                                'is_email_verified': True
-                            }
+@extend_schema(
+    summary="🔑 Email-Based Login",
+    description="""
+    Login with email and password. **Email verification is mandatory**.
+    
+    **🔐 Requirements**:
+    - Valid email and password
+    - Email MUST be verified (click link from registration email)
+    - Account must be active and not suspended
+    
+    **❌ Login Blocked If**:
+    - Email is not verified
+    - Account is suspended or disabled
+    - Invalid credentials provided
+    
+    **✅ Success Response**:
+    - User session created
+    - User profile data returned
+    - Can access protected endpoints
+    
+    **📧 If Email Not Verified**:
+    - Use `/resend-verification/` to get new verification email
+    - Check spam/junk folders
+    - Verify email address is correct
+    """,
+    request=EmailLoginSerializer,
+    responses={
+        200: OpenApiResponse(
+            response=UserProfileSerializer,
+            description="✅ Login successful - User authenticated",
+            examples=[
+                OpenApiExample(
+                    'Login Success',
+                    summary='User successfully logged in',
+                    value={
+                        'message': 'Login successful',
+                        'user': {
+                            'id': 'user-uuid',
+                            'email': 'user@example.com',
+                            'first_name': 'John',
+                            'last_name': 'Doe',
+                            'is_email_verified': True
                         }
-                    )
-                ]
-            ),
-            400: OpenApiResponse(
-                description="❌ Login failed - Validation or verification errors",
-                examples=[
-                    OpenApiExample(
-                        'Email Not Verified',
-                        summary='User must verify email first',
-                        value={
-                            'email': ['Please verify your email address before logging in. Check your inbox for the verification email.']
-                        }
-                    ),
-                    OpenApiExample(
-                        'Invalid Credentials',
-                        summary='Wrong email or password',
-                        value={
-                            'non_field_errors': ['Invalid email or password.']
-                        }
-                    ),
-                    OpenApiExample(
-                        'Account Suspended',
-                        summary='Account has been suspended',
-                        value={
-                            'non_field_errors': ['Your account has been suspended. Please contact support.']
-                        }
-                    )
-                ]
-            )
-        },
-        tags=["Authentication"]
-    ),
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(
+            description="❌ Login failed - Validation or verification errors",
+            examples=[
+                OpenApiExample(
+                    'Email Not Verified',
+                    summary='User must verify email first',
+                    value={
+                        'email': ['Please verify your email address before logging in. Check your inbox for the verification email.']
+                    }
+                ),
+                OpenApiExample(
+                    'Invalid Credentials',
+                    summary='Wrong email or password',
+                    value={
+                        'non_field_errors': ['Invalid email or password.']
+                    }
+                ),
+                OpenApiExample(
+                    'Account Suspended',
+                    summary='Account has been suspended',
+                    value={
+                        'non_field_errors': ['Your account has been suspended. Please contact support.']
+                    }
+                )
+            ]
+        )
+    },
+    tags=["Authentication"]
 )
-class LoginView(APIView):
-    """Handle user login with both HTML and API support"""
-    permission_classes = [AllowAny]
-    serializer_class = EmailLoginSerializer
-    parser_classes = [JSONParser, FormParser, MultiPartParser]
+@api_view(['GET', 'POST'])
+@permission_classes([AllowAny])
+def login_view(request):
+    """Login with email and password (email verification required)"""
+    if request.method == 'GET':
+        # For GET requests, just return a message instead of an error
+        return Response({
+            'message': 'This is the login endpoint. Send POST request with email and password to login.'
+        }, status=status.HTTP_200_OK)
     
-    def is_browser_request(self, request):
-        """Check if request is from browser (HTML) or API (JSON)"""
-        accept_header = request.META.get('HTTP_ACCEPT', '')
-        return 'text/html' in accept_header
-    
-    def get(self, request):
-        """GET request - Show login form"""
-        if self.is_browser_request(request):
-            return render(request, 'auth/login_form.html', {
-                'email': '',
-                'error': None,
-                'success': None
-            })
-        else:
-            return JsonResponse({
-                'message': 'Send POST request with email and password to login.'
-            })
-    
-    def post(self, request):
-        """POST request - Process login"""
-        # Handle both form data and JSON data
-        if request.content_type == 'application/x-www-form-urlencoded' or 'multipart/form-data' in request.content_type:
-            # HTML form submission
-            email = request.POST.get('email')
-            password = request.POST.get('password')
-            
-            if not email or not password:
-                return render(request, 'auth/login_form.html', {
-                    'error': 'Email and password are required.',
-                    'email': email or '',
-                    'success': None
-                })
-            
-            # Create serializer data from form
-            serializer_data = {'email': email, 'password': password}
-            serializer = EmailLoginSerializer(data=serializer_data)
-            
-            if serializer.is_valid():
-                user = serializer.validated_data['user']
-                login(request, user)
-                
-                # Update last login
-                user.last_login = timezone.now()
-                user.save(update_fields=['last_login'])
-                
-                # For successful login from form, show a success page or redirect
-                return render(request, 'auth/login_form.html', {
-                    'success': f'Welcome back, {user.get_full_name()}! You are now logged in.',
-                    'email': email,
-                    'error': None
-                })
-            else:
-                # Extract error messages from serializer
-                error_messages = []
-                for field, errors in serializer.errors.items():
-                    for error in errors:
-                        error_messages.append(str(error))
-                
-                return render(request, 'auth/login_form.html', {
-                    'error': '; '.join(error_messages),
-                    'email': email,
-                    'success': None
-                })
-        else:
-            # JSON API request - use DRF's request.data to avoid body parsing conflicts
-            serializer = EmailLoginSerializer(data=request.data)
-            if serializer.is_valid():
-                user = serializer.validated_data['user']
-                login(request, user)
-                
-                # Update last login
-                user.last_login = timezone.now()
-                user.save(update_fields=['last_login'])
-                
-                return JsonResponse({
-                    'message': 'Login successful',
-                    'user': UserProfileSerializer(user).data
-                })
-            
-            return JsonResponse(serializer.errors, status=400)
+    # POST request - handle login
+    serializer = EmailLoginSerializer(data=request.data)
+    if serializer.is_valid():
+        user = serializer.validated_data['user']
+        login(request, user)
+        
+        # Update last login
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+        
+        return Response({
+            'message': 'Login successful',
+            'user': UserProfileSerializer(user).data
+        }, status=status.HTTP_200_OK)
+    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(
