@@ -4,7 +4,7 @@ provider "azurerm" {
     # Enable soft delete for Key Vault
     key_vault {
       purge_soft_delete_on_destroy    = false
-      recover_soft_deleted_key_vaults = false
+      recover_soft_deleted_key_vaults = true
     }
     
     # Resource group deletion policy
@@ -15,7 +15,7 @@ provider "azurerm" {
     # API Management policies
     api_management {
       purge_soft_delete_on_destroy = false
-      recover_soft_deleted         = false
+      recover_soft_deleted         = true
     }
   }
 }
