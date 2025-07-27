@@ -48,10 +48,16 @@ async def make_outbound_call(
     # 2) Optionaler call_reason
     # Template-Ersetzung direkt hier
     greeting_template = agent_config.get('greeting_outbound', 'Hello {name} {surname}, how are you?')
-    custom_greeting = greeting_template.format(
-        name=lead_data.get("name", ""),
-        surname=lead_data.get("surname", "")
-    )
+    
+    # Handle empty names in greeting
+    if customer_name:
+        custom_greeting = greeting_template.format(
+            name=lead_data.get("name", ""),
+            surname=lead_data.get("surname", "")
+        )
+    else:
+        # No customer name, use generic greeting
+        custom_greeting = agent_config.get('greeting_outbound', 'Hello, how are you?')
     
     # Backward-Kompatibilität: agent_name als Alias für name hinzufügen
     agent_config["agent_name"] = agent_config.get("name", "")
@@ -94,12 +100,22 @@ async def make_outbound_call(
         
         # Step 2: Create the SIP participant (make the call)
         print(f"Creating outbound call to {lead_data['phone']}...")
+        
+        # Generate participant identity and name
+        if customer_name:
+            participant_identity = f"lead_{lead_data['name']}_{lead_data['surname']}"
+            participant_name = f"{lead_data['name']} {lead_data['surname']}"
+        else:
+            # No lead info, use phone-based identity
+            participant_identity = f"phone_{lead_data['phone'].replace('+', '')}"
+            participant_name = f"Outbound Call to {lead_data['phone']}"
+        
         request = CreateSIPParticipantRequest(
             sip_trunk_id=sip_trunk_id,
             sip_call_to=lead_data['phone'],
             room_name=room_name,
-            participant_identity=f"lead_{lead_data['name']}_{lead_data['surname']}",
-            participant_name=f"{lead_data['name']} {lead_data['surname']}",
+            participant_identity=participant_identity,
+            participant_name=participant_name,
             # Optional: Add from_number handling if needed
         )
         

@@ -468,7 +468,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="📞 Make outbound call",
         description="""
-        Initiate an outbound call using LiveKit with specified agent and lead.
+        Initiate an outbound call using LiveKit with specified agent.
         
         **⚡ SYNCHRONOUS ENDPOINT - NOT ASYNC!**
         
@@ -477,22 +477,22 @@ class CallLogViewSet(viewsets.ModelViewSet):
         - **✅ Staff/Superuser**: Can use any agent
         
         **📋 Required Information**:
-        - `sip_trunk_id`: SIP trunk for outbound calls
-        - `agent_id`: Agent UUID to make the call
-        - `lead_id`: Lead UUID to call
+        - `phone`: Phone number to call (required)
+        - `agent_id`: Agent UUID to make the call (required)
+        - `lead_id`: Lead UUID to associate with call (optional)
         
         **📞 Call Process**:
         1. Validates agent belongs to user's workspace
-        2. Retrieves lead information
+        2. Retrieves lead information if provided
         3. Dispatches agent to LiveKit room
-        4. Initiates SIP call to lead
+        4. Initiates SIP call to the phone number
         5. Creates call log entry
         
         **🎯 Use Cases**:
-        - Sales outreach campaigns
-        - Customer follow-up calls
-        - Appointment confirmations
-        - Survey calls
+        - Direct outbound calls
+        - Sales outreach
+        - Customer follow-up
+        - Support calls
         """,
         request=OutboundCallSerializer,
         responses={
@@ -510,7 +510,6 @@ class CallLogViewSet(viewsets.ModelViewSet):
                             'sip_call_id': 'SIP_123456',
                             'to_number': '+4915111857588',
                             'agent_name': 'Sales Agent',
-                            'campaign_id': 'CAMPAIGN_001',
                             'call_log_id': 'uuid-of-created-log'
                         }
                     )
@@ -526,6 +525,10 @@ class CallLogViewSet(viewsets.ModelViewSet):
                     OpenApiExample(
                         'Workspace Access Denied',
                         value={'agent_id': ['You can only use agents from your own workspace']}
+                    ),
+                    OpenApiExample(
+                        'Invalid Phone',
+                        value={'phone': ['Phone number must start with + and country code']}
                     )
                 ]
             ),
@@ -539,8 +542,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
                             'success': False,
                             'error': 'Failed to connect to SIP trunk',
                             'to_number': '+4915111857588',
-                            'agent_name': 'Sales Agent',
-                            'campaign_id': 'CAMPAIGN_001'
+                            'agent_name': 'Sales Agent'
                         }
                     )
                 ]
@@ -564,17 +566,43 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Get validated data
         validated_data = serializer.validated_data
         
-        # Retrieve agent and lead objects
+        # Fixed SIP trunk ID
+        SIP_TRUNK_ID = "ST_F5KZ4yNHBegK"
+        
+        # Retrieve agent
         try:
             agent = Agent.objects.select_related('workspace', 'voice').get(
                 agent_id=validated_data['agent_id']
             )
-            lead = Lead.objects.get(id=validated_data['lead_id'])
-        except (Agent.DoesNotExist, Lead.DoesNotExist) as e:
+        except Agent.DoesNotExist:
             return Response(
-                {'error': str(e)}, 
+                {'error': 'Agent not found'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
+        
+        # Retrieve lead if provided
+        lead = None
+        lead_data = {
+            "name": "",
+            "surname": "",
+            "email": "",
+            "phone": validated_data['phone'],
+            "meta_data": {}
+        }
+        
+        if validated_data.get('lead_id'):
+            try:
+                lead = Lead.objects.get(id=validated_data['lead_id'])
+                lead_data = {
+                    "name": lead.name,
+                    "surname": lead.surname or "",
+                    "email": lead.email,
+                    "phone": lead.phone,
+                    "meta_data": lead.meta_data or {}
+                }
+            except Lead.DoesNotExist:
+                # Lead not found, but we continue with phone only
+                pass
         
         # Prepare agent configuration dictionary
         agent_config = {
@@ -596,15 +624,6 @@ class CallLogViewSet(viewsets.ModelViewSet):
             "calendar_configuration": str(agent.calendar_configuration.id) if agent.calendar_configuration else ""
         }
         
-        # Prepare lead data dictionary
-        lead_data = {
-            "name": lead.name,
-            "surname": lead.surname or "",
-            "email": lead.email,
-            "phone": lead.phone,
-            "meta_data": lead.meta_data or {}
-        }
-        
         # Import the SYNC function (NOT ASYNC!)
         try:
             from core.utils.livekit_calls import make_outbound_call_sync
@@ -617,22 +636,22 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Make the outbound call using SYNC wrapper
         # THIS IS NOT ASYNC - IT'S A SYNCHRONOUS CALL!
         result = make_outbound_call_sync(
-            sip_trunk_id=validated_data['sip_trunk_id'],
+            sip_trunk_id=SIP_TRUNK_ID,
             agent_config=agent_config,
             lead_data=lead_data,
-            from_number=validated_data.get('from_number', ''),
-            campaign_id=validated_data.get('campaign_id', ''),
-            call_reason=validated_data.get('call_reason')
+            from_number="",  # Not used anymore
+            campaign_id="",  # Not used anymore
+            call_reason=None  # Not used anymore
         )
         
         # Create call log entry if successful
         if result.get('success'):
             with transaction.atomic():
                 call_log = CallLog.objects.create(
-                    lead=lead,
+                    lead=lead,  # Can be None if no lead_id provided
                     agent=agent,
-                    from_number=validated_data.get('from_number', ''),
-                    to_number=lead.phone,
+                    from_number="",
+                    to_number=validated_data['phone'],
                     duration=0,  # Will be updated when call ends
                     direction='outbound',
                     status='reached',  # Initial status

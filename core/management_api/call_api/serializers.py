@@ -108,45 +108,23 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
 class OutboundCallSerializer(serializers.Serializer):
     """Serializer for making outbound calls via LiveKit"""
     
-    # SIP Configuration
-    sip_trunk_id = serializers.CharField(
+    # Phone number to call (required)
+    phone = serializers.CharField(
         required=True,
-        help_text="SIP trunk identifier for outbound calls"
-    )
-    from_number = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        default="",
-        help_text="Caller ID number"
+        help_text="Phone number to call (required)"
     )
     
-    # Agent Selection
+    # Agent Selection (required)
     agent_id = serializers.UUIDField(
         required=True,
-        help_text="Agent UUID to make the call"
+        help_text="Agent UUID to make the call (required)"
     )
     
-    # Lead Selection
+    # Lead Selection (optional)
     lead_id = serializers.UUIDField(
-        required=True,
-        help_text="Lead UUID to call"
-    )
-    
-    # Campaign Info
-    campaign_id = serializers.CharField(
         required=False,
-        allow_blank=True,
-        default="",
-        help_text="Campaign identifier"
-    )
-    
-    # Optional call reason
-    call_reason = serializers.CharField(
-        required=False,
-        allow_blank=True,
         allow_null=True,
-        default=None,
-        help_text="Reason for the call"
+        help_text="Lead UUID to associate with call (optional)"
     )
     
     def validate_agent_id(self, value):
@@ -168,10 +146,20 @@ class OutboundCallSerializer(serializers.Serializer):
             raise serializers.ValidationError("Agent not found")
     
     def validate_lead_id(self, value):
-        """Validate lead exists"""
-        if not Lead.objects.filter(id=value).exists():
+        """Validate lead exists if provided"""
+        if value and not Lead.objects.filter(id=value).exists():
             raise serializers.ValidationError("Lead not found")
         return value
+    
+    def validate_phone(self, value):
+        """Basic phone validation"""
+        if not value:
+            raise serializers.ValidationError("Phone number is required")
+        # Remove spaces and validate it starts with +
+        cleaned = value.replace(" ", "")
+        if not cleaned.startswith("+"):
+            raise serializers.ValidationError("Phone number must start with + and country code")
+        return cleaned
 
 
 class CallLogAnalyticsSerializer(serializers.Serializer):
