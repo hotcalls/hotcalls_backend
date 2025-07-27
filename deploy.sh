@@ -9,6 +9,15 @@
 # - Retry logic for failed deployments
 # - Better error handling and cleanup
 # - Foolproof deployment with clear error messages
+# - Automatic ACR authentication setup for Kubernetes
+# - Fixed image naming consistency (project-specific names)
+# - Automatic deployment restart after auth configuration
+# - SPEED OPTIMIZATIONS:
+#   * Docker build caching for faster image builds
+#   * Parallel Kubernetes resource deployment
+#   * Fixed environment variable substitution (ALLOWED_HOSTS, etc.)
+#   * Reduced health check timeouts for staging/dev
+#   * Optimized deployment order (Redis first, then backend)
 #
 # USAGE:
 #   ./deploy.sh --project-name=YOUR_EXACT_RG_NAME [options]
@@ -631,20 +640,22 @@ build_and_push_images() {
     # Set image tag (use environment or default to 'latest')
     export IMAGE_TAG="${IMAGE_TAG:-latest}"
     
-    # Build backend image
-    log_info "Building backend image..."
-    docker build -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" .
-    
-    log_info "Pushing backend image..."
-    docker push "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}"
+    # Build backend image for AMD64 architecture (Azure AKS compatibility)
+    log_info "Building backend image for AMD64 architecture..."
+    # Use cache for faster builds
+    docker buildx build --platform linux/amd64 \
+        --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
+        --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+        -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
     
     # Build frontend image if dist directory exists
     if [[ -d "dist" ]]; then
-        log_info "Building frontend image..."
-        docker build -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" .
-        
-        log_info "Pushing frontend image..."
-        docker push "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}"
+        log_info "Building frontend image for AMD64 architecture..."
+        # Use cache for faster builds
+        docker buildx build --platform linux/amd64 \
+            --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache" \
+            --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache,mode=max" \
+            -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" . --push
         
         export HAS_FRONTEND=true
     else
@@ -655,17 +666,108 @@ build_and_push_images() {
     log_success "Docker images built and pushed!"
 }
 
+# Setup environment variables for Kubernetes deployment  
+setup_kubernetes_environment() {
+    log_info "Setting up Kubernetes environment variables..."
+    
+    # Fix environment variable substitution issues
+    export ALLOWED_HOSTS="*"  # Allow all hosts (fix for pod IPs)
+    export CORS_ALLOW_ALL_ORIGINS="${CORS_ALLOW_ALL_ORIGINS:-False}"
+    export DEBUG="${DEBUG:-False}"
+    export TIME_ZONE="${TIME_ZONE:-UTC}"
+    export DB_SSLMODE="${DB_SSLMODE:-require}"
+    
+    # Security settings with proper defaults
+    export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
+    export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-False}"
+    export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-False}"
+    export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-True}"
+    export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+    export X_FRAME_OPTIONS="${X_FRAME_OPTIONS:-DENY}"
+    
+    # Celery settings
+    export CELERY_TASK_ALWAYS_EAGER="${CELERY_TASK_ALWAYS_EAGER:-False}"
+    export CELERY_TASK_EAGER_PROPAGATES="${CELERY_TASK_EAGER_PROPAGATES:-True}"
+    
+    # Logging settings
+    export LOG_LEVEL="${LOG_LEVEL:-INFO}"
+    export DJANGO_LOG_LEVEL="${DJANGO_LOG_LEVEL:-INFO}"
+    
+    # Faster startup settings
+    export REPLICAS="${REPLICAS:-1}"
+    export IMAGE_TAG="${IMAGE_TAG:-latest}"
+    
+    # Faster health checks for development/staging
+    if [[ "$ENVIRONMENT" != "production" ]]; then
+        export STARTUP_INITIAL_DELAY="5"      # Reduced from 10
+        export READINESS_INITIAL_DELAY="5"    # Reduced from 10  
+        export LIVENESS_INITIAL_DELAY="15"    # Reduced from 30
+        export HEALTH_CHECK_PERIOD="5"        # Reduced periods
+    else
+        # Keep conservative values for production
+        export STARTUP_INITIAL_DELAY="10"
+        export READINESS_INITIAL_DELAY="10" 
+        export LIVENESS_INITIAL_DELAY="30"
+        export HEALTH_CHECK_PERIOD="10"
+    fi
+    
+    log_success "Kubernetes environment variables configured!"
+}
+
+# Setup ACR authentication for Kubernetes
+setup_acr_authentication() {
+    log_info "Setting up ACR authentication for Kubernetes..."
+    
+    # Use project-specific namespace
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
+    # Enable admin user on ACR
+    log_info "Enabling admin user on ACR..."
+    az acr update --name "${ACR_LOGIN_SERVER%%.*}" --admin-enabled true >/dev/null 2>&1
+    
+    # Delete existing ACR secret if it exists
+    kubectl delete secret acr-secret -n "$NAMESPACE" >/dev/null 2>&1 || true
+    
+    # Create new ACR secret with admin credentials
+    log_info "Creating ACR authentication secret..."
+    kubectl create secret docker-registry acr-secret \
+        --docker-server="$ACR_LOGIN_SERVER" \
+        --docker-username="${ACR_LOGIN_SERVER%%.*}" \
+        --docker-password="$(az acr credential show --name "${ACR_LOGIN_SERVER%%.*}" --query "passwords[0].value" -o tsv)" \
+        -n "$NAMESPACE"
+    
+    # Patch service account to use the ACR secret
+    log_info "Configuring service account for image pulling..."
+    kubectl patch serviceaccount ${PROJECT_NAME}-sa -n "$NAMESPACE" \
+        -p '{"imagePullSecrets": [{"name": "acr-secret"}]}'
+    
+    # Restart deployments to pick up new authentication
+    log_info "Restarting deployments to apply new authentication..."
+    kubectl rollout restart deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout restart deployment/${PROJECT_NAME}-celery-worker -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout restart deployment/${PROJECT_NAME}-celery-beat -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout restart deployment/${PROJECT_NAME}-frontend -n "$NAMESPACE" >/dev/null 2>&1 || true
+    
+    log_success "ACR authentication configured and deployments restarted!"
+}
+
 # Deploy Kubernetes resources
 deploy_kubernetes() {
     log_info "Deploying Kubernetes resources..."
     
     cd k8s
     
+    # Setup proper environment variables first
+    setup_kubernetes_environment
+    
     # Set environment variables for K8s manifests
     # Use PROJECT_NAME for namespace instead of hardcoded "hotcalls"
     export NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
     export PROJECT_PREFIX="$PROJECT_NAME"
     export ENVIRONMENT="$ENVIRONMENT"
+    
+    # Fix celery app name (always use 'hotcalls' regardless of project name)
+    export CELERY_APP_NAME="hotcalls"
     
     # Set resource defaults (can be overridden in .env)
     export REPLICAS="${REPLICAS:-1}"
@@ -724,59 +826,49 @@ deploy_kubernetes() {
     log_info "  RESOURCES_REQUESTS_CPU=$RESOURCES_REQUESTS_CPU"
     log_info "  HPA_MAX_REPLICAS=$HPA_MAX_REPLICAS"
     
-    # Apply manifests in order with environment substitution
-    log_info "Creating namespace..."
+    # Apply manifests with faster deployment order
+    log_info "Creating namespace and RBAC (parallel)..."
     
-    # Debug: Check variables before envsubst
-    log_info "DEBUG: Before namespace creation:"
-    log_info "  PROJECT_PREFIX='$PROJECT_PREFIX'"
-    log_info "  ENVIRONMENT='$ENVIRONMENT'"
-    log_info "  Expected namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}"
+    # Create foundational resources in parallel
+    envsubst < namespace.yaml | kubectl apply -f - &
+    envsubst < rbac.yaml | kubectl apply -f - &
+    wait  # Wait for namespace and RBAC to be ready
     
-    # Debug: Show what envsubst will produce
-    log_info "DEBUG: envsubst output for namespace:"
-    envsubst < namespace.yaml | head -10
+    log_info "Creating configuration (parallel)..."
+    # Create config and secrets in parallel 
+    envsubst < configmap.yaml | kubectl apply -f - &
+    envsubst < secrets.yaml | kubectl apply -f - &
+    wait  # Wait for config to be ready
     
-    envsubst < namespace.yaml | kubectl apply -f -
+    log_info "Deploying core services (parallel)..."
+    # Deploy Redis and services in parallel (Redis starts faster)
+    envsubst < redis-deployment.yaml | kubectl apply -f - &
+    envsubst < service.yaml | kubectl apply -f - &
     
-    log_info "Creating RBAC resources..."
-    envsubst < rbac.yaml | kubectl apply -f -
-    
-    log_info "Creating ConfigMap..."
-    envsubst < configmap.yaml | kubectl apply -f -
-    
-    log_info "Creating Secrets..."
-    envsubst < secrets.yaml | kubectl apply -f -
-    
-    log_info "Deploying Redis..."
-    envsubst < redis-deployment.yaml | kubectl apply -f -
-    
-    log_info "Deploying backend..."
-    envsubst < deployment.yaml | kubectl apply -f -
-    
-    log_info "Creating backend service..."
-    envsubst < service.yaml | kubectl apply -f -
-    
-    # Deploy frontend only if we have it
+    # Deploy frontend if available (parallel with services)
     if [[ "${HAS_FRONTEND:-false}" == "true" ]] && [[ -f "frontend-deployment.yaml" ]]; then
-        log_info "Deploying frontend..."
-        envsubst < frontend-deployment.yaml | kubectl apply -f -
-        
-        log_info "Creating frontend service..."
-        envsubst < frontend-service.yaml | kubectl apply -f -
-    else
-        log_info "Skipping frontend deployment (no frontend available)"
+        envsubst < frontend-deployment.yaml | kubectl apply -f - &
+        envsubst < frontend-service.yaml | kubectl apply -f - &
     fi
     
-    log_info "Creating ingress..."
-    envsubst < ingress.yaml | kubectl apply -f -
+    wait  # Wait for services to be created
     
-    log_info "Creating HPA..."
-    envsubst < hpa.yaml | kubectl apply -f -
+    log_info "Deploying backend applications..."
+    # Deploy backend applications (depends on Redis and config)
+    envsubst < deployment.yaml | kubectl apply -f -
+    
+    log_info "Creating networking..."
+    # Create ingress and HPA last
+    envsubst < ingress.yaml | kubectl apply -f - &
+    envsubst < hpa.yaml | kubectl apply -f - &
+    wait
     
     log_success "Kubernetes resources deployed!"
     
     cd ..
+    
+    # Setup ACR authentication after K8s resources are created
+    setup_acr_authentication
 }
 
 # Install nginx ingress controller if not present
@@ -804,9 +896,23 @@ wait_for_deployment() {
     # Use project-specific namespace
     NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
     
-    # Wait for backend deployment
+    # Wait for all deployments to be ready
+    log_info "Waiting for backend deployment..."
     kubectl wait --for=condition=available deployment/${PROJECT_NAME}-backend \
         -n "$NAMESPACE" --timeout=600s
+    
+    log_info "Waiting for celery deployments..."
+    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-worker \
+        -n "$NAMESPACE" --timeout=300s || log_warning "Celery worker deployment timeout (non-critical)"
+    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-beat \
+        -n "$NAMESPACE" --timeout=300s || log_warning "Celery beat deployment timeout (non-critical)"
+    
+    # Wait for frontend if it exists
+    if kubectl get deployment ${PROJECT_NAME}-frontend -n "$NAMESPACE" >/dev/null 2>&1; then
+        log_info "Waiting for frontend deployment..."
+        kubectl wait --for=condition=available deployment/${PROJECT_NAME}-frontend \
+            -n "$NAMESPACE" --timeout=300s || log_warning "Frontend deployment timeout (non-critical)"
+    fi
     
     log_info "Waiting for ingress to get external IP..."
     
