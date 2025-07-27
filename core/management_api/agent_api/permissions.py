@@ -5,10 +5,9 @@ class AgentPermission(permissions.BasePermission):
     """
     Custom permission for Agent operations
     - Users can view agents in their workspaces
-    - Users can create agents in workspaces they belong to
-    - Staff can view all agents and create agents in any workspace
-    - Only staff can modify agents
-    - Only superusers can delete agents
+    - Users can create, update, and delete agents in workspaces they belong to
+    - Staff can view and manage all agents in any workspace
+    - Full workspace-based access control
     """
     
     def has_permission(self, request, view):
@@ -24,8 +23,15 @@ class AgentPermission(permissions.BasePermission):
         if request.method == 'POST':
             return True
         
-        # Update operations: require staff privileges
-        return request.user.is_staff
+        # Update operations: authenticated users can modify (workspace validation in has_object_permission)
+        if request.method in ['PUT', 'PATCH']:
+            return True
+            
+        # Delete operations: authenticated users can delete (workspace validation in has_object_permission)
+        if request.method == 'DELETE':
+            return True
+            
+        return False
     
     def has_object_permission(self, request, view, obj):
         # Read permissions
@@ -38,13 +44,15 @@ class AgentPermission(permissions.BasePermission):
         if request.method == 'POST':
             return True
         
-        # Update permissions only for staff
+        # Update permissions: users can modify agents in their workspaces, staff can modify all
         if request.method in ['PUT', 'PATCH']:
-            return request.user.is_staff
+            return (request.user in obj.workspace.users.all() or 
+                   request.user.is_staff)
         
-        # Delete permissions only for superusers
+        # Delete permissions: users can delete agents in their workspaces, staff can delete all
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            return (request.user in obj.workspace.users.all() or 
+                   request.user.is_staff)
         
         return False
 
