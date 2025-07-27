@@ -12,6 +12,9 @@ set -e
 # ✅ Intelligent migration retry with error handling
 # ✅ Database connection verification
 # ✅ Exits on failure (no partial deployments)
+# ✅ Hides Terraform outputs to prevent random password exposure
+# ✅ Verifies infrastructure actually exists (not just Terraform state)
+# ✅ Forces recreation if critical components are missing
 
 echo "🚀 Starting staging deployment..."
 
@@ -177,17 +180,71 @@ if [ "$FORCE_ALL" = true ]; then
   # Check if infrastructure exists and destroy it
   if terraform state list &> /dev/null && [ $(terraform state list | wc -l) -gt 0 ]; then
     echo "🗑️ Destroying existing infrastructure..."
-    terraform destroy -auto-approve -var-file="$TFVARS_FILE"
+    echo "⏳ Destruction in progress... (Terraform output hidden to avoid sensitive data exposure)"
+    terraform destroy -auto-approve -var-file="$TFVARS_FILE" > /dev/null
+    echo "✅ Infrastructure destruction completed"
   fi
   
   echo "🏗️ Creating new infrastructure..."
-  terraform apply -auto-approve -var-file="$TFVARS_FILE"
+  echo "⏳ This may take up to 1 hour... (Terraform output hidden to avoid sensitive data exposure)"
+  # Use gtimeout on macOS, timeout on Linux
+  TIMEOUT_CMD="timeout"
+  if command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    echo "⚠️ No timeout command available - running without timeout protection"
+    terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null
+  else
+    if ! $TIMEOUT_CMD 3600 terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null; then
+      echo "❌ Terraform apply timed out after 1 hour or failed!"
+      echo "🔍 Check your Azure subscription limits and network connectivity"
+      exit 1
+    fi
+  fi
+  echo "✅ Infrastructure creation completed"
     
 elif ! terraform state list &> /dev/null || [ $(terraform state list | wc -l) -eq 0 ] || ! terraform output acr_login_server &> /dev/null; then
   echo "🏗️ No infrastructure found, creating new infrastructure..."
-  terraform apply -auto-approve -var-file="$TFVARS_FILE"
+  echo "⏳ This may take up to 1 hour... (Terraform output hidden to avoid sensitive data exposure)"
+  # Use gtimeout on macOS, timeout on Linux
+  TIMEOUT_CMD="timeout"
+  if command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    echo "⚠️ No timeout command available - running without timeout protection"
+    terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null
+  else
+    if ! $TIMEOUT_CMD 3600 terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null; then
+      echo "❌ Terraform apply timed out after 1 hour or failed!"
+      echo "🔍 Check your Azure subscription limits and network connectivity"
+      exit 1
+    fi
+  fi
+  echo "✅ Infrastructure creation completed"
 else
-  echo "✅ Infrastructure exists, skipping Terraform deployment..."
+  # Verify that critical infrastructure actually exists
+  echo "🔍 Verifying infrastructure state..."
+  if ! az aks show --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER &> /dev/null; then
+    echo "⚠️ AKS cluster missing despite Terraform state - recreating infrastructure..."
+    echo "⏳ This may take up to 1 hour... (Terraform output hidden to avoid sensitive data exposure)"
+    # Use gtimeout on macOS, timeout on Linux
+    TIMEOUT_CMD="timeout"
+    if command -v gtimeout >/dev/null 2>&1; then
+      TIMEOUT_CMD="gtimeout"
+    elif ! command -v timeout >/dev/null 2>&1; then
+      echo "⚠️ No timeout command available - running without timeout protection"
+      terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null
+    else
+      if ! $TIMEOUT_CMD 3600 terraform apply -auto-approve -var-file="$TFVARS_FILE" > /dev/null; then
+        echo "❌ Terraform apply timed out after 1 hour or failed!"
+        echo "🔍 Check your Azure subscription limits and network connectivity"
+        exit 1
+      fi
+    fi
+    echo "✅ Infrastructure creation completed"
+  else
+    echo "✅ Infrastructure verified, skipping Terraform deployment..."
+  fi
 fi
 
 # Clean up temporary tfvars file
@@ -215,7 +272,28 @@ cd ..
 
 # Configure kubectl
 echo "🔧 Configuring kubectl..."
-az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER --admin --overwrite-existing
+echo "⏱️ Getting AKS credentials (timeout: 60s)..."
+# Use gtimeout on macOS, timeout on Linux
+TIMEOUT_CMD="timeout"
+if command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
+elif ! command -v timeout >/dev/null 2>&1; then
+  echo "⚠️ No timeout command available - running without timeout protection"
+  az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER --admin --overwrite-existing
+else
+  if ! $TIMEOUT_CMD 60 az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER --admin --overwrite-existing; then
+    echo "❌ Failed to get AKS credentials - cluster may not exist!"
+    echo "🔍 Checking cluster status..."
+    if ! az aks show --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER &> /dev/null; then
+      echo "❌ AKS cluster does not exist! Something is seriously wrong."
+      echo "🛠️ Try running with --force-all to recreate infrastructure"
+      exit 1
+    else
+      echo "❌ AKS cluster exists but credentials failed. Manual intervention needed."
+      exit 1
+    fi
+  fi
+fi
 
 # Create namespace
 echo "📁 Creating namespace..."
@@ -265,12 +343,26 @@ echo "  BASE_URL: $ENV_BASE_URL"
 
 # Sync PostgreSQL server credentials with .env values
 echo "🔐 Syncing PostgreSQL server with .env values..."
+echo "  DB_NAME: $ENV_DB_NAME"
+echo "  DB_USER: $ENV_DB_USER"
+echo "  POSTGRES_FQDN: $POSTGRES_FQDN"
+
+# Extract server name safely
+if [ -z "$POSTGRES_FQDN" ]; then
+  echo "❌ POSTGRES_FQDN is empty! Cannot sync database."
+  exit 1
+fi
+
+POSTGRES_SERVER_NAME_ONLY="${POSTGRES_FQDN%%.*}"
+echo "  Server name: $POSTGRES_SERVER_NAME_ONLY"
 
 # Update PostgreSQL server admin password to match .env
-az postgres flexible-server update --resource-group $RESOURCE_GROUP --name ${POSTGRES_FQDN%%.*} --admin-password "$ENV_DB_PASSWORD" > /dev/null
+echo "🔄 Updating PostgreSQL server admin password..."
+az postgres flexible-server update --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME_ONLY" --admin-password "$ENV_DB_PASSWORD" > /dev/null
 
 # Create database with name from .env if it doesn't exist
-az postgres flexible-server db create --resource-group $RESOURCE_GROUP --server-name ${POSTGRES_FQDN%%.*} --database-name "$ENV_DB_NAME" 2>/dev/null || echo "Database $ENV_DB_NAME already exists or using default"
+echo "🔄 Creating database '$ENV_DB_NAME'..."
+az postgres flexible-server db create --resource-group "$RESOURCE_GROUP" --server-name "$POSTGRES_SERVER_NAME_ONLY" --database-name "$ENV_DB_NAME" 2>/dev/null || echo "Database $ENV_DB_NAME already exists or using default"
 
 # NOTE: PostgreSQL admin user is created by Terraform as "hotcallsadmin"
 # If .env specifies a different user, we'll create it and grant permissions
@@ -373,7 +465,20 @@ az acr login --name $ACR_NAME
 # Build and push backend
 echo "🏗️ Building backend..."
 docker build --no-cache -t ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT} .
-docker push ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT}
+echo "⬆️ Pushing backend image (timeout: 5 minutes)..."
+# Use gtimeout on macOS, timeout on Linux
+TIMEOUT_CMD="timeout"
+if command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_CMD="gtimeout"
+elif ! command -v timeout >/dev/null 2>&1; then
+  echo "⚠️ No timeout command available - running without timeout protection"
+  docker push ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT}
+else
+  if ! $TIMEOUT_CMD 300 docker push ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT}; then
+    echo "❌ Backend image push failed or timed out!"
+    exit 1
+  fi
+fi
 
 # Create ConfigMap
 echo "⚙️ Creating ConfigMap..."
@@ -472,7 +577,20 @@ if [ -d "../hotcalls-visual-prototype" ]; then
   fi
   
   docker build --no-cache -f ../hotcalls/frontend-deploy/Dockerfile -t ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT} .
-  docker push ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT}
+  echo "⬆️ Pushing frontend image (timeout: 5 minutes)..."
+  # Use gtimeout on macOS, timeout on Linux
+  TIMEOUT_CMD="timeout"
+  if command -v gtimeout >/dev/null 2>&1; then
+    TIMEOUT_CMD="gtimeout"
+  elif ! command -v timeout >/dev/null 2>&1; then
+    echo "⚠️ No timeout command available - running without timeout protection"
+    docker push ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT}
+  else
+    if ! $TIMEOUT_CMD 300 docker push ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT}; then
+      echo "❌ Frontend image push failed or timed out!"
+      exit 1
+    fi
+  fi
   cd ../hotcalls
 else
   echo "⚠️ Frontend repo not found, skipping frontend deployment"
@@ -515,8 +633,8 @@ EOF
 
 # Create ACR pull secret
 echo "🔐 Creating ACR pull secret..."
-ACR_USER=$(az acr credential show -n $ACR_NAME --query username -o tsv)
-ACR_PASS=$(az acr credential show -n $ACR_NAME --query 'passwords[0].value' -o tsv)
+ACR_USER=$(az acr credential show -n $ACR_NAME --query username -o tsv 2>/dev/null)
+ACR_PASS=$(az acr credential show -n $ACR_NAME --query 'passwords[0].value' -o tsv 2>/dev/null)
 kubectl create secret docker-registry acr-secret -n hotcalls-${ENVIRONMENT} \
   --docker-server=${ACR_LOGIN_SERVER} \
   --docker-username=$ACR_USER \
