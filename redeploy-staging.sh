@@ -220,7 +220,7 @@ kubectl create secret generic hotcalls-secrets \
   --from-literal=ALLOWED_HOSTS="*" \
   --from-literal=DB_NAME="hotcalls" \
   --from-literal=DB_USER="hotcallsadmin" \
-  --from-literal=DB_PASSWORD="ChangeMe123!" \
+  --from-literal=DB_PASSWORD="$(echo 'nonsensitive(random_password.postgres_admin_password[0].result)' | terraform console | tr -d '\"')" \
   --from-literal=DB_HOST="$POSTGRES_FQDN" \
   --from-literal=REDIS_HOST="redis-service" \
   --from-literal=REDIS_PORT="6379" \
@@ -245,6 +245,7 @@ kubectl create secret generic hotcalls-secrets \
   --from-literal=AZURE_CLIENT_ID="" \
   --from-literal=AZURE_MONITOR_CONNECTION_STRING="" \
   --from-literal=BASE_URL="https://app1.hotcalls.ai" \
+  --from-literal=DJANGO_SETTINGS_MODULE="hotcalls.settings.production" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Deploy Redis

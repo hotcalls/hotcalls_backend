@@ -80,15 +80,22 @@ output "postgres_fqdn" {
   value       = module.postgres.fqdn
 }
 
+output "postgres_admin_username" {
+  description = "PostgreSQL administrator username"
+  value       = var.postgres_admin_username
+  sensitive   = true
+}
+
+# Temporary output to get the actual password for debugging
+output "postgres_admin_password" {
+  description = "PostgreSQL administrator password (temporary for debugging)"
+  value       = local.postgres_password
+  sensitive   = true
+}
+
 output "postgres_database_name" {
   description = "Name of the PostgreSQL database"
   value       = module.postgres.database_name
-}
-
-output "postgres_admin_username" {
-  description = "Administrator username for PostgreSQL"
-  value       = var.postgres_admin_username
-  sensitive   = true
 }
 
 # Key Vault outputs

@@ -68,6 +68,14 @@ DATABASES['default']['OPTIONS'].update({
     'sslmode': 'require',  # Require SSL for production database
 })
 
+# Explicitly override database settings to ensure environment variables are read correctly
+DATABASES['default'].update({
+    'HOST': os.environ.get('DB_HOST', 'localhost'),
+    'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+    'USER': os.environ.get('DB_USER', 'hotcalls_user'),
+    'NAME': os.environ.get('DB_NAME', 'hotcalls_db'),
+})
+
 # Azure Application Insights configuration
 AZURE_MONITOR_CONNECTION_STRING = os.environ.get('AZURE_MONITOR_CONNECTION_STRING')
 if AZURE_MONITOR_CONNECTION_STRING:
