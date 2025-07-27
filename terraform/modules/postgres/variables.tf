@@ -152,4 +152,18 @@ variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
   default     = {}
+}
+
+# Application user configuration
+variable "app_user_name" {
+  description = "Application database user name"
+  type        = string
+  default     = null
+}
+
+variable "app_user_password" {
+  description = "Application database user password"
+  type        = string
+  sensitive   = true
+  default     = null
 } 

@@ -26,6 +26,10 @@ terraform {
       source  = "hashicorp/helm"
       version = "~> 2.0"
     }
+    postgresql = {
+      source  = "cyrilgdn/postgresql"
+      version = "~> 1.0"
+    }
   }
 
   # Backend configuration commented out for local development

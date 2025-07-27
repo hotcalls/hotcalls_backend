@@ -41,4 +41,15 @@ provider "helm" {
     client_key             = try(base64decode(module.aks.client_key), null)
     cluster_ca_certificate = try(base64decode(module.aks.cluster_ca_certificate), null)
   }
+}
+
+# Configure PostgreSQL provider for database user management
+provider "postgresql" {
+  host      = try(module.postgres.fqdn, null)
+  port      = 5432
+  database  = "postgres"
+  username  = try(module.postgres.admin_username, null)
+  password  = try(module.postgres.admin_password, null)
+  sslmode   = "require"
+  superuser = false
 } 

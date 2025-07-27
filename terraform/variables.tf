@@ -258,4 +258,100 @@ variable "enable_monitoring_alerts" {
   description = "Enable monitoring alerts"
   type        = bool
   default     = true
+}
+
+# Application configuration variables (from .env)
+variable "app_db_user" {
+  description = "Database user name from .env"
+  type        = string
+  default     = "postgres"
+  sensitive   = false
+}
+
+variable "app_db_password" {
+  description = "Database password from .env"
+  type        = string
+  sensitive   = true
+}
+
+variable "app_secret_key" {
+  description = "Django secret key from .env"
+  type        = string
+  sensitive   = true
+}
+
+variable "app_redis_password" {
+  description = "Redis password from .env"
+  type        = string
+  sensitive   = true
+}
+
+variable "app_debug" {
+  description = "Django debug setting from .env"
+  type        = string
+  default     = "False"
+}
+
+variable "app_cors_allow_all" {
+  description = "CORS allow all origins setting from .env"
+  type        = string
+  default     = "False"
+}
+
+variable "app_email_host" {
+  description = "Email host from .env"
+  type        = string
+  default     = "smtp.gmail.com"
+}
+
+variable "app_email_port" {
+  description = "Email port from .env"
+  type        = string
+  default     = "587"
+}
+
+variable "app_email_use_tls" {
+  description = "Email use TLS from .env"
+  type        = string
+  default     = "True"
+}
+
+variable "app_email_use_ssl" {
+  description = "Email use SSL from .env"
+  type        = string
+  default     = "False"
+}
+
+variable "app_email_host_user" {
+  description = "Email host user from .env"
+  type        = string
+  sensitive   = true
+}
+
+variable "app_email_host_password" {
+  description = "Email host password from .env"
+  type        = string
+  sensitive   = true
+}
+
+variable "app_default_from_email" {
+  description = "Default from email from .env"
+  type        = string
+}
+
+variable "app_server_email" {
+  description = "Server email from .env"
+  type        = string
+}
+
+variable "app_base_url" {
+  description = "Base URL from .env"
+  type        = string
+  default     = "http://localhost:8000"
+}
+
+variable "container_image_tag" {
+  description = "Docker image tag for deployments"
+  type        = string
+  default     = "latest"
 } 

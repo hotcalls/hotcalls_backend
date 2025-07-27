@@ -206,14 +206,34 @@ output "django_environment_variables" {
   sensitive = true
 }
 
-# Deployment instructions
+# Kubernetes deployment outputs
+output "kubernetes_namespace" {
+  description = "Kubernetes namespace name"
+  value       = module.kubernetes.namespace_name
+}
+
+output "kubernetes_backend_service" {
+  description = "Backend service name"
+  value       = module.kubernetes.backend_service_name
+}
+
+output "kubernetes_frontend_service" {
+  description = "Frontend service name"
+  value       = module.kubernetes.frontend_service_name
+}
+
+output "kubernetes_ingress" {
+  description = "Ingress name"
+  value       = module.kubernetes.ingress_name
+}
+
+# Deployment instructions (updated for Terraform-managed deployment)
 output "deployment_instructions" {
   description = "Next steps for deployment"
   value = {
-    "1_configure_kubectl" = "Run: az aks get-credentials --resource-group ${azurerm_resource_group.main.name} --name ${module.aks.cluster_name}"
-    "2_configure_secrets" = "Update Kubernetes secrets with values from Key Vault"
-    "3_build_and_push"   = "Build Docker image and push to ${module.acr.login_server}"
-    "4_deploy_k8s"       = "Apply Kubernetes manifests from k8s/ directory"
-    "5_import_api"       = "Import OpenAPI schema to API Management"
+    "1_build_and_push_images" = "Build and push Docker images to ${module.acr.login_server}"
+    "2_run_terraform_apply"   = "Run: terraform apply with .env variables"
+    "3_access_application"    = "Application will be available through the ingress"
+    "4_view_pods"            = "View pods: kubectl get pods -n ${module.kubernetes.namespace_name}"
   }
 } 

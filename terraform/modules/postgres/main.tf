@@ -31,6 +31,9 @@ resource "azurerm_postgresql_flexible_server" "main" {
   # SKU configuration
   sku_name = var.sku_name
   
+  # Zone configuration (keep existing zone to avoid update conflicts)
+  zone = "2"
+  
   # Storage configuration
   storage_mb = var.storage_mb
   
@@ -63,6 +66,11 @@ resource "azurerm_postgresql_flexible_server" "main" {
     active_directory_auth_enabled = var.azure_ad_auth_enabled
     password_auth_enabled         = true
     tenant_id                     = var.tenant_id
+  }
+  
+  # Ignore zone changes to prevent Azure conflicts
+  lifecycle {
+    ignore_changes = [zone]
   }
   
   tags = var.tags

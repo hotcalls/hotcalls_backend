@@ -113,6 +113,10 @@ module "postgres" {
   virtual_network_id         = null
   private_endpoint_subnet_id = null
   
+  # Application user configuration (from .env)
+  app_user_name     = var.app_db_user != "hotcallsadmin" ? var.app_db_user : null
+  app_user_password = var.app_db_user != "hotcallsadmin" ? var.app_db_password : null
+  
   tags = local.common_tags
   
   depends_on = [module.network]
@@ -208,4 +212,49 @@ module "monitoring" {
   tags = local.common_tags
   
   depends_on = [module.aks]
+}
+
+# Kubernetes Application Deployment
+module "kubernetes" {
+  source = "./modules/kubernetes"
+  
+  namespace_name = "hotcalls-${var.environment}"
+  environment    = var.environment
+  
+  # Container configuration
+  container_registry = module.acr.login_server
+  image_tag         = var.container_image_tag
+  backend_replicas  = 1
+  frontend_replicas = 1
+  
+  # Database configuration
+  db_name     = module.postgres.database_name
+  db_user     = var.app_db_user
+  db_password = var.app_db_password
+  db_host     = module.postgres.fqdn
+  
+  # Redis configuration
+  redis_password = var.app_redis_password
+  
+  # Storage configuration
+  storage_account_name = module.storage.storage_account_name
+  storage_account_key  = module.storage.primary_access_key
+  
+  # Application configuration
+  secret_key            = var.app_secret_key
+  debug                 = var.app_debug
+  cors_allow_all_origins = var.app_cors_allow_all
+  base_url              = var.app_base_url
+  
+  # Email configuration
+  email_host          = var.app_email_host
+  email_port          = var.app_email_port
+  email_use_tls       = var.app_email_use_tls
+  email_use_ssl       = var.app_email_use_ssl
+  email_host_user     = var.app_email_host_user
+  email_host_password = var.app_email_host_password
+  default_from_email  = var.app_default_from_email
+  server_email        = var.app_server_email
+  
+  depends_on = [module.aks, module.postgres, module.storage, module.acr]
 } 
