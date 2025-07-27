@@ -1,6 +1,85 @@
 .venv/
 .env
 **/migrations/*
+
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars.backup
+*.tfplan
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars.json
+crash.log
+crash.*.log
+
+# Kubernetes secrets and sensitive configs
+k8s/*-secrets.yaml
+k8s/secrets-*.yaml
+k8s/.env.*
+k8s/generated/
+
+# Docker
+.dockerignore.backup
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Azure CLI
+.azure/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+
+# Build artifacts
+dist/
+build/
+staticfiles/
+mediafiles/
+
+# Security and credentials
+credentials.json
+service-account.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Backup files
+*.bak
+*.backup
+*.old
+git.bak/
+
+# Application specific
+import/
+export/
+*.csv
+*.zip
+db/*
+yeet_database.ps1
+maildata/
+call_export.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 **/__pycache__/
@@ -143,17 +222,6 @@ cython_debug/
 hotcalls/__pycache__/__init__.cpython-312.pyc
 
 pyrightconfig.json
-.vscode/
-sanmedi.csv
-stuff.csv
-LabCom.bdt
-logs/
-import/
-yeet_database.ps1
-export/
-maildata.zip
-maildata/
-call_export.csv
-db/*
-git.bak/*
-.DS_Store
+# Secret files
+create-staging-secrets.sh
+secrets.yaml

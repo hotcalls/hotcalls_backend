@@ -1,8 +1,8 @@
 """
-URL configuration for hotcalls project.
+URL configuration for HotCalls project.
 
 The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.1/topics/http/urls/
+    https://docs.djangoproject.com/en/5.0/topics/http/urls/
 Examples:
 Function views
     1. Add an import:  from my_app import views
@@ -18,23 +18,31 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from core.health import health_check
 
 urlpatterns = [
-    # Admin
+    # Admin interface
     path('admin/', admin.site.urls),
+    
+    # Health check
+    path('health/', health_check, name='health_check'),
+    path('health/', include('health_check.urls')),
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
-    # API Routes (No Versioning)
+    # Authentication API - NEW: Email-based authentication with verification
+    path('api/auth/', include('core.management_api.auth_api.urls')),
+    
+    # Management APIs - All require email verification
     path('api/users/', include('core.management_api.user_api.urls')),
     path('api/subscriptions/', include('core.management_api.subscription_api.urls')),
     path('api/workspaces/', include('core.management_api.workspace_api.urls')),
     path('api/agents/', include('core.management_api.agent_api.urls')),
-    path('api/voices/', include('core.management_api.voice_api.urls')),
     path('api/leads/', include('core.management_api.lead_api.urls')),
     path('api/calls/', include('core.management_api.call_api.urls')),
     path('api/calendars/', include('core.management_api.calendar_api.urls')),
+    path('api/voices/', include('core.management_api.voice_api.urls')),
 ]

@@ -1,0 +1,52 @@
+# Dynamic RBAC Template
+# Usage: envsubst < rbac.yaml | kubectl apply -f -
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hotcalls-sa
+  namespace: hotcalls-${ENVIRONMENT:-dev}
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: serviceaccount
+    environment: ${ENVIRONMENT:-dev}
+  annotations:
+    azure.workload.identity/client-id: "${AZURE_CLIENT_ID:-}"
+automountServiceAccountToken: true
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: hotcalls-${ENVIRONMENT:-dev}
+  name: hotcalls-role
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: rbac
+    environment: ${ENVIRONMENT:-dev}
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets", "pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hotcalls-rolebinding
+  namespace: hotcalls-${ENVIRONMENT:-dev}
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: rbac
+    environment: ${ENVIRONMENT:-dev}
+subjects:
+- kind: ServiceAccount
+  name: hotcalls-sa
+  namespace: hotcalls-${ENVIRONMENT:-dev}
+roleRef:
+  kind: Role
+  name: hotcalls-role
+  apiGroup: rbac.authorization.k8s.io 

@@ -1,0 +1,46 @@
+# Dynamic ConfigMap Template
+# Usage: envsubst < configmap.yaml | kubectl apply -f -
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hotcalls-config
+  namespace: hotcalls-${ENVIRONMENT:-dev}
+  labels:
+    app.kubernetes.io/name: hotcalls
+    app.kubernetes.io/component: config
+    environment: ${ENVIRONMENT:-dev}
+data:
+  # Django settings
+  ENVIRONMENT: "${ENVIRONMENT:-dev}"
+  DEBUG: "${DEBUG:-True}"
+  TIME_ZONE: "${TIME_ZONE:-Europe/Berlin}"
+  
+  # Database configuration (non-sensitive)
+  DB_ENGINE: "django.db.backends.postgresql"
+  DB_PORT: "5432"
+  DB_SSLMODE: "${DB_SSLMODE:-prefer}"
+  
+  # Redis configuration (non-sensitive)  
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Storage configuration
+  AZURE_STATIC_CONTAINER: "static"
+  AZURE_MEDIA_CONTAINER: "media"
+  
+  # Security settings
+  SECURE_SSL_REDIRECT: "${SECURE_SSL_REDIRECT:-False}"
+  SESSION_COOKIE_SECURE: "${SESSION_COOKIE_SECURE:-False}"
+  CSRF_COOKIE_SECURE: "${CSRF_COOKIE_SECURE:-False}"
+  SECURE_BROWSER_XSS_FILTER: "${SECURE_BROWSER_XSS_FILTER:-True}"
+  SECURE_CONTENT_TYPE_NOSNIFF: "${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+  X_FRAME_OPTIONS: "${X_FRAME_OPTIONS:-DENY}"
+  
+  # Celery settings
+  CELERY_TASK_ALWAYS_EAGER: "${CELERY_TASK_ALWAYS_EAGER:-False}"
+  CELERY_TASK_EAGER_PROPAGATES: "${CELERY_TASK_EAGER_PROPAGATES:-True}"
+  
+  # Logging
+  LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+  DJANGO_LOG_LEVEL: "${DJANGO_LOG_LEVEL:-INFO}" 
