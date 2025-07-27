@@ -5,6 +5,56 @@
 
 set -euo pipefail
 
+# Default values
+PROJECT_NAME="hotcalls"
+ENVIRONMENT="staging"
+LOCATION_SHORT="we"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --project-name=*)
+            PROJECT_NAME="${1#*=}"
+            shift
+            ;;
+        --environment=*)
+            ENVIRONMENT="${1#*=}"
+            shift
+            ;;
+        --location-short=*)
+            LOCATION_SHORT="${1#*=}"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: $0 [OPTIONS]"
+            echo "Options:"
+            echo "  --project-name=NAME    Set project name (default: hotcalls)"
+            echo "                         Resource group will be: NAME-ENVIRONMENT-LOCATION-rg"
+            echo "  --environment=ENV      Set environment (default: staging)"
+            echo "  --location-short=LOC   Set location short name (default: we)"
+            echo "  -h, --help             Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0                                          # Deploy to hotcalls-staging-we-rg"
+            echo "  $0 --project-name=rg-2                     # Deploy to rg-2-staging-we-rg"  
+            echo "  $0 --project-name=myapp --environment=prod # Deploy to myapp-prod-we-rg"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+echo "🎯 Deployment Configuration:"
+echo "   Project Name: $PROJECT_NAME"
+echo "   Environment: $ENVIRONMENT" 
+echo "   Location: $LOCATION_SHORT"
+echo "   Resource Group: $PROJECT_NAME-$ENVIRONMENT-$LOCATION_SHORT-rg"
+echo ""
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -203,7 +253,10 @@ deploy_infrastructure() {
     
     cd terraform
     
-    # Set Terraform variables from .env
+    # Set Terraform variables from command line and .env
+    export TF_VAR_project_name="$PROJECT_NAME"
+    export TF_VAR_environment="$ENVIRONMENT"
+    export TF_VAR_location_short="$LOCATION_SHORT"
     export TF_VAR_app_db_name="$DB_NAME"
     export TF_VAR_app_db_user="$DB_USER"
     export TF_VAR_app_db_password="$DB_PASSWORD"
@@ -318,7 +371,7 @@ deploy_kubernetes() {
     cd k8s
     
     # Set environment variables for K8s manifests
-    export ENVIRONMENT="${ENVIRONMENT:-staging}"
+    # ENVIRONMENT is already set from command line arguments
     export REPLICAS="${REPLICAS:-1}"
     
     # Apply manifests in order with environment substitution
@@ -389,13 +442,13 @@ wait_for_deployment() {
     
     # Wait for backend deployment
     kubectl wait --for=condition=available deployment/hotcalls-backend \
-        -n "hotcalls-${ENVIRONMENT:-staging}" --timeout=600s
+        -n "hotcalls-${ENVIRONMENT}" --timeout=600s
     
     log_info "Waiting for ingress to get external IP..."
     
     # Wait for external IP (up to 10 minutes)
     for i in {1..60}; do
-        EXTERNAL_IP=$(kubectl get ingress hotcalls-ingress -n "hotcalls-${ENVIRONMENT:-staging}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        EXTERNAL_IP=$(kubectl get ingress hotcalls-ingress -n "hotcalls-${ENVIRONMENT}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
         
         if [[ -n "$EXTERNAL_IP" ]]; then
             break
@@ -403,7 +456,7 @@ wait_for_deployment() {
         
         if [[ $i -eq 60 ]]; then
             log_warning "Ingress IP not ready after 10 minutes. Check status manually."
-            kubectl get ingress -n "hotcalls-${ENVIRONMENT:-staging}"
+            kubectl get ingress -n "hotcalls-${ENVIRONMENT}"
             kubectl get service -n ingress-nginx ingress-nginx-controller
             return
         fi
@@ -420,11 +473,11 @@ wait_for_deployment() {
         log_success "   • Admin: http://$EXTERNAL_IP/admin/"
         
         # Update BASE_URL in secrets with the actual ingress IP
-        kubectl patch secret hotcalls-secrets -n "hotcalls-${ENVIRONMENT:-staging}" \
+        kubectl patch secret hotcalls-secrets -n "hotcalls-${ENVIRONMENT}" \
             --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
         
         # Restart deployment to pick up new BASE_URL
-        kubectl rollout restart deployment/hotcalls-backend -n "hotcalls-${ENVIRONMENT:-staging}"
+        kubectl rollout restart deployment/hotcalls-backend -n "hotcalls-${ENVIRONMENT}"
     fi
 }
 
@@ -432,13 +485,13 @@ wait_for_deployment() {
 show_status() {
     log_info "Deployment Status:"
     echo
-    kubectl get all -n "hotcalls-${ENVIRONMENT:-staging}"
+    kubectl get all -n "hotcalls-${ENVIRONMENT}"
     echo
     log_info "Ingress Status:"
-    kubectl get ingress -n "hotcalls-${ENVIRONMENT:-staging}"
+    kubectl get ingress -n "hotcalls-${ENVIRONMENT}"
     echo
-    log_info "To check logs: kubectl logs -f deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT:-staging}"
-    log_info "To check ingress: kubectl get ingress -n hotcalls-${ENVIRONMENT:-staging}"
+    log_info "To check logs: kubectl logs -f deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT}"
+    log_info "To check ingress: kubectl get ingress -n hotcalls-${ENVIRONMENT}"
     log_info "To check nginx controller: kubectl get service -n ingress-nginx ingress-nginx-controller"
 }
 
