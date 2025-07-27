@@ -365,6 +365,24 @@ deploy_kubernetes() {
     cd ..
 }
 
+# Install nginx ingress controller if not present
+install_ingress_controller() {
+    log_info "Checking for nginx ingress controller..."
+    
+    if ! kubectl get namespace ingress-nginx >/dev/null 2>&1; then
+        log_info "Installing nginx ingress controller..."
+        kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.2/deploy/static/provider/cloud/deploy.yaml
+        
+        log_info "Waiting for ingress controller to be ready..."
+        kubectl wait --namespace ingress-nginx \
+            --for=condition=ready pod \
+            --selector=app.kubernetes.io/component=controller \
+            --timeout=300s
+    else
+        log_info "Nginx ingress controller already installed"
+    fi
+}
+
 # Wait for deployment and get application URL
 wait_for_deployment() {
     log_info "Waiting for deployment to be ready..."
@@ -373,19 +391,20 @@ wait_for_deployment() {
     kubectl wait --for=condition=available deployment/hotcalls-backend \
         -n "hotcalls-${ENVIRONMENT:-staging}" --timeout=600s
     
-    log_info "Waiting for LoadBalancer to get external IP..."
+    log_info "Waiting for ingress to get external IP..."
     
     # Wait for external IP (up to 10 minutes)
     for i in {1..60}; do
-        EXTERNAL_IP=$(kubectl get service -n "hotcalls-${ENVIRONMENT:-staging}" -o jsonpath='{.items[?(@.spec.type=="LoadBalancer")].status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+        EXTERNAL_IP=$(kubectl get ingress hotcalls-ingress -n "hotcalls-${ENVIRONMENT:-staging}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
         
         if [[ -n "$EXTERNAL_IP" ]]; then
             break
         fi
         
         if [[ $i -eq 60 ]]; then
-            log_warning "LoadBalancer IP not ready after 10 minutes. Check status manually."
-            kubectl get services -n "hotcalls-${ENVIRONMENT:-staging}"
+            log_warning "Ingress IP not ready after 10 minutes. Check status manually."
+            kubectl get ingress -n "hotcalls-${ENVIRONMENT:-staging}"
+            kubectl get service -n ingress-nginx ingress-nginx-controller
             return
         fi
         
@@ -393,10 +412,14 @@ wait_for_deployment() {
     done
     
     if [[ -n "$EXTERNAL_IP" ]]; then
-        log_success "Application is ready!"
-        log_success "Application URL: http://$EXTERNAL_IP"
+        log_success "🎉 Application is ready!"
+        log_success "🌐 Application URL: http://$EXTERNAL_IP"
+        log_success "   • Frontend: http://$EXTERNAL_IP/"
+        log_success "   • API: http://$EXTERNAL_IP/api/"
+        log_success "   • Health: http://$EXTERNAL_IP/health/"
+        log_success "   • Admin: http://$EXTERNAL_IP/admin/"
         
-        # Update BASE_URL in secrets with the actual LoadBalancer IP
+        # Update BASE_URL in secrets with the actual ingress IP
         kubectl patch secret hotcalls-secrets -n "hotcalls-${ENVIRONMENT:-staging}" \
             --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
         
@@ -411,8 +434,12 @@ show_status() {
     echo
     kubectl get all -n "hotcalls-${ENVIRONMENT:-staging}"
     echo
+    log_info "Ingress Status:"
+    kubectl get ingress -n "hotcalls-${ENVIRONMENT:-staging}"
+    echo
     log_info "To check logs: kubectl logs -f deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT:-staging}"
-    log_info "To check services: kubectl get services -n hotcalls-${ENVIRONMENT:-staging}"
+    log_info "To check ingress: kubectl get ingress -n hotcalls-${ENVIRONMENT:-staging}"
+    log_info "To check nginx controller: kubectl get service -n ingress-nginx ingress-nginx-controller"
 }
 
 # Main execution
@@ -426,6 +453,7 @@ main() {
     deploy_infrastructure
     get_infrastructure_outputs
     configure_kubectl
+    install_ingress_controller
     build_and_push_images
     deploy_kubernetes
     wait_for_deployment
