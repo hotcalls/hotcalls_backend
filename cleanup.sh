@@ -8,6 +8,7 @@ set -euo pipefail
 # Default values
 PROJECT_NAME="hotcalls"
 ENVIRONMENT="staging"
+LOCATION_SHORT="ne"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -18,6 +19,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --environment=*)
             ENVIRONMENT="${1#*=}"
+            shift
+            ;;
+        --location-short=*)
+            LOCATION_SHORT="${1#*=}"
             shift
             ;;
         -k|--kubernetes-only)
@@ -41,6 +46,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --project-name=NAME      Set project name (default: hotcalls)"
             echo "  --environment=ENV        Set environment (default: staging)"
+            echo "  --location-short=LOC     Set location short name (default: ne)"
             echo "  -k, --kubernetes-only    Clean up only Kubernetes resources"
             echo "  -i, --infrastructure     Clean up Terraform infrastructure (dangerous!)"
             echo "  -f, --frontend-only      Clean up only frontend files (frontend/, dist/)"
@@ -51,6 +57,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0                                          # Clean K8s for hotcalls-staging"
             echo "  $0 --project-name=rg-3 --environment=staging -k  # Clean K8s for rg-3-staging"
             echo "  $0 --project-name=rg-3 --environment=staging -a  # Clean everything for rg-3-staging"
+            echo "  $0 --project-name=rg-3 --location-short=we -a     # Clean rg-3 in West Europe"
             exit 0
             ;;
         *)
@@ -67,6 +74,7 @@ CLEANUP_MODE="${CLEANUP_MODE:-kubernetes}"
 echo "🧹 Cleanup Configuration:"
 echo "   Project Name: $PROJECT_NAME"
 echo "   Environment: $ENVIRONMENT"
+echo "   Location: $LOCATION_SHORT"
 echo "   Cleanup Mode: $CLEANUP_MODE"
 echo ""
 
@@ -213,6 +221,19 @@ cleanup_infrastructure() {
             export TF_VAR_resource_group_name="$PROJECT_NAME"
             export TF_VAR_project_name="$PROJECT_NAME"
             export TF_VAR_environment="$ENVIRONMENT"
+            export TF_VAR_location_short="$LOCATION_SHORT"
+            
+            # Map location_short to full location
+            case "$LOCATION_SHORT" in
+                "we") export TF_VAR_location="West Europe" ;;
+                "ne") export TF_VAR_location="North Europe" ;;
+                "ue") export TF_VAR_location="UK South" ;;
+                *) export TF_VAR_location="North Europe" ;;
+            esac
+            
+            # Fix storage account naming (no hyphens allowed)
+            STORAGE_PREFIX=$(echo "${PROJECT_NAME}${ENVIRONMENT}${LOCATION_SHORT}" | tr -d '-')
+            export TF_VAR_storage_account_prefix="$STORAGE_PREFIX"
             
             # Set Terraform variables from .env if available
             if [[ -f "../.env" ]]; then

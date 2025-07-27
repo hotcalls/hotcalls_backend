@@ -2,11 +2,26 @@
 
 # HotCalls Single-Stage Deployment Script
 # This script deploys the entire application stack to Azure using Terraform and Kubernetes
+#
+# IMPROVEMENTS:
+# - MANDATORY --project-name parameter (no more defaults)
+# - Automatic handling of existing resource groups (import if needed)
+# - Retry logic for failed deployments
+# - Better error handling and cleanup
+# - Foolproof deployment with clear error messages
+#
+# USAGE:
+#   ./deploy.sh --project-name=YOUR_EXACT_RG_NAME [options]
+#
+# EXAMPLES:
+#   ./deploy.sh --project-name=hotcalls-staging --environment=staging
+#   ./deploy.sh --project-name=prod-hotcalls --environment=production --update-only
+#   ./deploy.sh --project-name=test-env --branch=main
 
 set -euo pipefail
 
-# Default values
-PROJECT_NAME="hotcalls"
+# Default values - MUST BE OVERRIDDEN
+PROJECT_NAME=""
 ENVIRONMENT="staging"
 LOCATION_SHORT="ne"
 UPDATE_ONLY=false
@@ -36,10 +51,13 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [OPTIONS]"
-            echo "Options:"
-            echo "  --project-name=NAME    Set resource group name directly (default: hotcalls)"
-            echo "                         Resource group will be: NAME"
+            echo "Usage: $0 --project-name=NAME [OPTIONS]"
+            echo ""
+            echo "REQUIRED OPTIONS:"
+            echo "  --project-name=NAME    REQUIRED: Exact name for the Azure resource group"
+            echo "                         This will be used as-is, no prefixes or suffixes added"
+            echo ""
+            echo "OPTIONAL OPTIONS:"
             echo "  --environment=ENV      Set environment (default: staging)"
             echo "  --location-short=LOC   Set location short name (default: ne)"
             echo "  --update-only          Only update Kubernetes deployment, skip infrastructure"
@@ -47,11 +65,10 @@ while [[ $# -gt 0 ]]; do
             echo "  -h, --help             Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0                                          # Full deploy to hotcalls-staging-ne-rg"
-            echo "  $0 --project-name=rg-2                     # Full deploy to resource group: rg-2"  
-            echo "  $0 --update-only                           # Only update Kubernetes"
-            echo "  $0 --update-only --project-name=myapp      # Update K8s in myapp namespace"
-            echo "  $0 --branch=main --update-only             # Pull main branch and update K8s only"
+            echo "  $0 --project-name=hotcalls-prod           # Deploy to resource group: hotcalls-prod"
+            echo "  $0 --project-name=myapp --environment=dev # Deploy to resource group: myapp (dev environment)"  
+            echo "  $0 --project-name=test-rg --update-only   # Update K8s only in test-rg"
+            echo "  $0 --project-name=staging --branch=main   # Deploy staging with main branch"
             exit 0
             ;;
         *)
@@ -62,8 +79,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate required parameters
+if [[ -z "$PROJECT_NAME" ]]; then
+    echo "❌ ERROR: --project-name is required!"
+    echo ""
+    echo "The project name will be used as the exact Azure resource group name."
+    echo "No prefixes or suffixes will be added."
+    echo ""
+    echo "Usage: $0 --project-name=YOUR_PROJECT_NAME [other options]"
+    echo ""
+    echo "Examples:"
+    echo "  $0 --project-name=hotcalls-staging"
+    echo "  $0 --project-name=mycompany-prod"
+    echo "  $0 --project-name=test-environment"
+    echo ""
+    echo "Use --help for full usage information."
+    exit 1
+fi
+
 echo "🎯 Deployment Configuration:"
-echo "   Resource Group Name: $PROJECT_NAME"
+echo "   PROJECT_NAME: $PROJECT_NAME"
 echo "   Environment: $ENVIRONMENT" 
 echo "   Location: $LOCATION_SHORT"
 echo "   Update Only: $UPDATE_ONLY"
@@ -322,6 +357,94 @@ check_azure_login() {
     log_success "Logged into Azure subscription: $subscription"
 }
 
+# Cleanup function for failed deployments
+cleanup_failed_deployment() {
+    log_warning "Cleaning up failed deployment state..."
+    
+    cd terraform 2>/dev/null || return 0
+    
+    # Select workspace
+    WORKSPACE_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+    if terraform workspace list | grep -q "\b$WORKSPACE_NAME\b"; then
+        terraform workspace select "$WORKSPACE_NAME" >/dev/null 2>&1 || true
+        
+        # Remove failed resources that might be in a bad state
+        log_info "Removing potentially corrupted Terraform state..."
+        terraform state rm azurerm_resource_group.main >/dev/null 2>&1 || true
+        terraform state rm random_string.unique_id >/dev/null 2>&1 || true
+    fi
+    
+    cd ..
+}
+
+# Check and handle existing resource group
+check_and_handle_resource_group() {
+    log_info "Checking if resource group '$PROJECT_NAME' exists..."
+    
+    # Check if resource group exists in Azure
+    if az group show --name "$PROJECT_NAME" >/dev/null 2>&1; then
+        log_info "Resource group '$PROJECT_NAME' exists in Azure"
+        
+        # Check if it's in Terraform state
+        cd terraform
+        
+        # Initialize Terraform first to ensure state access
+        log_info "Initializing Terraform for state check..."
+        terraform init -input=false >/dev/null 2>&1 || {
+            log_error "Failed to initialize Terraform"
+            cd ..
+            return 1
+        }
+        
+        # Select workspace first
+        WORKSPACE_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+        if terraform workspace list | grep -q "\b$WORKSPACE_NAME\b"; then
+            terraform workspace select "$WORKSPACE_NAME" >/dev/null 2>&1
+        else
+            log_info "Creating new workspace: $WORKSPACE_NAME"
+            terraform workspace new "$WORKSPACE_NAME" >/dev/null 2>&1
+        fi
+        
+        # Check if resource group is in state
+        if ! terraform state show azurerm_resource_group.main >/dev/null 2>&1; then
+            log_info "Resource group exists in Azure but not in Terraform state. Importing..."
+            
+            # Get the resource group ID
+            RG_ID=$(az group show --name "$PROJECT_NAME" --query id -o tsv)
+            
+            # Import the resource group with retry logic
+            local retry_count=0
+            local max_retries=3
+            
+            while [[ $retry_count -lt $max_retries ]]; do
+                if terraform import azurerm_resource_group.main "$RG_ID" >/dev/null 2>&1; then
+                    log_success "Successfully imported existing resource group into Terraform state"
+                    break
+                else
+                    retry_count=$((retry_count + 1))
+                    if [[ $retry_count -lt $max_retries ]]; then
+                        log_warning "Import attempt $retry_count failed, retrying..."
+                        sleep 5
+                    else
+                        log_error "Failed to import resource group after $max_retries attempts."
+                        log_error "You may need to delete it manually: az group delete --name '$PROJECT_NAME'"
+                        cd ..
+                        return 1
+                    fi
+                fi
+            done
+        else
+            log_info "Resource group already exists in Terraform state"
+        fi
+        
+        cd ..
+    else
+        log_info "Resource group '$PROJECT_NAME' does not exist. Will be created by Terraform."
+    fi
+    
+    return 0
+}
+
 # Deploy infrastructure with Terraform
 deploy_infrastructure() {
     log_info "Deploying infrastructure with Terraform..."
@@ -382,12 +505,48 @@ deploy_infrastructure() {
     fi
     
     log_info "Planning Terraform deployment..."
-    terraform plan -out=tfplan
+    if ! terraform plan -out=tfplan; then
+        log_error "Terraform planning failed! Attempting cleanup..."
+        cleanup_failed_deployment
+        log_error "Please check your .env configuration and try again."
+        cd ..
+        exit 1
+    fi
     
     log_info "Applying Terraform deployment..."
-    terraform apply tfplan
+    local apply_retry=0
+    local max_apply_retries=2
     
-    log_success "Infrastructure deployed successfully!"
+    while [[ $apply_retry -lt $max_apply_retries ]]; do
+        if terraform apply tfplan; then
+            log_success "Infrastructure deployed successfully!"
+            break
+        else
+            apply_retry=$((apply_retry + 1))
+            if [[ $apply_retry -lt $max_apply_retries ]]; then
+                log_warning "Terraform apply failed, attempting cleanup and retry..."
+                cleanup_failed_deployment
+                
+                # Re-run the resource group check and plan
+                cd ..
+                check_and_handle_resource_group
+                cd terraform
+                
+                log_info "Re-planning after cleanup..."
+                if ! terraform plan -out=tfplan; then
+                    log_error "Re-planning failed after cleanup"
+                    cd ..
+                    exit 1
+                fi
+            else
+                log_error "Terraform apply failed after $max_apply_retries attempts!"
+                log_error "Check the error messages above for details."
+                log_error "You may need to manually clean up resources in Azure portal."
+                cd ..
+                exit 1
+            fi
+        fi
+    done
     
     cd ..
 }
@@ -474,18 +633,18 @@ build_and_push_images() {
     
     # Build backend image
     log_info "Building backend image..."
-    docker build -t "${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}" .
+    docker build -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" .
     
     log_info "Pushing backend image..."
-    docker push "${ACR_LOGIN_SERVER}/hotcalls-backend:${IMAGE_TAG}"
+    docker push "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}"
     
     # Build frontend image if dist directory exists
     if [[ -d "dist" ]]; then
         log_info "Building frontend image..."
-        docker build -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/hotcalls-frontend:${IMAGE_TAG}" .
+        docker build -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" .
         
         log_info "Pushing frontend image..."
-        docker push "${ACR_LOGIN_SERVER}/hotcalls-frontend:${IMAGE_TAG}"
+        docker push "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}"
         
         export HAS_FRONTEND=true
     else
@@ -506,6 +665,7 @@ deploy_kubernetes() {
     # Use PROJECT_NAME for namespace instead of hardcoded "hotcalls"
     export NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
     export PROJECT_PREFIX="$PROJECT_NAME"
+    export ENVIRONMENT="$ENVIRONMENT"
     
     # Set resource defaults (can be overridden in .env)
     export REPLICAS="${REPLICAS:-1}"
@@ -556,6 +716,8 @@ deploy_kubernetes() {
     
     # Debug: Show critical resource variables
     log_info "Resource Variables Set:"
+    log_info "  PROJECT_NAME=$PROJECT_NAME"
+    log_info "  ENVIRONMENT=$ENVIRONMENT"
     log_info "  NAMESPACE=$NAMESPACE"
     log_info "  PROJECT_PREFIX=$PROJECT_PREFIX"
     log_info "  RESOURCES_REQUESTS_MEMORY=$RESOURCES_REQUESTS_MEMORY"
@@ -564,6 +726,17 @@ deploy_kubernetes() {
     
     # Apply manifests in order with environment substitution
     log_info "Creating namespace..."
+    
+    # Debug: Check variables before envsubst
+    log_info "DEBUG: Before namespace creation:"
+    log_info "  PROJECT_PREFIX='$PROJECT_PREFIX'"
+    log_info "  ENVIRONMENT='$ENVIRONMENT'"
+    log_info "  Expected namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}"
+    
+    # Debug: Show what envsubst will produce
+    log_info "DEBUG: envsubst output for namespace:"
+    envsubst < namespace.yaml | head -10
+    
     envsubst < namespace.yaml | kubectl apply -f -
     
     log_info "Creating RBAC resources..."
@@ -691,6 +864,12 @@ show_status() {
 main() {
     log_info "Starting HotCalls deployment..."
     
+    # Debug: Verify variables are set correctly
+    log_info "DEBUG: Initial variables:"
+    log_info "  PROJECT_NAME='$PROJECT_NAME'"
+    log_info "  ENVIRONMENT='$ENVIRONMENT'"
+    log_info "  LOCATION_SHORT='$LOCATION_SHORT'"
+    
     check_prerequisites
     load_environment
     
@@ -700,6 +879,19 @@ main() {
     if [[ "$UPDATE_ONLY" == "true" ]]; then
         log_info "Update-only mode: Skipping infrastructure deployment"
         check_azure_login
+        
+        # Still need to check workspace exists for update-only mode
+        cd terraform
+        WORKSPACE_NAME="${PROJECT_NAME}-${ENVIRONMENT}"
+        if ! terraform workspace list | grep -q "\b$WORKSPACE_NAME\b"; then
+            log_error "Terraform workspace '$WORKSPACE_NAME' not found for update-only mode!"
+            log_error "You must run a full deployment first: $0 --project-name=$PROJECT_NAME --environment=$ENVIRONMENT"
+            cd ..
+            exit 1
+        fi
+        terraform workspace select "$WORKSPACE_NAME"
+        cd ..
+        
         setup_frontend
         get_infrastructure_outputs_update_only
         configure_kubectl
@@ -710,6 +902,12 @@ main() {
     else
         log_info "Full deployment mode: Including infrastructure"
         check_azure_login
+        
+        if ! check_and_handle_resource_group; then
+            log_error "Resource group handling failed!"
+            exit 1
+        fi
+        
         setup_frontend
         deploy_infrastructure
         get_infrastructure_outputs
