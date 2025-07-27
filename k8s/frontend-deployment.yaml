@@ -38,6 +38,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 101  # nginx user
         fsGroup: 101
+      serviceAccountName: ${PROJECT_PREFIX}-sa
       containers:
       - name: frontend
         image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-frontend:${IMAGE_TAG}

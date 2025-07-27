@@ -40,14 +40,14 @@ CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
 # Production stage
 FROM base as production
 
-# Create non-root user
-RUN groupadd -r django && useradd -r -g django django
+# Create non-root user with stable UID 1000 (matches K8s securityContext)
+RUN groupadd -g 1000 django && useradd -u 1000 -g django -s /usr/sbin/nologin django
 
-# Set permissions
-RUN mkdir -p /app/staticfiles && \
-    chown -R django:django /app
+# Prepare writable directories without expensive recursive chown
+RUN mkdir -p /app/staticfiles /app/tmp && \
+    chown django:django /app/staticfiles /app/tmp
 
-# Switch to non-root user
+# Switch to the non-root user
 USER django
 
 # Collect static files

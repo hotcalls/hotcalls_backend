@@ -175,7 +175,7 @@ spec:
       - name: celery-worker
         image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-backend:${IMAGE_TAG}
         imagePullPolicy: Always
-        command: ["celery", "-A", "${PROJECT_PREFIX}", "worker", "-l", "info", "--concurrency=2"]
+        command: ["sh", "-c", "celery -A hotcalls worker -l info --concurrency=2"]
         
         # Environment variables from ConfigMap
         envFrom:
@@ -188,11 +188,9 @@ spec:
         livenessProbe:
           exec:
             command:
-            - celery
-            - -A
-            - ${PROJECT_PREFIX}
-            - inspect
-            - ping
+            - sh
+            - -c
+            - celery -A hotcalls inspect ping || exit 1
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 10
@@ -201,11 +199,11 @@ spec:
         # Resource requests and limits
         resources:
           requests:
-            memory: "${CELERY_RESOURCES_REQUESTS_MEMORY}"
-            cpu: "${CELERY_RESOURCES_REQUESTS_CPU}"
+            memory: "256Mi"
+            cpu: "100m"
           limits:
-            memory: "${CELERY_RESOURCES_LIMITS_MEMORY}"
-            cpu: "${CELERY_RESOURCES_LIMITS_CPU}"
+            memory: "512Mi"
+            cpu: "500m"
         
         # Security context
         securityContext:
@@ -263,7 +261,7 @@ spec:
       - name: celery-beat
         image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-backend:${IMAGE_TAG}
         imagePullPolicy: Always
-        command: ["celery", "-A", "${PROJECT_PREFIX}", "beat", "-l", "info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
+        command: ["sh", "-c", "celery -A hotcalls beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler"]
         
         # Environment variables from ConfigMap
         envFrom:
@@ -275,11 +273,11 @@ spec:
         # Resource requests and limits
         resources:
           requests:
-            memory: "${BEAT_RESOURCES_REQUESTS_MEMORY}"
-            cpu: "${BEAT_RESOURCES_REQUESTS_CPU}"
+            memory: "256Mi"
+            cpu: "100m"
           limits:
-            memory: "${BEAT_RESOURCES_LIMITS_MEMORY}"
-            cpu: "${BEAT_RESOURCES_LIMITS_CPU}"
+            memory: "512Mi"
+            cpu: "500m"
         
         # Security context
         securityContext:
