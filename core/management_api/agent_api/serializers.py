@@ -32,7 +32,7 @@ class AgentSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD (now FK to Voice)  
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'phone_numbers', 'phone_number_count',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
         ]
@@ -56,7 +56,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice', 
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to', 
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
             'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
@@ -126,7 +126,7 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice',
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
@@ -220,7 +220,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS  
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_numbers', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]

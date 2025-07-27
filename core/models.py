@@ -395,6 +395,10 @@ class Agent(models.Model):
         help_text="Retry interval in minutes",
         default=30
     )
+    max_retries = models.IntegerField(
+        help_text="Maximum number of retry attempts for calls",
+        default=3
+    )
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
