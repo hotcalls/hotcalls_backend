@@ -216,41 +216,43 @@ echo "Storage Account: $STORAGE_ACCOUNT"
 
 kubectl create secret generic hotcalls-secrets \
   --namespace=hotcalls-${ENVIRONMENT} \
-  --from-literal=SECRET_KEY="TAk3too2WRpn_pLFJsevf9AR-PExfgV3hWP9Nr*@Xi4vfr_@-!!REQBkjmamu-YMWCk_kZ7UkkWJi-K3q_RXEDgfaVah9A!yJa6Ls" \
+  --from-literal=SECRET_KEY="$(grep '^SECRET_KEY=' .env | cut -d'=' -f2)" \
   --from-literal=ALLOWED_HOSTS="*" \
-  --from-literal=DB_NAME="hotcalls" \
-  --from-literal=DB_USER="hotcallsadmin" \
-  --from-literal=DB_PASSWORD="$(echo 'nonsensitive(random_password.postgres_admin_password[0].result)' | terraform console | tr -d '\"')" \
+  --from-literal=DB_NAME="$(grep '^DB_NAME=' .env | cut -d'=' -f2)" \
+  --from-literal=DB_USER="$(grep '^DB_USER=' .env | cut -d'=' -f2)" \
+  --from-literal=DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | cut -d'=' -f2)" \
   --from-literal=DB_HOST="$POSTGRES_FQDN" \
   --from-literal=REDIS_HOST="redis-service" \
   --from-literal=REDIS_PORT="6379" \
   --from-literal=REDIS_DB="0" \
-  --from-literal=REDIS_PASSWORD="66romDd*Hdaqk9rnpkAYbiAbRiefZescAmqvs6Lf" \
+  --from-literal=REDIS_PASSWORD="$(grep '^REDIS_PASSWORD=' .env | cut -d'=' -f2)" \
   --from-literal=CELERY_BROKER_URL="redis://redis-service:6379/0" \
   --from-literal=CELERY_RESULT_BACKEND="redis://redis-service:6379/0" \
   --from-literal=AZURE_ACCOUNT_NAME="$STORAGE_ACCOUNT" \
   --from-literal=AZURE_STORAGE_KEY="$STORAGE_KEY" \
   --from-literal=EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend" \
-  --from-literal=EMAIL_HOST="smtp.ionos.de" \
-  --from-literal=EMAIL_PORT="465" \
-  --from-literal=EMAIL_USE_SSL="True" \
-  --from-literal=EMAIL_HOST_USER="info@hotcalls.ai" \
-  --from-literal=EMAIL_HOST_PASSWORD="qubqy6-gygkom-geFzed" \
-  --from-literal=DEFAULT_FROM_EMAIL="noreply@hotcalls.ai" \
-  --from-literal=SERVER_EMAIL="noreply@hotcalls.ai" \
+  --from-literal=EMAIL_HOST="$(grep '^EMAIL_HOST=' .env | cut -d'=' -f2)" \
+  --from-literal=EMAIL_PORT="$(grep '^EMAIL_PORT=' .env | cut -d'=' -f2)" \
+  --from-literal=EMAIL_USE_TLS="$(grep '^EMAIL_USE_TLS=' .env | cut -d'=' -f2)" \
+  --from-literal=EMAIL_USE_SSL="$(grep '^EMAIL_USE_SSL=' .env | cut -d'=' -f2)" \
+  --from-literal=EMAIL_HOST_USER="$(grep '^EMAIL_HOST_USER=' .env | cut -d'=' -f2)" \
+  --from-literal=EMAIL_HOST_PASSWORD="$(grep '^EMAIL_HOST_PASSWORD=' .env | cut -d'=' -f2)" \
+  --from-literal=DEFAULT_FROM_EMAIL="$(grep '^DEFAULT_FROM_EMAIL=' .env | cut -d'=' -f2)" \
+  --from-literal=SERVER_EMAIL="$(grep '^SERVER_EMAIL=' .env | cut -d'=' -f2)" \
   --from-literal=DEBUG="False" \
   --from-literal=CORS_ALLOWED_ORIGINS="*" \
   --from-literal=AZURE_CUSTOM_DOMAIN="" \
   --from-literal=AZURE_KEY_VAULT_URL="" \
   --from-literal=AZURE_CLIENT_ID="" \
   --from-literal=AZURE_MONITOR_CONNECTION_STRING="" \
-  --from-literal=BASE_URL="https://app1.hotcalls.ai" \
+  --from-literal=BASE_URL="$(if [ "$MAP_IP" = "true" ]; then echo "http://external-ip-placeholder/"; else echo "$(grep '^BASE_URL=' .env | cut -d'=' -f2)"; fi)" \
   --from-literal=DJANGO_SETTINGS_MODULE="hotcalls.settings.production" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # Deploy Redis
 echo "🔴 Deploying Redis..."
-kubectl apply -n hotcalls-${ENVIRONMENT} -f - << EOF
+REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' .env | cut -d'=' -f2)
+cat << EOF | envsubst | kubectl apply -n hotcalls-${ENVIRONMENT} -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -268,6 +270,7 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
         ports:
         - containerPort: 6379
 ---
