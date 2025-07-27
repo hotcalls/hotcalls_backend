@@ -9,6 +9,7 @@ FORCE_ALL=false
 RG_INDEX=""
 DESTROY_MODE=false
 DESTROY_RG=""
+MAP_IP=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -25,6 +26,10 @@ while [[ $# -gt 0 ]]; do
       DESTROY_MODE=true
       DESTROY_RG="$2"
       shift 2
+      ;;
+    --map-ip)
+      MAP_IP=true
+      shift
       ;;
     *)
       ENVIRONMENT="$1"
@@ -116,6 +121,7 @@ echo "   Environment: ${ENVIRONMENT}"
 echo "   Resource Group: ${RESOURCE_GROUP}"
 echo "   AKS Cluster: ${AKS_CLUSTER}"
 echo "   Force Terraform: ${FORCE_ALL}"
+echo "   Map IP to BASE_URL: ${MAP_IP}"
 echo "   Branch: ${BRANCH}"
 
 # Ensure we're on the correct branch and have latest code
@@ -533,6 +539,15 @@ for i in {1..24}; do
   if [ ! -z "$EXTERNAL_IP" ]; then
     echo ""
     echo "🎉 External IP assigned: $EXTERNAL_IP"
+    
+    # Update BASE_URL if --map-ip flag is specified
+    if [ "$MAP_IP" = true ]; then
+      echo "🔄 Updating BASE_URL to use external IP..."
+      kubectl patch secret hotcalls-secrets -n hotcalls-${ENVIRONMENT} -p "{\"data\":{\"BASE_URL\":\"$(echo -n "http://$EXTERNAL_IP/" | base64 -w 0)\"}}"
+      kubectl rollout restart deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT}
+      echo "✅ BASE_URL updated to http://$EXTERNAL_IP/"
+    fi
+    
     break
   fi
   echo -n "."
@@ -599,7 +614,8 @@ echo "💡 Usage examples:"
 echo "   ./redeploy-staging.sh                    # Deploy to default staging"
 echo "   ./redeploy-staging.sh --force-all        # Recreate infrastructure + deploy"
 echo "   ./redeploy-staging.sh --rg-index 2       # Deploy to hotcalls-staging-ne-rg-index-2"
-echo "   ./redeploy-staging.sh staging --rg-index 1 --force-all  # Full recreate with index"
+echo "   ./redeploy-staging.sh --map-ip          # Deploy and map BASE_URL to external IP"
+echo "   ./redeploy-staging.sh staging --rg-index 1 --force-all --map-ip  # Full recreate with IP mapping"
 echo ""
 echo "🗑️  Destroy examples:"
 echo "   ./redeploy-staging.sh --destroy hotcalls-staging-index-1-ne-rg    # Destroy specific RG"
