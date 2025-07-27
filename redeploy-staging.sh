@@ -356,32 +356,45 @@ fi
 POSTGRES_SERVER_NAME_ONLY="${POSTGRES_FQDN%%.*}"
 echo "  Server name: $POSTGRES_SERVER_NAME_ONLY"
 
-# Update PostgreSQL server admin password to match .env
-echo "🔄 Updating PostgreSQL server admin password..."
-az postgres flexible-server update --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_SERVER_NAME_ONLY" --admin-password "$ENV_DB_PASSWORD" > /dev/null
+# Get the actual admin password from Terraform (don't try to change it)
+echo "🔄 Getting PostgreSQL admin password from Terraform..."
+cd terraform
+TERRAFORM_ADMIN_PASSWORD=$(echo 'nonsensitive(random_password.postgres_admin_password[0].result)' | terraform console | tr -d '"')
+cd ..
+
+if [ -z "$TERRAFORM_ADMIN_PASSWORD" ]; then
+  echo "❌ Could not retrieve admin password from Terraform!"
+  echo "🛠️ Try running with --force-all to recreate infrastructure"
+  exit 1
+fi
+
+echo "✅ Retrieved admin password from Terraform"
 
 # Create database with name from .env if it doesn't exist
 echo "🔄 Creating database '$ENV_DB_NAME'..."
 az postgres flexible-server db create --resource-group "$RESOURCE_GROUP" --server-name "$POSTGRES_SERVER_NAME_ONLY" --database-name "$ENV_DB_NAME" 2>/dev/null || echo "Database $ENV_DB_NAME already exists or using default"
 
-# NOTE: PostgreSQL admin user is created by Terraform as "hotcallsadmin"
-# If .env specifies a different user, we'll create it and grant permissions
+
+
+
+# Two-stage deployment: First use hotcallsadmin so backend can start
 if [ "$ENV_DB_USER" != "hotcallsadmin" ]; then
-  echo "⚠️  .env specifies DB_USER='$ENV_DB_USER' but Terraform creates admin user 'hotcallsadmin'"
-  echo "🔄 The application will connect as '$ENV_DB_USER' - ensure this user exists in PostgreSQL"
+  echo "🔐 Creating Kubernetes secrets (Stage 1: hotcallsadmin user for initial deployment)..."
+  INITIAL_DB_USER="hotcallsadmin"
+  INITIAL_DB_PASSWORD="$TERRAFORM_ADMIN_PASSWORD"
+else
+  echo "🔐 Creating Kubernetes secrets with .env values..."
+  INITIAL_DB_USER="$ENV_DB_USER"
+  INITIAL_DB_PASSWORD="$ENV_DB_PASSWORD"
 fi
-
-echo "✅ PostgreSQL server synced with .env values"
-
-echo "🔐 Creating Kubernetes secrets with .env values..."
 
 kubectl create secret generic hotcalls-secrets \
   --namespace=hotcalls-${ENVIRONMENT} \
   --from-literal=SECRET_KEY="$ENV_SECRET_KEY" \
   --from-literal=ALLOWED_HOSTS="*" \
   --from-literal=DB_NAME="$ENV_DB_NAME" \
-  --from-literal=DB_USER="$ENV_DB_USER" \
-  --from-literal=DB_PASSWORD="$ENV_DB_PASSWORD" \
+  --from-literal=DB_USER="$INITIAL_DB_USER" \
+  --from-literal=DB_PASSWORD="$INITIAL_DB_PASSWORD" \
   --from-literal=DB_HOST="$POSTGRES_FQDN" \
   --from-literal=REDIS_HOST="redis-service" \
   --from-literal=REDIS_PORT="6379" \
@@ -410,10 +423,18 @@ kubectl create secret generic hotcalls-secrets \
   --from-literal=DJANGO_SETTINGS_MODULE="hotcalls.settings.production" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-echo "✅ Kubernetes secrets created with .env values"
+if [ "$ENV_DB_USER" != "hotcallsadmin" ]; then
+  echo "✅ Kubernetes secrets created (Stage 1: using hotcallsadmin temporarily)"
+else
+  echo "✅ Kubernetes secrets created with .env values"
+fi
 
 echo "📊 DEPLOYMENT SUMMARY - ALL VALUES FROM .env:"
-echo "  🗃️  Database: $ENV_DB_USER@$POSTGRES_FQDN/$ENV_DB_NAME"
+if [ "$ENV_DB_USER" != "hotcallsadmin" ]; then
+  echo "  🗃️  Database: $INITIAL_DB_USER@$POSTGRES_FQDN/$ENV_DB_NAME (Stage 1: will switch to $ENV_DB_USER)"
+else
+  echo "  🗃️  Database: $ENV_DB_USER@$POSTGRES_FQDN/$ENV_DB_NAME"
+fi
 echo "  🔴 Redis: redis-service with password ${ENV_REDIS_PASSWORD:0:3}***"
 echo "  🌐 CORS: ALLOW_ALL=$ENV_CORS_ALLOW_ALL"
 echo "  🐛 Debug: $ENV_DEBUG"
@@ -543,6 +564,127 @@ spec:
   - port: 80
     targetPort: 8000
 EOF
+
+# NOTE: PostgreSQL admin user is created by Terraform as "hotcallsadmin"
+# If .env specifies a different user, we'll create it and grant permissions
+if [ "$ENV_DB_USER" != "hotcallsadmin" ]; then
+  echo "⚠️  .env specifies DB_USER='$ENV_DB_USER' but Terraform creates admin user 'hotcallsadmin'"
+  echo "🔄 Creating user '$ENV_DB_USER' in PostgreSQL..."
+  
+  # Create the user specified in .env and grant necessary permissions
+  echo "🔍 Creating PostgreSQL user using admin credentials..."
+  
+  # Ensure backend pod is ready before trying to exec into it
+  echo "🔍 Waiting for backend pod to be ready..."
+  kubectl wait --for=condition=ready pod -l app=hotcalls-backend -n hotcalls-${ENVIRONMENT} --timeout=60s
+  if [ $? -ne 0 ]; then
+    echo "❌ Backend pod is not ready after 60 seconds!"
+    echo "🔍 Check pod status: kubectl get pods -n hotcalls-${ENVIRONMENT}"
+    exit 1
+  fi
+  
+  # First, test connection as hotcallsadmin using the actual Terraform password
+  echo "🔍 Testing connection as hotcallsadmin with Terraform password..."
+  if ! kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- env PGPASSWORD="$TERRAFORM_ADMIN_PASSWORD" PGUSER="hotcallsadmin" PGHOST="$POSTGRES_FQDN" PGDATABASE="postgres" psql -c "SELECT 1;" > /dev/null 2>&1; then
+    echo "❌ Cannot connect to PostgreSQL as hotcallsadmin!"
+    echo "🔍 This suggests a connectivity issue or the Terraform password is incorrect"
+    echo "🛠️ Try running with --force-all to recreate infrastructure"
+    exit 1
+  fi
+  echo "✅ Connection as hotcallsadmin successful"
+  
+  # Create the user with explicit connection parameters (avoid pod's environment variables)
+  echo "🔄 Creating/updating user '$ENV_DB_USER'..."
+  CREATE_USER_SQL="
+    DO \$\$
+    BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_user WHERE usename = '$ENV_DB_USER') THEN
+            CREATE USER \"$ENV_DB_USER\" WITH PASSWORD '$ENV_DB_PASSWORD';
+            GRANT ALL PRIVILEGES ON DATABASE \"$ENV_DB_NAME\" TO \"$ENV_DB_USER\";
+            ALTER USER \"$ENV_DB_USER\" CREATEDB;
+            GRANT ALL ON SCHEMA public TO \"$ENV_DB_USER\";
+            GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"$ENV_DB_USER\";
+            GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"$ENV_DB_USER\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"$ENV_DB_USER\";
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"$ENV_DB_USER\";
+            RAISE NOTICE 'User $ENV_DB_USER created successfully';
+        ELSE
+            ALTER USER \"$ENV_DB_USER\" WITH PASSWORD '$ENV_DB_PASSWORD';
+            GRANT ALL PRIVILEGES ON DATABASE \"$ENV_DB_NAME\" TO \"$ENV_DB_USER\";
+            RAISE NOTICE 'User $ENV_DB_USER updated successfully';
+        END IF;
+    END
+    \$\$;"
+  
+  if kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- env PGPASSWORD="$TERRAFORM_ADMIN_PASSWORD" PGUSER="hotcallsadmin" PGHOST="$POSTGRES_FQDN" PGDATABASE="postgres" psql -c "$CREATE_USER_SQL"; then
+    echo "✅ User '$ENV_DB_USER' created/updated successfully"
+  else
+    echo "❌ Failed to create/update user '$ENV_DB_USER'!"
+    echo "🔍 Check PostgreSQL server status and connectivity"
+    exit 1
+  fi
+  
+  # Verify the new user can connect
+  echo "🔍 Verifying user '$ENV_DB_USER' can connect to database '$ENV_DB_NAME'..."
+  if kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- env PGPASSWORD="$ENV_DB_PASSWORD" PGUSER="$ENV_DB_USER" PGHOST="$POSTGRES_FQDN" PGDATABASE="$ENV_DB_NAME" psql -c "SELECT current_user, current_database();" > /dev/null 2>&1; then
+    echo "✅ User '$ENV_DB_USER' connection verified successfully"
+    echo "✅ PostgreSQL user '$ENV_DB_USER' is ready for Django migrations"
+  else
+    echo "❌ User '$ENV_DB_USER' cannot connect to database '$ENV_DB_NAME'!"
+    echo "🔍 User creation may have failed or password is incorrect"
+    echo "🔍 Check: kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- env PGPASSWORD=\"***\" PGUSER=\"$ENV_DB_USER\" PGHOST=\"$POSTGRES_FQDN\" PGDATABASE=\"$ENV_DB_NAME\" psql -c \"SELECT current_user;\""
+    exit 1
+  fi
+  
+  echo "✅ User '$ENV_DB_USER' fully configured and verified in PostgreSQL"
+  
+  # Stage 2: Update secrets to use the newly created postgres user and restart backend
+  echo "🔄 Stage 2: Updating secrets to use '$ENV_DB_USER' and restarting backend..."
+  
+  kubectl create secret generic hotcalls-secrets \
+    --namespace=hotcalls-${ENVIRONMENT} \
+    --from-literal=SECRET_KEY="$ENV_SECRET_KEY" \
+    --from-literal=ALLOWED_HOSTS="*" \
+    --from-literal=DB_NAME="$ENV_DB_NAME" \
+    --from-literal=DB_USER="$ENV_DB_USER" \
+    --from-literal=DB_PASSWORD="$ENV_DB_PASSWORD" \
+    --from-literal=DB_HOST="$POSTGRES_FQDN" \
+    --from-literal=REDIS_HOST="redis-service" \
+    --from-literal=REDIS_PORT="6379" \
+    --from-literal=REDIS_DB="0" \
+    --from-literal=REDIS_PASSWORD="$ENV_REDIS_PASSWORD" \
+    --from-literal=CELERY_BROKER_URL="redis://redis-service:6379/0" \
+    --from-literal=CELERY_RESULT_BACKEND="redis://redis-service:6379/0" \
+    --from-literal=AZURE_ACCOUNT_NAME="$STORAGE_ACCOUNT" \
+    --from-literal=AZURE_STORAGE_KEY="$STORAGE_KEY" \
+    --from-literal=EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend" \
+    --from-literal=EMAIL_HOST="$ENV_EMAIL_HOST" \
+    --from-literal=EMAIL_PORT="$ENV_EMAIL_PORT" \
+    --from-literal=EMAIL_USE_TLS="$ENV_EMAIL_USE_TLS" \
+    --from-literal=EMAIL_USE_SSL="$ENV_EMAIL_USE_SSL" \
+    --from-literal=EMAIL_HOST_USER="$ENV_EMAIL_HOST_USER" \
+    --from-literal=EMAIL_HOST_PASSWORD="$ENV_EMAIL_HOST_PASSWORD" \
+    --from-literal=DEFAULT_FROM_EMAIL="$ENV_DEFAULT_FROM_EMAIL" \
+    --from-literal=SERVER_EMAIL="$ENV_SERVER_EMAIL" \
+    --from-literal=DEBUG="$ENV_DEBUG" \
+    --from-literal=CORS_ALLOW_ALL_ORIGINS="$ENV_CORS_ALLOW_ALL" \
+    --from-literal=AZURE_CUSTOM_DOMAIN="" \
+    --from-literal=AZURE_KEY_VAULT_URL="" \
+    --from-literal=AZURE_CLIENT_ID="" \
+    --from-literal=AZURE_MONITOR_CONNECTION_STRING="" \
+    --from-literal=BASE_URL="$(if [ "$MAP_IP" = "true" ]; then echo "http://external-ip-placeholder/"; else echo "$ENV_BASE_URL"; fi)" \
+    --from-literal=DJANGO_SETTINGS_MODULE="hotcalls.settings.production" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  
+  echo "✅ Secrets updated with '$ENV_DB_USER' credentials"
+  
+  # Restart backend deployment to pick up new database credentials
+  echo "🔄 Restarting backend deployment to use '$ENV_DB_USER'..."
+  kubectl rollout restart deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT}
+  kubectl rollout status deployment/hotcalls-backend -n hotcalls-${ENVIRONMENT} --timeout=120s
+  
+  echo "✅ Backend restarted with '$ENV_DB_USER' credentials"
+fi
 
 # Build and push frontend (from visual prototype repo)
 echo "🏗️ Building frontend..."
@@ -740,6 +882,26 @@ fi
 echo "🗃️ Running database migrations..."
 echo "Waiting for backend to be ready..."
 sleep 10
+
+# Pre-migration database connectivity check
+echo "🔍 Pre-migration database connectivity check..."
+if ! kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- python manage.py shell -c "
+from django.db import connection
+try:
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT current_user, current_database(), version()')
+        result = cursor.fetchone()
+        print(f'Connected as: {result[0]} to database: {result[1]}')
+        print('✅ Database connectivity: OK')
+except Exception as e:
+    print(f'❌ Database connectivity failed: {e}')
+    exit(1)
+"; then
+  echo "❌ Pre-migration database connectivity check failed!"
+  echo "🔍 This suggests database user/password issues despite earlier verification"
+  echo "🔍 Check database configuration: kubectl get secret hotcalls-secrets -n hotcalls-${ENVIRONMENT} -o yaml"
+  exit 1
+fi
 
 # First, validate Django settings
 echo "🔍 Validating Django configuration..."
