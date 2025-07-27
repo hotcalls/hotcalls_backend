@@ -16,8 +16,8 @@ variable "environment" {
   default     = "development"
   
   validation {
-    condition     = contains(["development", "staging", "production"], var.environment)
-    error_message = "Environment must be one of: development, staging, production."
+    condition     = can(regex("^(development|staging|production)(-index-[0-9]+)?$", var.environment))
+    error_message = "Environment must be one of: development, staging, production, or include an index suffix like staging-index-1."
   }
 }
 
