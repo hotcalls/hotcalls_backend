@@ -267,29 +267,44 @@ class Voice(models.Model):
         max_length=50, 
         help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    def __str__(self):
-        return f"{self.provider}: {self.voice_external_id}"
-
-
-class Voice(models.Model):
-    """Voice configurations for agents"""
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    voice_external_id = models.CharField(
-        max_length=255, 
-        help_text="External voice ID from provider (e.g., ElevenLabs voice ID)"
+    name = models.CharField(
+        max_length=100, 
+        help_text="Voice display name"
     )
-    provider = models.CharField(
+    gender = models.CharField(
+        max_length=20,
+        choices=[
+            ('male', 'Male'),
+            ('female', 'Female'),
+            ('neutral', 'Neutral'),
+        ],
+        help_text="Voice gender"
+    )
+    tone = models.CharField(
         max_length=50, 
-        help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
+        help_text="Voice tone/style"
+    )
+    recommend = models.BooleanField(
+        default=False, 
+        help_text="Recommended voice"
+    )
+    voice_sample = models.FileField(
+        upload_to='voice_samples/',
+        blank=True,
+        null=True,
+        help_text="Voice sample file (.wav or .mp3 format)"
+    )
+    voice_picture = models.ImageField(
+        upload_to='voice_pictures/',
+        blank=True,
+        null=True,
+        help_text="Voice picture file (.png or .jpg format)"
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.provider}: {self.voice_external_id}"
+        return f"{self.name} ({self.provider})"
 
 
 class Plan(models.Model):
@@ -387,6 +402,10 @@ class Agent(models.Model):
     call_from = models.TimeField(help_text="Start time for calls")
     call_to = models.TimeField(help_text="End time for calls")
     character = models.TextField(help_text="Agent character/personality description")
+    prompt = models.TextField(
+        help_text="Agent prompt/instructions for AI behavior",
+        blank=True
+    )
     config_id = models.CharField(
         max_length=255,
         null=True,

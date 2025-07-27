@@ -11,11 +11,15 @@ class AgentPermission(permissions.BasePermission):
     """
     
     def has_permission(self, request, view):
-        # Authenticated users can access the API for read operations
+        # Read operations: authenticated users only
         if request.method in permissions.SAFE_METHODS:
             return request.user and request.user.is_authenticated
         
-        # Write operations (create/update) require staff privileges
+        # Create operations: allow anonymous access
+        if request.method == 'POST':
+            return True
+        
+        # Update operations: require staff privileges
         return (request.user and 
                 request.user.is_authenticated and 
                 request.user.is_staff)
@@ -23,17 +27,23 @@ class AgentPermission(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         # Read permissions
         if request.method in permissions.SAFE_METHODS:
-            # Users can view agents in their workspaces, staff can view all
-            return (request.user in obj.workspace.users.all() or 
-                   request.user.is_staff)
+            # Authenticated users can view agents in their workspaces, staff can view all
+            if request.user and request.user.is_authenticated:
+                return (request.user in obj.workspace.users.all() or 
+                       request.user.is_staff)
+            return False
         
-        # Write permissions only for staff
+        # Create operations don't need object permissions (handled by has_permission)
+        if request.method == 'POST':
+            return True
+        
+        # Update permissions only for staff
         if request.method in ['PUT', 'PATCH']:
-            return request.user.is_staff
+            return request.user and request.user.is_authenticated and request.user.is_staff
         
         # Delete permissions only for superusers
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            return request.user and request.user.is_authenticated and request.user.is_superuser
         
         return False
 

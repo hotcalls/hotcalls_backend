@@ -3,6 +3,14 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 import logging
+from django.http import HttpResponse, Http404, FileResponse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.views import View
+import os
+import mimetypes
+
 
 logger = logging.getLogger(__name__)
 
@@ -207,3 +215,96 @@ def send_password_reset_email(user, reset_token, request=None):
     except Exception as e:
         logger.error(f"Error sending password reset email to {user.email}: {str(e)}")
         return False
+
+
+class CORSMediaView(View):
+    """Custom view for serving media files with CORS headers"""
+    
+    @method_decorator(csrf_exempt)
+    def dispatch(self, *args, **kwargs):
+        return super().dispatch(*args, **kwargs)
+    
+    def get(self, request, path):
+        """Serve media files with CORS headers and Range support"""
+        # Security check: ensure we're only serving files from MEDIA_ROOT
+        media_root = str(settings.MEDIA_ROOT)
+        file_path = os.path.join(media_root, path)
+        file_path = os.path.normpath(file_path)
+        
+        # Prevent directory traversal
+        if not file_path.startswith(media_root):
+            raise Http404("File not found")
+        
+        # Check if file exists
+        if not os.path.exists(file_path) or not os.path.isfile(file_path):
+            raise Http404("File not found")
+        
+        # Get file size
+        file_size = os.path.getsize(file_path)
+        
+        # Get content type
+        content_type, _ = mimetypes.guess_type(file_path)
+        if content_type is None:
+            content_type = 'application/octet-stream'
+        
+        # Handle Range requests for audio/video streaming
+        range_header = request.META.get('HTTP_RANGE')
+        if range_header:
+            # Parse range header
+            ranges = range_header.replace('bytes=', '').split('-')
+            start = int(ranges[0]) if ranges[0] else 0
+            end = int(ranges[1]) if ranges[1] else file_size - 1
+            
+            # Ensure end doesn't exceed file size
+            end = min(end, file_size - 1)
+            content_length = end - start + 1
+            
+            # Open file and seek to start position
+            file_obj = open(file_path, 'rb')
+            file_obj.seek(start)
+            
+            # Create partial content response
+            response = HttpResponse(
+                file_obj.read(content_length),
+                status=206,  # Partial Content
+                content_type=content_type
+            )
+            response['Content-Range'] = f'bytes {start}-{end}/{file_size}'
+            response['Content-Length'] = str(content_length)
+            file_obj.close()
+        else:
+            # Regular response for full file
+            response = FileResponse(
+                open(file_path, 'rb'),
+                content_type=content_type
+            )
+            response['Content-Length'] = str(file_size)
+        
+        # Add CORS headers
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Range, Accept-Encoding'
+        response['Access-Control-Expose-Headers'] = 'Content-Length, Content-Range, Accept-Ranges, Content-Type'
+        
+        # Add Range support headers
+        response['Accept-Ranges'] = 'bytes'
+        response['Cache-Control'] = 'public, max-age=3600'
+        
+        # Add headers for better browser compatibility
+        if content_type.startswith('audio/'):
+            response['X-Content-Type-Options'] = 'nosniff'
+        
+        # Add filename for download
+        filename = os.path.basename(file_path)
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        
+        return response
+    
+    def options(self, request, path):
+        """Handle preflight requests"""
+        response = HttpResponse()
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response['Access-Control-Allow-Headers'] = 'Content-Type, Range'
+        response['Access-Control-Max-Age'] = '3600'
+        return response

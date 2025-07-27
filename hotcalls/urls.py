@@ -16,9 +16,12 @@ Including another URLconf
 """
 
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.conf import settings
+from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from core.health import health_check
+from core.utils import CORSMediaView
 
 urlpatterns = [
     # Admin interface
@@ -46,3 +49,9 @@ urlpatterns = [
     path('api/calendars/', include('core.management_api.calendar_api.urls')),
     path('api/voices/', include('core.management_api.voice_api.urls')),
 ]
+
+# Serve media files in development with CORS support
+if settings.DEBUG:
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', CORSMediaView.as_view(), name='media'),
+    ]

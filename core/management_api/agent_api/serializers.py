@@ -33,7 +33,7 @@ class AgentSerializer(serializers.ModelSerializer):
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS
             'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'phone_numbers', 'phone_number_count',
+            'character', 'prompt', 'config_id', 'phone_numbers', 'phone_number_count',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
@@ -57,7 +57,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'voice', 
             # EXISTING FIELDS
             'language', 'retry_interval', 'workdays', 'call_from', 'call_to', 
-            'character', 'config_id', 'calendar_configuration'
+            'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
     def validate_workdays(self, value):
@@ -108,7 +108,7 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'voice',
             # EXISTING FIELDS
             'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'calendar_configuration'
+            'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
     def validate_workdays(self, value):
