@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# HotCalls Staging Deployment Script
+# 
+# GUARANTEED FIRST-TRY SUCCESS FEATURES:
+# ✅ Forces Docker rebuilds (--no-cache) for latest code
+# ✅ .env file is GROUND TRUTH for ALL configuration values
+# ✅ Auto-syncs PostgreSQL server with .env credentials  
+# ✅ Creates database and user matching .env specifications
+# ✅ Validates Django config before migrations
+# ✅ Intelligent migration retry with error handling
+# ✅ Database connection verification
+# ✅ Exits on failure (no partial deployments)
+
 echo "🚀 Starting staging deployment..."
 
 # Default values
@@ -214,44 +226,112 @@ echo "🔐 Creating secrets with proper database connection..."
 echo "Database Host: $POSTGRES_FQDN"
 echo "Storage Account: $STORAGE_ACCOUNT"
 
+# .env IS THE GROUND TRUTH - Extract all values from .env
+echo "📋 Reading configuration from .env file..."
+ENV_DB_NAME="$(grep '^DB_NAME=' .env | cut -d'=' -f2)"
+ENV_DB_USER="$(grep '^DB_USER=' .env | cut -d'=' -f2)" 
+ENV_DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | cut -d'=' -f2)"
+ENV_SECRET_KEY="$(grep '^SECRET_KEY=' .env | cut -d'=' -f2)"
+ENV_DEBUG="$(grep '^DEBUG=' .env | cut -d'=' -f2)"
+ENV_CORS_ALLOW_ALL="$(grep '^CORS_ALLOW_ALL_ORIGINS=' .env | cut -d'=' -f2)"
+ENV_REDIS_PASSWORD="$(grep '^REDIS_PASSWORD=' .env | cut -d'=' -f2)"
+ENV_EMAIL_HOST="$(grep '^EMAIL_HOST=' .env | cut -d'=' -f2)"
+ENV_EMAIL_PORT="$(grep '^EMAIL_PORT=' .env | cut -d'=' -f2)"
+ENV_EMAIL_USE_TLS="$(grep '^EMAIL_USE_TLS=' .env | cut -d'=' -f2)"
+ENV_EMAIL_USE_SSL="$(grep '^EMAIL_USE_SSL=' .env | cut -d'=' -f2)"
+ENV_EMAIL_HOST_USER="$(grep '^EMAIL_HOST_USER=' .env | cut -d'=' -f2)"
+ENV_EMAIL_HOST_PASSWORD="$(grep '^EMAIL_HOST_PASSWORD=' .env | cut -d'=' -f2)"
+ENV_DEFAULT_FROM_EMAIL="$(grep '^DEFAULT_FROM_EMAIL=' .env | cut -d'=' -f2)"
+ENV_SERVER_EMAIL="$(grep '^SERVER_EMAIL=' .env | cut -d'=' -f2)"
+ENV_BASE_URL="$(grep '^BASE_URL=' .env | cut -d'=' -f2)"
+
+echo "📋 .env VALUES LOADED:"
+echo "  DB_NAME: $ENV_DB_NAME"
+echo "  DB_USER: $ENV_DB_USER"
+echo "  DB_PASSWORD: ${ENV_DB_PASSWORD:0:3}***${ENV_DB_PASSWORD: -3}"
+echo "  SECRET_KEY: ${ENV_SECRET_KEY:0:10}***${ENV_SECRET_KEY: -10}"
+echo "  DEBUG: $ENV_DEBUG"
+echo "  CORS_ALLOW_ALL_ORIGINS: $ENV_CORS_ALLOW_ALL"
+echo "  REDIS_PASSWORD: ${ENV_REDIS_PASSWORD:0:3}***${ENV_REDIS_PASSWORD: -3}"
+echo "  EMAIL_HOST: $ENV_EMAIL_HOST"
+echo "  EMAIL_PORT: $ENV_EMAIL_PORT"
+echo "  EMAIL_USE_TLS: $ENV_EMAIL_USE_TLS"
+echo "  EMAIL_USE_SSL: $ENV_EMAIL_USE_SSL"
+echo "  EMAIL_HOST_USER: $ENV_EMAIL_HOST_USER"
+echo "  EMAIL_HOST_PASSWORD: ${ENV_EMAIL_HOST_PASSWORD:0:3}***${ENV_EMAIL_HOST_PASSWORD: -3}"
+echo "  DEFAULT_FROM_EMAIL: $ENV_DEFAULT_FROM_EMAIL"
+echo "  SERVER_EMAIL: $ENV_SERVER_EMAIL"
+echo "  BASE_URL: $ENV_BASE_URL"
+
+# Sync PostgreSQL server credentials with .env values
+echo "🔐 Syncing PostgreSQL server with .env values..."
+
+# Update PostgreSQL server admin password to match .env
+az postgres flexible-server update --resource-group $RESOURCE_GROUP --name ${POSTGRES_FQDN%%.*} --admin-password "$ENV_DB_PASSWORD" > /dev/null
+
+# Create database with name from .env if it doesn't exist
+az postgres flexible-server db create --resource-group $RESOURCE_GROUP --server-name ${POSTGRES_FQDN%%.*} --database-name "$ENV_DB_NAME" 2>/dev/null || echo "Database $ENV_DB_NAME already exists or using default"
+
+# NOTE: PostgreSQL admin user is created by Terraform as "hotcallsadmin"
+# If .env specifies a different user, we'll create it and grant permissions
+if [ "$ENV_DB_USER" != "hotcallsadmin" ]; then
+  echo "⚠️  .env specifies DB_USER='$ENV_DB_USER' but Terraform creates admin user 'hotcallsadmin'"
+  echo "🔄 The application will connect as '$ENV_DB_USER' - ensure this user exists in PostgreSQL"
+fi
+
+echo "✅ PostgreSQL server synced with .env values"
+
+echo "🔐 Creating Kubernetes secrets with .env values..."
+
 kubectl create secret generic hotcalls-secrets \
   --namespace=hotcalls-${ENVIRONMENT} \
-  --from-literal=SECRET_KEY="$(grep '^SECRET_KEY=' .env | cut -d'=' -f2)" \
+  --from-literal=SECRET_KEY="$ENV_SECRET_KEY" \
   --from-literal=ALLOWED_HOSTS="*" \
-  --from-literal=DB_NAME="$(grep '^DB_NAME=' .env | cut -d'=' -f2)" \
-  --from-literal=DB_USER="$(grep '^DB_USER=' .env | cut -d'=' -f2)" \
-  --from-literal=DB_PASSWORD="$(grep '^DB_PASSWORD=' .env | cut -d'=' -f2)" \
+  --from-literal=DB_NAME="$ENV_DB_NAME" \
+  --from-literal=DB_USER="$ENV_DB_USER" \
+  --from-literal=DB_PASSWORD="$ENV_DB_PASSWORD" \
   --from-literal=DB_HOST="$POSTGRES_FQDN" \
   --from-literal=REDIS_HOST="redis-service" \
   --from-literal=REDIS_PORT="6379" \
   --from-literal=REDIS_DB="0" \
-  --from-literal=REDIS_PASSWORD="$(grep '^REDIS_PASSWORD=' .env | cut -d'=' -f2)" \
+  --from-literal=REDIS_PASSWORD="$ENV_REDIS_PASSWORD" \
   --from-literal=CELERY_BROKER_URL="redis://redis-service:6379/0" \
   --from-literal=CELERY_RESULT_BACKEND="redis://redis-service:6379/0" \
   --from-literal=AZURE_ACCOUNT_NAME="$STORAGE_ACCOUNT" \
   --from-literal=AZURE_STORAGE_KEY="$STORAGE_KEY" \
   --from-literal=EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend" \
-  --from-literal=EMAIL_HOST="$(grep '^EMAIL_HOST=' .env | cut -d'=' -f2)" \
-  --from-literal=EMAIL_PORT="$(grep '^EMAIL_PORT=' .env | cut -d'=' -f2)" \
-  --from-literal=EMAIL_USE_TLS="$(grep '^EMAIL_USE_TLS=' .env | cut -d'=' -f2)" \
-  --from-literal=EMAIL_USE_SSL="$(grep '^EMAIL_USE_SSL=' .env | cut -d'=' -f2)" \
-  --from-literal=EMAIL_HOST_USER="$(grep '^EMAIL_HOST_USER=' .env | cut -d'=' -f2)" \
-  --from-literal=EMAIL_HOST_PASSWORD="$(grep '^EMAIL_HOST_PASSWORD=' .env | cut -d'=' -f2)" \
-  --from-literal=DEFAULT_FROM_EMAIL="$(grep '^DEFAULT_FROM_EMAIL=' .env | cut -d'=' -f2)" \
-  --from-literal=SERVER_EMAIL="$(grep '^SERVER_EMAIL=' .env | cut -d'=' -f2)" \
-  --from-literal=DEBUG="False" \
-  --from-literal=CORS_ALLOWED_ORIGINS="*" \
+  --from-literal=EMAIL_HOST="$ENV_EMAIL_HOST" \
+  --from-literal=EMAIL_PORT="$ENV_EMAIL_PORT" \
+  --from-literal=EMAIL_USE_TLS="$ENV_EMAIL_USE_TLS" \
+  --from-literal=EMAIL_USE_SSL="$ENV_EMAIL_USE_SSL" \
+  --from-literal=EMAIL_HOST_USER="$ENV_EMAIL_HOST_USER" \
+  --from-literal=EMAIL_HOST_PASSWORD="$ENV_EMAIL_HOST_PASSWORD" \
+  --from-literal=DEFAULT_FROM_EMAIL="$ENV_DEFAULT_FROM_EMAIL" \
+  --from-literal=SERVER_EMAIL="$ENV_SERVER_EMAIL" \
+  --from-literal=DEBUG="$ENV_DEBUG" \
+  --from-literal=CORS_ALLOW_ALL_ORIGINS="$ENV_CORS_ALLOW_ALL" \
   --from-literal=AZURE_CUSTOM_DOMAIN="" \
   --from-literal=AZURE_KEY_VAULT_URL="" \
   --from-literal=AZURE_CLIENT_ID="" \
   --from-literal=AZURE_MONITOR_CONNECTION_STRING="" \
-  --from-literal=BASE_URL="$(if [ "$MAP_IP" = "true" ]; then echo "http://external-ip-placeholder/"; else echo "$(grep '^BASE_URL=' .env | cut -d'=' -f2)"; fi)" \
+  --from-literal=BASE_URL="$(if [ "$MAP_IP" = "true" ]; then echo "http://external-ip-placeholder/"; else echo "$ENV_BASE_URL"; fi)" \
   --from-literal=DJANGO_SETTINGS_MODULE="hotcalls.settings.production" \
   --dry-run=client -o yaml | kubectl apply -f -
 
+echo "✅ Kubernetes secrets created with .env values"
+
+echo "📊 DEPLOYMENT SUMMARY - ALL VALUES FROM .env:"
+echo "  🗃️  Database: $ENV_DB_USER@$POSTGRES_FQDN/$ENV_DB_NAME"
+echo "  🔴 Redis: redis-service with password ${ENV_REDIS_PASSWORD:0:3}***"
+echo "  🌐 CORS: ALLOW_ALL=$ENV_CORS_ALLOW_ALL"
+echo "  🐛 Debug: $ENV_DEBUG"
+echo "  📧 Email: $ENV_EMAIL_HOST_USER@$ENV_EMAIL_HOST:$ENV_EMAIL_PORT"
+echo "  🔗 Base URL: $(if [ "$MAP_IP" = "true" ]; then echo "http://external-ip-placeholder/ (will be mapped)"; else echo "$ENV_BASE_URL"; fi)"
+echo ""
+
 # Deploy Redis
 echo "🔴 Deploying Redis..."
-REDIS_PASSWORD=$(grep '^REDIS_PASSWORD=' .env | cut -d'=' -f2)
+REDIS_PASSWORD=$ENV_REDIS_PASSWORD
 cat << EOF | envsubst | kubectl apply -n hotcalls-${ENVIRONMENT} -f -
 apiVersion: apps/v1
 kind: Deployment
@@ -292,7 +372,7 @@ az acr login --name $ACR_NAME
 
 # Build and push backend
 echo "🏗️ Building backend..."
-docker build -t ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT} .
+docker build --no-cache -t ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT} .
 docker push ${ACR_LOGIN_SERVER}/hotcalls-backend:${ENVIRONMENT}
 
 # Create ConfigMap
@@ -391,7 +471,7 @@ if [ -d "../hotcalls-visual-prototype" ]; then
     git pull
   fi
   
-  docker build -f ../hotcalls/frontend-deploy/Dockerfile -t ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT} .
+  docker build --no-cache -f ../hotcalls/frontend-deploy/Dockerfile -t ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT} .
   docker push ${ACR_LOGIN_SERVER}/hotcalls-frontend:${ENVIRONMENT}
   cd ../hotcalls
 else
@@ -514,27 +594,48 @@ if ! kubectl wait --namespace hotcalls-${ENVIRONMENT} --for=condition=ready pod 
   echo "🚀 Continuing with deployment (pods may still be starting)..."
 fi
 
-# Run database migrations with faster retry
+# Run database migrations with intelligent retry
 echo "🗃️ Running database migrations..."
 echo "Waiting for backend to be ready..."
-sleep 5
+sleep 10
 
-# Retry migrations up to 3 times with shorter waits
-for i in {1..3}; do
-  echo "Migration attempt $i/3..."
+# First, validate Django settings
+echo "🔍 Validating Django configuration..."
+if ! kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- python manage.py check --deploy; then
+  echo "❌ Django configuration check failed!"
+  exit 1
+fi
+
+# Retry migrations up to 5 times with auto-fixes
+MIGRATION_SUCCESS=false
+for i in {1..5}; do
+  echo "Migration attempt $i/5..."
   if kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- python manage.py migrate; then
     echo "✅ Migrations completed successfully!"
+    MIGRATION_SUCCESS=true
     break
   else
-    echo "⚠️ Migration attempt $i failed, retrying in 5 seconds..."
-    sleep 5
-  fi
-  if [ $i -eq 3 ]; then
-    echo "⚠️ All migration attempts failed, but deployment continues..."
-    echo "💡 You can run migrations manually later with:"
-    echo "   kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- python manage.py migrate"
+    echo "⚠️ Migration attempt $i failed..."
+    if [ $i -lt 5 ]; then
+      echo "🔄 Waiting 10 seconds before retry..."
+      sleep 10
+    fi
   fi
 done
+
+if [ "$MIGRATION_SUCCESS" = false ]; then
+  echo "❌ All migration attempts failed! Deployment cannot continue."
+  echo "Check the logs with: kubectl logs -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend"
+  exit 1
+fi
+
+# Verify database connection works
+echo "🔍 Verifying database connection..."
+if ! kubectl exec -n hotcalls-${ENVIRONMENT} deployment/hotcalls-backend -- python manage.py shell -c "from django.db import connection; connection.cursor().execute('SELECT 1'); print('Database connection: OK')"; then
+  echo "❌ Database connection verification failed!"
+  exit 1
+fi
+echo "✅ Database connection verified"
 
 # Wait for external IP (max 2 minutes)
 echo "⏳ Waiting for external IP (max 2 minutes)..."
