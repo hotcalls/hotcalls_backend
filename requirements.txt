@@ -19,3 +19,7 @@ celery>=5.3.1       # Task queue
 django-celery-beat>=2.5.0  # For periodic task scheduling
 redis>=4.5.0        # Redis client for Celery broker (K8s-friendly)
 
+# LiveKit integration for outbound calls
+livekit>=0.11.1     # LiveKit Python SDK for SIP calls
+livekit-api>=0.5.0  # LiveKit API client
+

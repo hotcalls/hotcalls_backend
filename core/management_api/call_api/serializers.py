@@ -105,6 +105,75 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class OutboundCallSerializer(serializers.Serializer):
+    """Serializer for making outbound calls via LiveKit"""
+    
+    # SIP Configuration
+    sip_trunk_id = serializers.CharField(
+        required=True,
+        help_text="SIP trunk identifier for outbound calls"
+    )
+    from_number = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Caller ID number"
+    )
+    
+    # Agent Selection
+    agent_id = serializers.UUIDField(
+        required=True,
+        help_text="Agent UUID to make the call"
+    )
+    
+    # Lead Selection
+    lead_id = serializers.UUIDField(
+        required=True,
+        help_text="Lead UUID to call"
+    )
+    
+    # Campaign Info
+    campaign_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Campaign identifier"
+    )
+    
+    # Optional call reason
+    call_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        default=None,
+        help_text="Reason for the call"
+    )
+    
+    def validate_agent_id(self, value):
+        """Validate agent exists and belongs to user's workspace"""
+        try:
+            agent = Agent.objects.get(agent_id=value)
+            request = self.context.get('request')
+            
+            # Check if user has access to this agent
+            if request and request.user:
+                if not request.user.is_staff:
+                    if request.user not in agent.workspace.users.all():
+                        raise serializers.ValidationError(
+                            "You can only use agents from your own workspace"
+                        )
+            
+            return value
+        except Agent.DoesNotExist:
+            raise serializers.ValidationError("Agent not found")
+    
+    def validate_lead_id(self, value):
+        """Validate lead exists"""
+        if not Lead.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Lead not found")
+        return value
+
+
 class CallLogAnalyticsSerializer(serializers.Serializer):
     """Serializer for call analytics"""
     total_calls = serializers.IntegerField(read_only=True)

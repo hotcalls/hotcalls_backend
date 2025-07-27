@@ -4,12 +4,15 @@ from rest_framework.response import Response
 from django.db.models import Sum, Avg, Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
+from django.db import transaction
+from django.utils import timezone
+import json
 
-from core.models import CallLog
+from core.models import CallLog, Lead, Agent
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer,
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer
+    CallLogAppointmentStatsSerializer, OutboundCallSerializer
 )
 from .filters import CallLogFilter
 from .permissions import CallLogPermission, CallLogAnalyticsPermission
@@ -420,7 +423,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
         """,
         responses={
             200: OpenApiResponse(
-                response=CallLogAgentPerformanceSerializer(many=True),
+                response=CallLogAgentPerformanceSerializer,
                 description="✅ Agent performance data retrieved successfully"
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
@@ -459,7 +462,189 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 'appointments_scheduled': stat['appointments_scheduled']
             })
         
+        # Return the aggregated performance data
         return Response(performance_data)
+
+    @extend_schema(
+        summary="📞 Make outbound call",
+        description="""
+        Initiate an outbound call using LiveKit with specified agent and lead.
+        
+        **⚡ SYNCHRONOUS ENDPOINT - NOT ASYNC!**
+        
+        **🔐 Permission Requirements**:
+        - **✅ All Authenticated Users**: Can make calls with their agents
+        - **✅ Staff/Superuser**: Can use any agent
+        
+        **📋 Required Information**:
+        - `sip_trunk_id`: SIP trunk for outbound calls
+        - `agent_id`: Agent UUID to make the call
+        - `lead_id`: Lead UUID to call
+        
+        **📞 Call Process**:
+        1. Validates agent belongs to user's workspace
+        2. Retrieves lead information
+        3. Dispatches agent to LiveKit room
+        4. Initiates SIP call to lead
+        5. Creates call log entry
+        
+        **🎯 Use Cases**:
+        - Sales outreach campaigns
+        - Customer follow-up calls
+        - Appointment confirmations
+        - Survey calls
+        """,
+        request=OutboundCallSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Call initiated successfully",
+                examples=[
+                    OpenApiExample(
+                        'Successful Call Initiation',
+                        summary='Call started successfully',
+                        value={
+                            'success': True,
+                            'room_name': 'outbound-call-abc123',
+                            'participant_id': 'PA_abc123',
+                            'dispatch_id': 'DP_xyz789',
+                            'sip_call_id': 'SIP_123456',
+                            'to_number': '+4915111857588',
+                            'agent_name': 'Sales Agent',
+                            'campaign_id': 'CAMPAIGN_001',
+                            'call_log_id': 'uuid-of-created-log'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="❌ Validation error",
+                examples=[
+                    OpenApiExample(
+                        'Agent Not Found',
+                        value={'agent_id': ['Agent not found']}
+                    ),
+                    OpenApiExample(
+                        'Workspace Access Denied',
+                        value={'agent_id': ['You can only use agents from your own workspace']}
+                    )
+                ]
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            500: OpenApiResponse(
+                description="❌ Call initiation failed",
+                examples=[
+                    OpenApiExample(
+                        'LiveKit Error',
+                        value={
+                            'success': False,
+                            'error': 'Failed to connect to SIP trunk',
+                            'to_number': '+4915111857588',
+                            'agent_name': 'Sales Agent',
+                            'campaign_id': 'CAMPAIGN_001'
+                        }
+                    )
+                ]
+            )
+        },
+        tags=["Call Management"]
+    )
+    @action(detail=False, methods=['post'])
+    def make_outbound_call(self, request):
+        """
+        Make an outbound call - SYNCHRONOUS ENDPOINT (NOT ASYNC!)
+        
+        This endpoint triggers the LiveKit outbound call process synchronously.
+        It uses the make_outbound_call_sync function which internally handles async operations.
+        """
+        serializer = OutboundCallSerializer(data=request.data, context={'request': request})
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get validated data
+        validated_data = serializer.validated_data
+        
+        # Retrieve agent and lead objects
+        try:
+            agent = Agent.objects.select_related('workspace', 'voice').get(
+                agent_id=validated_data['agent_id']
+            )
+            lead = Lead.objects.get(id=validated_data['lead_id'])
+        except (Agent.DoesNotExist, Lead.DoesNotExist) as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Prepare agent configuration dictionary
+        agent_config = {
+            "workspace": str(agent.workspace.id),
+            "name": agent.name,
+            "status": agent.status,
+            "greeting_inbound": agent.greeting_inbound,
+            "greeting_outbound": agent.greeting_outbound,
+            "voice": str(agent.voice.voice_external_id) if agent.voice else "",
+            "language": agent.language,
+            "retry_interval": agent.retry_interval,
+            "max_retries": agent.max_retries,
+            "workdays": agent.workdays,
+            "call_from": str(agent.call_from),
+            "call_to": str(agent.call_to),
+            "character": agent.character,
+            "prompt": agent.prompt,
+            "config_id": agent.config_id or "",
+            "calendar_configuration": str(agent.calendar_configuration.id) if agent.calendar_configuration else ""
+        }
+        
+        # Prepare lead data dictionary
+        lead_data = {
+            "name": lead.name,
+            "surname": lead.surname or "",
+            "email": lead.email,
+            "phone": lead.phone,
+            "meta_data": lead.meta_data or {}
+        }
+        
+        # Import the SYNC function (NOT ASYNC!)
+        try:
+            from core.utils.livekit_calls import make_outbound_call_sync
+        except ImportError:
+            return Response(
+                {'error': 'LiveKit integration not available'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Make the outbound call using SYNC wrapper
+        # THIS IS NOT ASYNC - IT'S A SYNCHRONOUS CALL!
+        result = make_outbound_call_sync(
+            sip_trunk_id=validated_data['sip_trunk_id'],
+            agent_config=agent_config,
+            lead_data=lead_data,
+            from_number=validated_data.get('from_number', ''),
+            campaign_id=validated_data.get('campaign_id', ''),
+            call_reason=validated_data.get('call_reason')
+        )
+        
+        # Create call log entry if successful
+        if result.get('success'):
+            with transaction.atomic():
+                call_log = CallLog.objects.create(
+                    lead=lead,
+                    agent=agent,
+                    from_number=validated_data.get('from_number', ''),
+                    to_number=lead.phone,
+                    duration=0,  # Will be updated when call ends
+                    direction='outbound',
+                    status='reached',  # Initial status
+                    disconnection_reason='ongoing'  # Call is ongoing
+                )
+                result['call_log_id'] = str(call_log.id)
+        
+        # Return the result
+        if result.get('success'):
+            return Response(result, status=status.HTTP_200_OK)
+        else:
+            return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="📅 Get appointment statistics",
