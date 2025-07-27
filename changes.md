@@ -12,7 +12,7 @@ greeting inbound / outbound / followup
 
 calconfig - add event name
 vorlaufzeit in stunden nicht tagen
-primary
+
 
 lead muss source haben
 lead tab ist callog

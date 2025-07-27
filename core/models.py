@@ -231,6 +231,24 @@ class Voice(models.Model):
         return f"{self.provider}: {self.voice_external_id}"
 
 
+class Voice(models.Model):
+    """Voice configurations for agents"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    voice_external_id = models.CharField(
+        max_length=255, 
+        help_text="External voice ID from provider (e.g., ElevenLabs voice ID)"
+    )
+    provider = models.CharField(
+        max_length=50, 
+        help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.provider}: {self.voice_external_id}"
+
+
 class Plan(models.Model):
     """Subscription plans"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
