@@ -3,7 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.contrib.auth import login, logout
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, render
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 import secrets
 from datetime import timedelta
@@ -296,25 +296,24 @@ def verify_email(request, token):
         
         # Check if already verified
         if user.is_email_verified:
-            return Response({
-                'error': 'Email is already verified.'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return render(request, 'auth/verification_error.html', {
+                'error_message': 'This email address is already verified.'
+            })
         
         # Verify the email
         if user.verify_email(token):
-            return Response({
-                'message': 'Email verified successfully! You can now login.',
-                'email_verified': True
-            }, status=status.HTTP_200_OK)
+            return render(request, 'auth/verification_success.html', {
+                'email': user.email
+            })
         else:
-            return Response({
-                'error': 'Invalid or expired verification token.'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return render(request, 'auth/verification_error.html', {
+                'error_message': 'The verification link is invalid or has expired.'
+            })
             
     except User.DoesNotExist:
-        return Response({
-            'error': 'Invalid or expired verification token.'
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return render(request, 'auth/verification_error.html', {
+            'error_message': 'The verification link is invalid or has expired.'
+        })
 
 
 @extend_schema(
