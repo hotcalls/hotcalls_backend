@@ -465,6 +465,143 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Return the aggregated performance data
         return Response(performance_data)
 
+    def _prepare_lead_data(self, validated_data):
+        """
+        Prepare lead data from either database or request data
+        Supports flexible lead data with custom fields
+        """
+        # Start with basic structure
+        lead_data = {
+            "name": "",
+            "surname": "",
+            "email": "",
+            "phone": validated_data['phone'],  # Always use provided phone as fallback
+            "lead_source": "",
+            "campaign_id": "",
+            "meta_data": {}
+        }
+        
+        # If lead_id provided, load from database first
+        if validated_data.get('lead_id'):
+            try:
+                lead = Lead.objects.get(id=validated_data['lead_id'])
+                lead_data.update({
+                    "name": lead.name,
+                    "surname": lead.surname or "",
+                    "email": lead.email,
+                    "phone": lead.phone,
+                    "lead_source": getattr(lead, 'lead_source', ''),
+                    "campaign_id": getattr(lead, 'campaign_id', ''),
+                    "meta_data": lead.meta_data or {}
+                })
+            except Lead.DoesNotExist:
+                # Lead not found, continue with defaults
+                pass
+        
+        # Override/supplement with lead_data from request
+        if validated_data.get('lead_data'):
+            request_lead_data = validated_data['lead_data']
+            
+            # Update basic fields
+            for field in ['name', 'surname', 'email', 'phone', 'lead_source', 'campaign_id']:
+                if field in request_lead_data:
+                    lead_data[field] = request_lead_data[field]
+            
+            # Handle custom fields
+            if 'custom_fields' in request_lead_data:
+                # Merge custom fields into meta_data
+                lead_data['meta_data'].update(request_lead_data['custom_fields'])
+            
+            # Also merge any other fields from request
+            for key, value in request_lead_data.items():
+                if key not in lead_data and key != 'custom_fields':
+                    lead_data[key] = value
+        
+        return lead_data
+    
+    def _process_greeting_template(self, template, lead_data):
+        """
+        Process greeting template with placeholders
+        Replaces {placeholder} with actual values from lead_data
+        """
+        import re
+        
+        # Collect all available data for replacement
+        available_data = {}
+        
+        # Add basic lead fields
+        available_data.update(lead_data)
+        
+        # Add meta_data fields at top level for easy access
+        if 'meta_data' in lead_data:
+            available_data.update(lead_data['meta_data'])
+        
+        # Add custom_fields if present (for backwards compatibility)
+        if 'custom_fields' in lead_data:
+            available_data.update(lead_data['custom_fields'])
+        
+        # Replace {placeholder} with actual values
+        def replace_placeholder(match):
+            key = match.group(1)
+            # Return empty string if key not found (don't break the greeting)
+            return str(available_data.get(key, ''))
+        
+        # Use regex to find and replace all {word} patterns
+        processed_template = re.sub(r'\{(\w+)\}', replace_placeholder, template)
+        
+        return processed_template
+    
+    def _merge_agent_config(self, base_agent, override_config):
+        """
+        Merge agent configuration with overrides
+        Base agent data from DB, selectively override with provided config
+        """
+        # Build base configuration from database agent
+        agent_config = {
+            "workspace": str(base_agent.workspace.id),
+            "name": base_agent.name,
+            "status": base_agent.status,
+            "greeting_inbound": base_agent.greeting_inbound,
+            "greeting_outbound": base_agent.greeting_outbound,
+            "voice": str(base_agent.voice.voice_external_id) if base_agent.voice else "",
+            "language": base_agent.language,
+            "retry_interval": base_agent.retry_interval,
+            "max_retries": base_agent.max_retries,
+            "workdays": base_agent.workdays,
+            "call_from": str(base_agent.call_from) if base_agent.call_from else "",
+            "call_to": str(base_agent.call_to) if base_agent.call_to else "",
+            "character": base_agent.character,
+            "prompt": base_agent.prompt,
+            "config_id": base_agent.config_id or "",
+            "calendar_configuration": str(base_agent.calendar_configuration.id) if base_agent.calendar_configuration else ""
+        }
+        
+        # Apply overrides if provided
+        if override_config:
+            for key, value in override_config.items():
+                if value is not None:  # Allow explicit None to clear values
+                    # Special handling for voice - might be voice UUID or external ID
+                    if key == 'voice' and value:
+                        # Try to find voice and get external ID
+                        try:
+                            from core.models import Voice
+                            if len(str(value)) == 36:  # Looks like UUID
+                                voice = Voice.objects.get(id=value)
+                                agent_config['voice'] = str(voice.voice_external_id)
+                            else:
+                                # Assume it's already an external ID
+                                agent_config['voice'] = str(value)
+                        except (Voice.DoesNotExist, ValueError):
+                            # Keep original if voice not found
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Voice override failed: {value}")
+                    else:
+                        # Direct override for other fields
+                        agent_config[key] = value
+        
+        return agent_config
+
     @extend_schema(
         summary="📞 Make outbound call",
         description="""
@@ -472,27 +609,45 @@ class CallLogViewSet(viewsets.ModelViewSet):
         
         **⚡ SYNCHRONOUS ENDPOINT - NOT ASYNC!**
         
+        **🚀 NEW: Dynamic Agent Configuration & Lead Personalization!**
+        
+        You can now override agent settings per call and provide custom lead data
+        with placeholders for highly personalized conversations.
+        
         **🔐 Permission Requirements**:
         - **✅ All Authenticated Users**: Can make calls with their agents
         - **✅ Staff/Superuser**: Can use any agent
         
-        **📋 Required Information**:
-        - `phone`: Phone number to call (required)
-        - `agent_id`: Agent UUID to make the call (required)
-        - `lead_id`: Lead UUID to associate with call (optional)
+        **📋 Required Fields**:
+        - `phone`: Phone number to call (must start with + and country code)
+        - `agent_id`: Agent UUID to make the call
+        
+        **🎯 Optional Fields**:
+        - `lead_id`: Existing lead UUID (loads lead data from database)
+        - `agent_config`: Override any agent settings for this specific call
+        - `lead_data`: Provide lead information including custom fields
+        - `custom_greeting`: Custom greeting template with {placeholders}
         
         **📞 Call Process**:
         1. Validates agent belongs to user's workspace
-        2. Retrieves lead information if provided
-        3. Dispatches agent to LiveKit room
-        4. Initiates SIP call to the phone number
-        5. Creates call log entry
+        2. Merges agent configuration with any overrides
+        3. Prepares lead data (from DB and/or request)
+        4. Processes greeting templates with placeholders
+        5. Dispatches agent to LiveKit room
+        6. Initiates SIP call to the phone number
+        7. Creates call log entry with used configuration
         
-        **🎯 Use Cases**:
-        - Direct outbound calls
-        - Sales outreach
-        - Customer follow-up
-        - Support calls
+        **🎨 Template Placeholders**:
+        Use {field_name} in greetings to insert dynamic values:
+        - Basic fields: {name}, {surname}, {email}, {phone}
+        - Custom fields: Any field from lead_data.custom_fields
+        - Example: "Hello {name}, I see you're interested in {topic}"
+        
+        **💡 Use Cases**:
+        - A/B test different agent personalities
+        - Personalized greetings per lead
+        - Campaign-specific agent behavior
+        - Quick agent configuration testing
         """,
         request=OutboundCallSerializer,
         responses={
@@ -500,8 +655,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 description="✅ Call initiated successfully",
                 examples=[
                     OpenApiExample(
-                        'Successful Call Initiation',
-                        summary='Call started successfully',
+                        'Minimal Call',
+                        summary='Basic call with required fields only',
                         value={
                             'success': True,
                             'room_name': 'outbound-call-abc123',
@@ -510,6 +665,29 @@ class CallLogViewSet(viewsets.ModelViewSet):
                             'sip_call_id': 'SIP_123456',
                             'to_number': '+4915111857588',
                             'agent_name': 'Sales Agent',
+                            'call_log_id': 'uuid-of-created-log',
+                            'used_greeting': 'Hello, how can I help you today?'
+                        }
+                    ),
+                    OpenApiExample(
+                        'Call with Agent Override',
+                        summary='Override specific agent settings',
+                        value={
+                            'success': True,
+                            'room_name': 'outbound-call-def456',
+                            'agent_name': 'Sarah Custom',
+                            'used_greeting': 'Hi there! This is my custom greeting.',
+                            'call_log_id': 'uuid-of-created-log'
+                        }
+                    ),
+                    OpenApiExample(
+                        'Personalized Call',
+                        summary='Call with custom greeting and lead data',
+                        value={
+                            'success': True,
+                            'room_name': 'outbound-call-ghi789',
+                            'agent_name': 'Sarah',
+                            'used_greeting': 'Hello Thomas Schmidt, I see you\'re interested in CRM Software with a budget of 50.000€.',
                             'call_log_id': 'uuid-of-created-log'
                         }
                     )
@@ -523,8 +701,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
                         value={'agent_id': ['Agent not found']}
                     ),
                     OpenApiExample(
-                        'Workspace Access Denied',
-                        value={'agent_id': ['You can only use agents from your own workspace']}
+                        'Invalid Agent Config',
+                        value={'agent_config': {'invalid_field': ['This field is not allowed']}}
                     ),
                     OpenApiExample(
                         'Invalid Phone',
@@ -548,7 +726,49 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 ]
             )
         },
-        tags=["Call Management"]
+        tags=["Call Management"],
+        examples=[
+            OpenApiExample(
+                'Minimal Request',
+                summary='Only required fields',
+                value={
+                    'phone': '+491234567890',
+                    'agent_id': '123e4567-e89b-12d3-a456-426614174000'
+                }
+            ),
+            OpenApiExample(
+                'Override Agent Settings',
+                summary='Change specific agent behaviors',
+                value={
+                    'phone': '+491234567890',
+                    'agent_id': '123e4567-e89b-12d3-a456-426614174000',
+                    'agent_config': {
+                        'name': 'Sarah Custom',
+                        'greeting_outbound': 'Hi! This is a test greeting.',
+                        'character': 'Very friendly and enthusiastic'
+                    }
+                }
+            ),
+            OpenApiExample(
+                'Full Personalization',
+                summary='Complete example with all features',
+                value={
+                    'phone': '+491234567890',
+                    'agent_id': '123e4567-e89b-12d3-a456-426614174000',
+                    'lead_data': {
+                        'name': 'Thomas',
+                        'surname': 'Schmidt',
+                        'email': 'thomas@example.com',
+                        'custom_fields': {
+                            'topic': 'CRM Software',
+                            'budget': '50.000€',
+                            'company': 'TechCorp GmbH'
+                        }
+                    },
+                    'custom_greeting': 'Hello {name} {surname} from {company}, I\'m calling about your interest in {topic} with a budget of {budget}.'
+                }
+            )
+        ]
     )
     @action(detail=False, methods=['post'])
     def make_outbound_call(self, request):
@@ -580,49 +800,26 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Retrieve lead if provided
-        lead = None
-        lead_data = {
-            "name": "",
-            "surname": "",
-            "email": "",
-            "phone": validated_data['phone'],
-            "meta_data": {}
-        }
-        
-        if validated_data.get('lead_id'):
-            try:
-                lead = Lead.objects.get(id=validated_data['lead_id'])
-                lead_data = {
-                    "name": lead.name,
-                    "surname": lead.surname or "",
-                    "email": lead.email,
-                    "phone": lead.phone,
-                    "meta_data": lead.meta_data or {}
-                }
-            except Lead.DoesNotExist:
-                # Lead not found, but we continue with phone only
-                pass
-        
         # Prepare agent configuration dictionary
-        agent_config = {
-            "workspace": str(agent.workspace.id),
-            "name": agent.name,
-            "status": agent.status,
-            "greeting_inbound": agent.greeting_inbound,
-            "greeting_outbound": agent.greeting_outbound,
-            "voice": str(agent.voice.voice_external_id) if agent.voice else "",
-            "language": agent.language,
-            "retry_interval": agent.retry_interval,
-            "max_retries": agent.max_retries,
-            "workdays": agent.workdays,
-            "call_from": str(agent.call_from),
-            "call_to": str(agent.call_to),
-            "character": agent.character,
-            "prompt": agent.prompt,
-            "config_id": agent.config_id or "",
-            "calendar_configuration": str(agent.calendar_configuration.id) if agent.calendar_configuration else ""
-        }
+        agent_config = self._merge_agent_config(agent, validated_data.get('agent_config'))
+        
+        # Prepare lead data
+        lead_data = self._prepare_lead_data(validated_data)
+        
+        # Process custom greeting if provided
+        if validated_data.get('custom_greeting'):
+            # Custom greeting takes precedence over everything
+            processed_greeting = self._process_greeting_template(
+                validated_data['custom_greeting'], 
+                lead_data
+            )
+            agent_config['greeting_outbound'] = processed_greeting
+        elif agent_config.get('greeting_outbound'):
+            # Process agent's greeting template with lead data
+            agent_config['greeting_outbound'] = self._process_greeting_template(
+                agent_config['greeting_outbound'],
+                lead_data
+            )
         
         # Import the SYNC function (NOT ASYNC!)
         try:
@@ -646,18 +843,38 @@ class CallLogViewSet(viewsets.ModelViewSet):
         
         # Create call log entry if successful
         if result.get('success'):
+            # Try to find lead from DB if lead_id was provided
+            lead = None
+            if validated_data.get('lead_id'):
+                try:
+                    lead = Lead.objects.get(id=validated_data['lead_id'])
+                except Lead.DoesNotExist:
+                    pass
+                    
             with transaction.atomic():
                 call_log = CallLog.objects.create(
                     lead=lead,  # Can be None if no lead_id provided
                     agent=agent,
                     from_number="",
                     to_number=validated_data['phone'],
-                    duration=0,  # Will be updated when call ends
                     direction='outbound',
-                    status='reached',  # Initial status
-                    disconnection_reason='ongoing'  # Call is ongoing
+                    status='initiated',
+                    duration=0,
+                    # Store configuration used for this call
+                    meta_data={
+                        'livekit_room': result.get('room_name'),
+                        'livekit_participant_id': result.get('participant_id'),
+                        'used_agent_config': agent_config,
+                        'used_lead_data': lead_data,
+                        'custom_greeting_used': bool(validated_data.get('custom_greeting'))
+                    }
                 )
+                
+                # Add call log ID to result
                 result['call_log_id'] = str(call_log.id)
+                
+                # Add used greeting to response for transparency
+                result['used_greeting'] = agent_config.get('greeting_outbound', '')
         
         # Return the result
         if result.get('success'):
