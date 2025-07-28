@@ -974,11 +974,79 @@ deploy_kubernetes() {
     # Deploy backend applications (depends on Redis and config)
     envsubst < deployment.yaml | kubectl apply -f -
     
+    # Apply ingress last (after services are ready)
     log_info "Creating networking..."
-    # Create ingress and HPA last
-    envsubst < ingress.yaml | kubectl apply -f - &
-    envsubst < hpa.yaml | kubectl apply -f - &
-    wait
+    
+    # Handle ingress based on TLS configuration
+    if [[ "$ENABLE_TLS" == "true" ]] && [[ -n "$HOST_DOMAIN" ]]; then
+        # Create a temporary ingress file with proper TLS configuration
+        cat > ingress-temp.yaml <<EOF
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${PROJECT_PREFIX}-ingress
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: ingress
+    environment: ${ENVIRONMENT}
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  tls:
+  - hosts:
+    - ${HOST_DOMAIN}
+    secretName: ${TLS_SECRET_NAME}
+  rules:
+  - host: ${HOST_DOMAIN}
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
+      - path: /admin
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
+      - path: /health
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
+      - path: /static
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-frontend-service
+            port:
+              number: 80
+EOF
+        kubectl apply -f ingress-temp.yaml
+        rm -f ingress-temp.yaml
+    else
+        # Apply regular ingress without TLS
+        envsubst < ingress.yaml | kubectl apply -f -
+    fi
+    
+    envsubst < hpa.yaml | kubectl apply -f -
     
     log_success "Kubernetes resources deployed!"
     
