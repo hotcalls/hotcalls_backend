@@ -70,49 +70,90 @@ def send_email_verification(user, request=None):
         verification_url = f"{base_url}/api/auth/verify-email/{token}/"
         
         # Email content
-        subject = 'Verify your email address - HotCalls'
+        subject = 'Bestätige deine E-Mail-Adresse - Hotcalls'
         
         # Create HTML email template content
         html_content = f"""
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                .header {{ background-color: #007bff; color: white; padding: 20px; text-align: center; }}
-                .content {{ padding: 20px; background-color: #f8f9fa; }}
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }}
+                .container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+                .header {{ background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%); padding: 40px 20px; text-align: center; }}
+                .logo {{ max-width: 180px; height: auto; margin-bottom: 20px; }}
+                .content {{ padding: 40px 30px; background-color: #ffffff; }}
                 .button {{ 
                     display: inline-block; 
-                    padding: 12px 24px; 
-                    background-color: #28a745; 
+                    padding: 14px 32px; 
+                    background: #ff6b35;
                     color: white; 
                     text-decoration: none; 
-                    border-radius: 5px; 
-                    margin: 20px 0; 
+                    border-radius: 6px; 
+                    margin: 30px 0; 
+                    font-weight: 600;
+                    font-size: 16px;
+                    transition: background 0.3s ease;
                 }}
-                .footer {{ padding: 20px; text-align: center; color: #666; font-size: 12px; }}
+                .button:hover {{
+                    background: #ff8c42;
+                }}
+                .footer {{ 
+                    padding: 30px; 
+                    text-align: center; 
+                    color: #666; 
+                    font-size: 14px; 
+                    background-color: #f9f9f9;
+                    border-top: 1px solid #e9ecef;
+                }}
+                .link {{ color: #ff6b35; text-decoration: none; }}
+                .link:hover {{ text-decoration: underline; }}
+                h1 {{ color: white; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; }}
+                h2 {{ color: #333; margin-top: 0; font-size: 24px; font-weight: 500; }}
+                .important {{ 
+                    background-color: #fff4f0; 
+                    border-left: 4px solid #ff6b35; 
+                    padding: 15px 20px; 
+                    margin: 25px 0;
+                    border-radius: 4px;
+                }}
+                .important p {{ margin: 0; }}
+                p {{ color: #555; line-height: 1.6; }}
             </style>
         </head>
         <body>
             <div class="container">
                 <div class="header">
-                    <h1>Welcome to HotCalls!</h1>
+                    <img src="https://raw.githubusercontent.com/malmachengbr/hotcalls-visual-prototype/integration2/public/hotcalls-logo.png" alt="Hotcalls Logo" class="logo">
+                    <h1>Willkommen bei Hotcalls!</h1>
                 </div>
                 <div class="content">
-                    <h2>Hello {user.get_full_name()},</h2>
-                    <p>Thank you for registering with HotCalls. To complete your registration and start using our services, please verify your email address by clicking the button below:</p>
+                    <h2>Hallo {user.first_name or 'dort'} 👋</h2>
+                    <p>schön, dass du dich bei Hotcalls registriert hast!</p>
                     
-                    <a href="{verification_url}" class="button">Verify Email Address</a>
+                    <p>Um deine Registrierung abzuschließen und direkt loszulegen, bestätige bitte deine E-Mail-Adresse:</p>
                     
-                    <p>If the button doesn't work, copy and paste this link into your browser:</p>
-                    <p><a href="{verification_url}">{verification_url}</a></p>
+                    <div style="text-align: center;">
+                        <a href="{verification_url}" class="button">E-Mail-Adresse bestätigen</a>
+                    </div>
                     
-                    <p><strong>Important:</strong> You must verify your email address before you can log in to your account.</p>
+                    <p style="color: #999; font-size: 14px; text-align: center;">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
+                    <p style="word-break: break-all; text-align: center;"><a href="{verification_url}" class="link" style="font-size: 14px;">{verification_url}</a></p>
                     
-                    <p>If you didn't create an account with us, please ignore this email.</p>
+                    <div class="important">
+                        <p><strong>Wichtig:</strong> Du musst deine E-Mail-Adresse bestätigen, bevor du dich in dein Konto einloggen kannst.</p>
+                    </div>
+                    
+                    <p>Falls du kein Konto bei uns erstellt hast, kannst du diese E-Mail einfach ignorieren.</p>
+                    
+                    <p>Viel Erfolg mit Hotcalls!</p>
+                    
+                    <p style="margin-top: 30px;">Beste Grüße,<br>
+                    <strong>Dein Hotcalls Team</strong></p>
                 </div>
                 <div class="footer">
-                    <p>This email was sent from HotCalls. If you have any questions, please contact our support team.</p>
+                    <p>Diese E-Mail wurde von Hotcalls versendet</p>
+                    <p>Bei Fragen: <a href="mailto:support@hotcalls.com" class="link">support@hotcalls.com</a></p>
+                    <p style="margin-top: 20px; font-size: 12px; color: #999;">© 2024 Hotcalls. Alle Rechte vorbehalten.</p>
                 </div>
             </div>
         </body>
@@ -121,22 +162,26 @@ def send_email_verification(user, request=None):
         
         # Plain text version
         text_content = f"""
-        Welcome to HotCalls!
+        Willkommen bei Hotcalls!
         
-        Hello {user.get_full_name()},
+        Hallo {user.first_name or 'dort'} 👋
         
-        Thank you for registering with HotCalls. To complete your registration and start using our services, please verify your email address by visiting this link:
+        schön, dass du dich bei Hotcalls registriert hast!
+        
+        Um deine Registrierung abzuschließen und direkt loszulegen, bestätige bitte deine E-Mail-Adresse:
         
         {verification_url}
         
-        Important: You must verify your email address before you can log in to your account.
+        Wichtig: Du musst deine E-Mail-Adresse bestätigen, bevor du dich in dein Konto einloggen kannst.
         
-        If you didn't create an account with us, please ignore this email.
+        Falls du kein Konto bei uns erstellt hast, kannst du diese E-Mail einfach ignorieren.
         
-        If you have any questions, please contact our support team.
+        Viel Erfolg mit Hotcalls!
         
-        Best regards,
-        The HotCalls Team
+        Bei Fragen: support@hotcalls.com
+        
+        Beste Grüße,
+        Dein Hotcalls Team
         """
         
         # Send email
