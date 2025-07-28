@@ -1,6 +1,11 @@
 # Simple NGINX Ingress for ${PROJECT_PREFIX}
 # This routes traffic from external load balancer to internal services
 # Frontend serves from root /, API serves from /api/, /admin/, /health/
+# 
+# TLS Support: When ENABLE_TLS=true and HOST_DOMAIN is set, this ingress will:
+# - Configure TLS termination with the provided certificate
+# - Redirect HTTP to HTTPS
+# - Restrict access to the specified domain
 
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -13,11 +18,21 @@ metadata:
     environment: ${ENVIRONMENT}
   annotations:
     kubernetes.io/ingress.class: "nginx"
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    # SSL redirect settings - these will be overridden by envsubst based on ENABLE_TLS
+    nginx.ingress.kubernetes.io/ssl-redirect: "${ENABLE_TLS:-false}"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "${ENABLE_TLS:-false}"
 spec:
+  # TLS configuration - only added when ENABLE_TLS=true
+  ${ENABLE_TLS:+tls:}
+  ${ENABLE_TLS:+- hosts:}
+  ${ENABLE_TLS:+    - ${HOST_DOMAIN}}
+  ${ENABLE_TLS:+  secretName: ${TLS_SECRET_NAME}}
   rules:
-  - http:
+  # Host-based routing when domain is configured
+  ${HOST_DOMAIN:+- host: ${HOST_DOMAIN}}
+  ${HOST_DOMAIN:+  http:}
+  # Default routing without host restriction
+  ${HOST_DOMAIN:-}- http:
       paths:
       # API routes (order matters - most specific first)
       - path: /api

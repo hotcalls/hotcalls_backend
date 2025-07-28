@@ -41,6 +41,7 @@ ENVIRONMENT="staging"
 LOCATION_SHORT="ne"
 UPDATE_ONLY=false
 BRANCH=""
+DOMAIN=""
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -65,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             BRANCH="${1#*=}"
             shift
             ;;
+        --domain=*)
+            DOMAIN="${1#*=}"
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 --project-name=NAME [OPTIONS]"
             echo ""
@@ -77,6 +82,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --location-short=LOC   Set location short name (default: ne)"
             echo "  --update-only          Only update Kubernetes deployment, skip infrastructure"
             echo "  --branch=BRANCH        Git pull and checkout specified branch for both frontend and backend"
+            echo "  --domain=DOMAIN        Configure ingress with domain and TLS (requires certs/tls.cer and certs/private.key)"
             echo "  -h, --help             Show this help message"
             echo ""
             echo "Examples:"
@@ -84,6 +90,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --project-name=myapp --environment=dev # Deploy to resource group: myapp (dev environment)"  
             echo "  $0 --project-name=test-rg --update-only   # Update K8s only in test-rg"
             echo "  $0 --project-name=staging --branch=main   # Deploy staging with main branch"
+            echo "  $0 --project-name=prod --domain=app.example.com  # Deploy with HTTPS"
             exit 0
             ;;
         *)
@@ -119,6 +126,10 @@ echo "   Location: $LOCATION_SHORT"
 echo "   Update Only: $UPDATE_ONLY"
 if [[ -n "$BRANCH" ]]; then
     echo "   Branch: $BRANCH"
+fi
+if [[ -n "$DOMAIN" ]]; then
+    echo "   Domain: $DOMAIN"
+    echo "   HTTPS: Enabled"
 fi
 echo ""
 
@@ -760,6 +771,59 @@ setup_kubernetes_environment() {
     log_success "Kubernetes environment variables configured!"
 }
 
+# Setup TLS/SSL for HTTPS
+setup_tls() {
+    if [[ -z "$DOMAIN" ]]; then
+        log_info "No domain specified, skipping TLS setup"
+        export ENABLE_TLS="false"
+        export HOST_DOMAIN=""
+        export TLS_SECRET_NAME=""
+        return 0
+    fi
+    
+    log_info "Setting up TLS for domain: $DOMAIN"
+    
+    # Check if certificate files exist (we're in k8s directory, so go up one level)
+    if [[ ! -f "../certs/tls.cer" ]]; then
+        log_error "Certificate file 'certs/tls.cer' not found!"
+        log_error "Please place your certificate chain in certs/tls.cer"
+        exit 1
+    fi
+    
+    if [[ ! -f "../certs/private.key" ]]; then
+        log_error "Private key file 'certs/private.key' not found!"
+        log_error "Please place your private key in certs/private.key"
+        exit 1
+    fi
+    
+    log_info "Certificate files found, creating TLS secret..."
+    
+    # Use project-specific namespace
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    TLS_SECRET_NAME="${PROJECT_NAME}-tls"
+    
+    # Delete existing secret if it exists
+    kubectl delete secret "$TLS_SECRET_NAME" -n "$NAMESPACE" --ignore-not-found=true
+    
+    # Create new TLS secret (use ../ prefix since we're in k8s directory)
+    if kubectl create secret tls "$TLS_SECRET_NAME" \
+        --cert=../certs/tls.cer \
+        --key=../certs/private.key \
+        -n "$NAMESPACE"; then
+        log_success "TLS secret '$TLS_SECRET_NAME' created successfully"
+    else
+        log_error "Failed to create TLS secret"
+        exit 1
+    fi
+    
+    # Set environment variables for ingress template
+    export ENABLE_TLS="true"
+    export HOST_DOMAIN="$DOMAIN"
+    export TLS_SECRET_NAME="$TLS_SECRET_NAME"
+    
+    log_success "TLS configuration completed for domain: $DOMAIN"
+}
+
 # Setup ACR authentication for Kubernetes
 setup_acr_authentication() {
     log_info "Setting up ACR authentication for Kubernetes..."
@@ -805,6 +869,9 @@ deploy_kubernetes() {
     
     # Setup proper environment variables first
     setup_kubernetes_environment
+    
+    # Setup TLS if domain is provided
+    setup_tls
     
     # Set environment variables for K8s manifests
     # Use PROJECT_NAME for namespace instead of hardcoded "hotcalls"
@@ -1022,6 +1089,20 @@ wait_for_deployment() {
         log_success "   • Health: http://$EXTERNAL_IP/health/"
         log_success "   • Admin: http://$EXTERNAL_IP/admin/"
         
+        # Show HTTPS URLs if domain is configured
+        if [[ -n "$DOMAIN" ]]; then
+            echo ""
+            log_success "🔒 HTTPS Access (after DNS configuration):"
+            log_success "   • Frontend: https://$DOMAIN/"
+            log_success "   • API: https://$DOMAIN/api/"
+            log_success "   • Health: https://$DOMAIN/health/"
+            log_success "   • Admin: https://$DOMAIN/admin/"
+            echo ""
+            log_info "📌 Please update your DNS A record for '$DOMAIN' to point to: $EXTERNAL_IP"
+            log_info "   DNS update command example: "
+            log_info "   - For most DNS providers: Create A record: $DOMAIN → $EXTERNAL_IP"
+        fi
+        
         # Update BASE_URL in secrets with the actual ingress IP
         kubectl patch secret ${PROJECT_NAME}-secrets -n "$NAMESPACE" \
             --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
@@ -1069,8 +1150,30 @@ cleanup_docker() {
     log_success "Docker cleanup completed!"
 }
 
+# Cleanup function that runs on exit
+cleanup_on_exit() {
+    local exit_code=$?
+    
+    # Only run cleanup if Docker is available and we've started deployment
+    if command -v docker &> /dev/null && [[ -n "$DEPLOYMENT_STARTED" ]]; then
+        if [[ $exit_code -ne 0 ]]; then
+            log_info "Deployment failed, cleaning up Docker resources..."
+        fi
+        cleanup_docker
+    fi
+    
+    # Exit with the original exit code
+    exit $exit_code
+}
+
 # Main execution
 main() {
+    # Set up trap to clean up on exit (success or failure)
+    trap cleanup_on_exit EXIT
+    
+    # Mark that deployment has started
+    DEPLOYMENT_STARTED=true
+    
     log_info "Starting HotCalls deployment..."
     
     # Debug: Verify variables are set correctly
@@ -1127,9 +1230,6 @@ main() {
         wait_for_deployment
         show_status
     fi
-    
-    # Clean up Docker disk space after successful deployment
-    cleanup_docker
     
     log_success "Deployment completed successfully! 🚀"
 }
