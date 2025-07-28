@@ -37,6 +37,10 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
+      # LiveKit Configuration
+      - LIVEKIT_URL=wss://hotcalls-awb9xz7j.livekit.cloud
+      - LIVEKIT_API_KEY=APIHk2CNUbsQdXg
+      - LIVEKIT_API_SECRET=W8AGLYB2NfBYgWsFGYdvMyUFNDOKyGhIRN3UNoIxCxb
     ports:
       - "8000:8000"
     volumes:
