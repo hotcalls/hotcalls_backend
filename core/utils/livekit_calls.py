@@ -60,7 +60,7 @@ async def make_outbound_call(
         custom_greeting = agent_config.get('greeting_outbound', 'Hello, how are you?')
     
     # Backward-Kompatibilität: agent_name als Alias für name hinzufügen
-    agent_config["agent_name"] = agent_config.get("name", "")
+    agent_config["agent_name"] = "agent_4"  # Always use agent_4 for outbound calls
     
     metadata = {
         # Neue flache Outbound-Keys
@@ -88,10 +88,10 @@ async def make_outbound_call(
     
     try:
         # Step 1: Dispatch the agent to the room first
-        print(f"Dispatching {agent_config['name']} to room for call to {lead_data['phone']}...")
+        print(f"Dispatching agent_4 to room for call to {lead_data['phone']}...")
         dispatch = await livekit_api.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
-                agent_name=agent_config['name'],
+                agent_name="agent_4",  # Always use agent_4 for outbound calls
                 room=room_name,
                 metadata=json.dumps(metadata)
             )
@@ -130,7 +130,7 @@ async def make_outbound_call(
             "dispatch_id": dispatch.id,
             "sip_call_id": participant.sip_call_id,
             "to_number": lead_data['phone'],
-            "agent_name": agent_config['name'],
+            "agent_name": "agent_4",  # Always return agent_4 for outbound calls
             "campaign_id": campaign_id
         }
         
@@ -140,7 +140,7 @@ async def make_outbound_call(
             "success": False,
             "error": str(e),
             "to_number": lead_data['phone'],
-            "agent_name": agent_config['name'],
+            "agent_name": "agent_4",  # Always return agent_4 for outbound calls
             "campaign_id": campaign_id
         }
     finally:
