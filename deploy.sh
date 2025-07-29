@@ -43,6 +43,7 @@ UPDATE_ONLY=false
 BRANCH=""
 DOMAIN=""
 NO_CACHE=false
+PURGE_DB=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -75,6 +76,10 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE=true
             shift
             ;;
+        --purge)
+            PURGE_DB=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 --project-name=NAME [OPTIONS]"
             echo ""
@@ -89,6 +94,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --branch=BRANCH        Git pull and checkout specified branch for both frontend and backend"
             echo "  --domain=DOMAIN        Configure ingress with domain and TLS (requires certs/tls.cer and certs/private.key)"
             echo "  --no-cache             Force fresh Docker build without using cache (slower but ensures all changes are included)"
+            echo "  --purge                DANGER: Drop all database tables, recreate migrations from scratch"
             echo "  -h, --help             Show this help message"
             echo ""
             echo "Examples:"
@@ -138,6 +144,9 @@ fi
 if [[ -n "$DOMAIN" ]]; then
     echo "   Domain: $DOMAIN"
     echo "   HTTPS: Enabled"
+fi
+if [[ "$PURGE_DB" == "true" ]]; then
+    echo "   🚨 PURGE MODE: ENABLED - ALL DATA WILL BE DELETED! 🚨"
 fi
 echo ""
 
@@ -1162,6 +1171,41 @@ run_django_migrations() {
     
     # Give the pod a moment to fully initialize
     sleep 5
+    
+    # Handle --purge option
+    if [[ "$PURGE_DB" == "true" ]]; then
+        log_warning "PURGE MODE: This will DELETE ALL DATA in the database!"
+        log_info "Step 1: Resetting all migrations to zero state..."
+        
+        # Reset migrations for all apps
+        for app in core admin auth authtoken contenttypes sessions django_celery_beat; do
+            kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
+                python manage.py migrate $app zero --fake 2>/dev/null || true
+        done
+        
+        log_info "Step 2: Dropping all tables from database..."
+        # Drop all tables using Django's sqlflush
+        kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
+            python -c "
+from django.db import connection
+with connection.cursor() as cursor:
+    cursor.execute('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+    cursor.execute('GRANT ALL ON SCHEMA public TO PUBLIC;')
+print('Database purged successfully!')
+"
+        
+        log_info "Step 3: Deleting old migration files..."
+        # Delete all migration files except __init__.py
+        kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
+            find /app/core/migrations -name "*.py" -not -name "__init__.py" -delete
+        
+        log_info "Step 4: Creating fresh migrations..."
+        # Create new migrations
+        kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
+            python manage.py makemigrations --noinput
+        
+        log_success "Database purged! Now running fresh migrations..."
+    fi
     
     # Create a migration job
     log_info "Creating migration job..."

@@ -440,16 +440,6 @@ class Workspace(models.Model):
         null=True,
         help_text="Current Stripe Subscription ID (sub_xxx)"
     )
-    
-    # Subscription
-    current_plan = models.ForeignKey(
-        'Plan',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='workspaces',
-        help_text="Current subscription plan"
-    )
     subscription_status = models.CharField(
         max_length=20,
         choices=[
