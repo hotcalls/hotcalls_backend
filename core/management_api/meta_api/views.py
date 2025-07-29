@@ -183,12 +183,12 @@ class MetaWebhookView(viewsets.ViewSet):
         4. Set up webhook subscriptions
         
         **🔒 Security**: This endpoint validates the state parameter for CSRF protection.
-        **📥 Method**: GET request with query parameters from Meta.
+        **📥 Method**: POST request with parameters from Meta.
         """,
-        parameters=[
-            {'name': 'code', 'in': 'query', 'required': True, 'schema': {'type': 'string'}, 'description': 'Authorization code from Meta'},
-            {'name': 'state', 'in': 'query', 'required': False, 'schema': {'type': 'string'}, 'description': 'State parameter (workspace_id)'}
-        ],
+        request={'type': 'object', 'properties': {
+            'code': {'type': 'string', 'description': 'Authorization code from Meta'},
+            'state': {'type': 'string', 'description': 'State parameter (workspace_id)'}
+        }},
         responses={
             200: OpenApiResponse(
                 description="✅ OAuth callback processed successfully"
@@ -199,9 +199,9 @@ class MetaWebhookView(viewsets.ViewSet):
     )
     def oauth_hook(self, request):
         """Handle Meta OAuth callback - FULLY AUTOMATED"""
-        # OAuth callbacks come as GET parameters, not POST body
-        code = request.GET.get('code')
-        state = request.GET.get('state')
+        # OAuth callbacks now come as POST body
+        code = request.data.get('code')
+        state = request.data.get('state')
         
         if not code:
             return Response(
@@ -242,7 +242,7 @@ class MetaWebhookView(viewsets.ViewSet):
                     'workspace_id': str(workspace_id),
                     'page_id': integration.page_id,
                     'status': integration.status,
-                    'webhook_url': f"https://app.hotcalls.de/api/integrations/meta/verify/",
+                    'webhook_url': f"https://app.hotcalls.de/api/integrations/meta/lead_in/",
                     'lead_webhook_url': f"https://app.hotcalls.de/api/integrations/meta/lead_in/"
                 }
             })
