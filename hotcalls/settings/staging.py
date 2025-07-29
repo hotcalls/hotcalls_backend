@@ -35,11 +35,10 @@ X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
 
-# CORS Settings for staging
-CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
-cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "https://app.hotcalls.de")
-CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()] if cors_origins else ["https://app.hotcalls.de"]
+# CORS Settings for staging - ALLOW ALL for easier testing
+CORS_ALLOW_ALL_ORIGINS = True  # Allow all origins in staging
 CORS_ALLOW_CREDENTIALS = True
+# Note: CORS_ALLOWED_ORIGINS is ignored when CORS_ALLOW_ALL_ORIGINS is True
 
 # Static files configuration
 STATIC_URL = '/static/'
