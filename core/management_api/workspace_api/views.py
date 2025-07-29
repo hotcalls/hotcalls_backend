@@ -279,6 +279,13 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             # Regular users can only see workspaces they belong to
             return Workspace.objects.filter(users=user)
     
+    def perform_create(self, serializer):
+        """Create workspace and automatically add creator as member"""
+        workspace = serializer.save()
+        # Add the creator as a member of the workspace
+        workspace.users.add(self.request.user)
+        workspace.save()
+    
     @extend_schema(
         summary="👥 Get workspace users",
         description="""

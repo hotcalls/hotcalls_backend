@@ -314,6 +314,15 @@ def verify_email(request, token):
         
         # Verify the email
         if user.verify_email(token):
+            # Create initial workspace for the user if they don't have any
+            from core.models import Workspace
+            if not Workspace.objects.filter(users=user).exists():
+                workspace = Workspace.objects.create(
+                    workspace_name=f"{user.first_name or user.email.split('@')[0]}'s Workspace"
+                )
+                workspace.users.add(user)
+                workspace.save()
+            
             return render(request, 'auth/verification_success.html', {
                 'email': user.email
             })
