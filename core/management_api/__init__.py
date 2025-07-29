@@ -37,3 +37,4 @@ def api_root(request, format=None):
             }
         }
     })
+# Management API Module

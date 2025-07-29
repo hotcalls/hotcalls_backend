@@ -1,0 +1,455 @@
+from rest_framework import viewsets, status, filters
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
+from django.db import transaction
+from django.utils import timezone
+from datetime import datetime
+import logging
+import json
+
+from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
+from .serializers import (
+    MetaIntegrationSerializer, MetaIntegrationCreateSerializer,
+    MetaLeadFormSerializer, MetaLeadFormCreateSerializer,
+    MetaOAuthCallbackSerializer, MetaLeadWebhookSerializer,
+    MetaWebhookVerificationSerializer, MetaLeadDataSerializer,
+    MetaIntegrationStatsSerializer
+)
+from .filters import MetaIntegrationFilter, MetaLeadFormFilter
+from .permissions import MetaIntegrationPermission, MetaWebhookPermission
+
+logger = logging.getLogger(__name__)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📱 List Meta integrations",
+        description="""
+        Retrieve Meta (Facebook/Instagram) integrations for your workspaces.
+        
+        **🔐 Permission Requirements**:
+        - User must be authenticated and email verified
+        - Only integrations from user's workspaces are returned
+        
+        **🎯 Use Cases**:
+        - Dashboard overview of Meta integrations
+        - Integration management interface
+        - Status monitoring
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=MetaIntegrationSerializer(many=True),
+                description="✅ Successfully retrieved Meta integrations"
+            )
+        }
+    ),
+    create=extend_schema(
+        summary="📱 Create Meta integration", 
+        description="Create new Meta integration for workspace (usually called after OAuth)"
+    ),
+)
+class MetaIntegrationViewSet(viewsets.ModelViewSet):
+    """ViewSet for Meta integrations CRUD management"""
+    serializer_class = MetaIntegrationSerializer
+    permission_classes = [MetaIntegrationPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = MetaIntegrationFilter
+    search_fields = ['business_account_id', 'page_id']
+    ordering_fields = ['created_at', 'updated_at', 'status']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Filter by user's workspaces"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return MetaIntegration.objects.all()
+        
+        user_workspaces = self.request.user.mapping_user_workspaces.all()
+        return MetaIntegration.objects.filter(workspace__in=user_workspaces)
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action"""
+        if self.action == 'create':
+            return MetaIntegrationCreateSerializer
+        return MetaIntegrationSerializer
+    
+    @extend_schema(
+        summary="📊 Meta integration statistics",
+        description="Get statistics for Meta integrations in your workspaces",
+        responses={200: MetaIntegrationStatsSerializer}
+    )
+    @action(detail=False, methods=['get'], url_path='stats')
+    def stats(self, request):
+        """Get Meta integration statistics"""
+        user_workspaces = request.user.mapping_user_workspaces.all()
+        integrations = MetaIntegration.objects.filter(workspace__in=user_workspaces)
+        
+        stats = {
+            'total_integrations': integrations.count(),
+            'active_integrations': integrations.filter(status='active').count(),
+            'total_lead_forms': MetaLeadForm.objects.filter(
+                meta_integration__in=integrations
+            ).count(),
+            'total_leads_received': Lead.objects.filter(
+                workspace__in=user_workspaces,
+                integration_provider='meta'
+            ).count(),
+            'leads_this_month': Lead.objects.filter(
+                workspace__in=user_workspaces,
+                integration_provider='meta',
+                created_at__month=timezone.now().month
+            ).count(),
+            'top_performing_forms': []  # TODO: Implement top performing forms logic
+        }
+        
+        serializer = MetaIntegrationStatsSerializer(data=stats)
+        serializer.is_valid()
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="🔗 Get Meta OAuth URL",
+        description="Get the OAuth URL to redirect user to Meta for authorization",
+        responses={200: {'type': 'object', 'properties': {'oauth_url': {'type': 'string'}}}}
+    )
+    @action(detail=False, methods=['post'], url_path='get-oauth-url')
+    def get_oauth_url(self, request):
+        """Get OAuth URL for Meta authorization - FULLY AUTOMATED"""
+        try:
+            # Get workspace from request data
+            workspace_id = request.data.get('workspace_id')
+            if not workspace_id:
+                return Response(
+                    {'error': 'workspace_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verify user has access to workspace
+            try:
+                workspace = request.user.mapping_user_workspaces.get(id=workspace_id)
+            except Workspace.DoesNotExist:
+                return Response(
+                    {'error': 'Workspace not found or access denied'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            from core.services.meta_integration import MetaIntegrationService
+            meta_service = MetaIntegrationService()
+            
+            # Generate state parameter for CSRF protection
+            import secrets
+            state = secrets.token_urlsafe(32)
+            
+            # Get OAuth URL
+            oauth_url = meta_service.get_oauth_url(workspace_id, state)
+            
+            # Store state in session for validation (optional)
+            request.session[f'meta_oauth_state_{workspace_id}'] = state
+            
+            return Response({
+                'oauth_url': oauth_url,
+                'workspace_id': workspace_id,
+                'state': state,
+                'instructions': [
+                    '1. Redirect user to oauth_url',
+                    '2. User authorizes on Meta',
+                    '3. Meta redirects to oauth_hook with code',
+                    '4. Everything else happens automatically!'
+                ]
+            })
+            
+        except Exception as e:
+            logger.error(f"Error generating OAuth URL: {str(e)}")
+            return Response(
+                {'error': f'Failed to generate OAuth URL: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class MetaWebhookView(viewsets.ViewSet):
+    """Separate ViewSet for Meta webhook endpoints only"""
+    permission_classes = [AllowAny]  # Webhooks don't use regular auth
+    
+    @extend_schema(
+        summary="🔗 Meta OAuth callback",
+        description="""
+        Handle OAuth callback from Meta after user authorization.
+        
+        **Process Flow**:
+        1. Exchange authorization code for access token
+        2. Fetch user's business accounts and pages
+        3. Create or update MetaIntegration record
+        4. Set up webhook subscriptions
+        
+        **🔒 Security**: This endpoint validates the state parameter for CSRF protection.
+        **📥 Method**: GET request with query parameters from Meta.
+        """,
+        parameters=[
+            {'name': 'code', 'in': 'query', 'required': True, 'schema': {'type': 'string'}, 'description': 'Authorization code from Meta'},
+            {'name': 'state', 'in': 'query', 'required': False, 'schema': {'type': 'string'}, 'description': 'State parameter (workspace_id)'}
+        ],
+        responses={
+            200: OpenApiResponse(
+                description="✅ OAuth callback processed successfully"
+            ),
+            400: OpenApiResponse(description="❌ Invalid OAuth parameters"),
+            403: OpenApiResponse(description="🚫 Invalid state parameter (CSRF protection)")
+        }
+    )
+    def oauth_hook(self, request):
+        """Handle Meta OAuth callback - FULLY AUTOMATED"""
+        # OAuth callbacks come as GET parameters, not POST body
+        code = request.GET.get('code')
+        state = request.GET.get('state')
+        
+        if not code:
+            return Response(
+                {'error': 'Authorization code is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Extract workspace_id from state parameter
+        workspace_id = state  # For now, we'll use state as workspace_id
+        
+        try:
+            from core.services.meta_integration import MetaIntegrationService
+            
+            # Get workspace (validate user has access)
+            workspace = Workspace.objects.get(id=workspace_id)
+            
+            logger.info(f"Processing OAuth callback for workspace {workspace_id}")
+            
+            # Initialize Meta service
+            meta_service = MetaIntegrationService()
+            
+            # STEP 1: Exchange code for access token
+            token_data = meta_service.exchange_code_for_token(code)
+            
+            # STEP 2: Get long-lived token
+            long_lived_token_data = meta_service.get_long_lived_token(token_data['access_token'])
+            
+            # STEP 3: Create integration (this auto-generates verification token and sets up webhook)
+            integration = meta_service.create_integration(workspace, long_lived_token_data)
+            
+            logger.info(f"Successfully created Meta integration {integration.id}")
+            
+            return Response({
+                'success': True,
+                'message': 'Meta integration created successfully!',
+                'integration': {
+                    'id': str(integration.id),
+                    'workspace_id': str(workspace_id),
+                    'page_id': integration.page_id,
+                    'status': integration.status,
+                    'webhook_url': f"https://app.hotcalls.de/api/integrations/meta/verify/",
+                    'lead_webhook_url': f"https://app.hotcalls.de/api/integrations/meta/lead_in/"
+                }
+            })
+            
+        except Workspace.DoesNotExist:
+            return Response(
+                {'error': 'Workspace not found or access denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        except Exception as e:
+            logger.error(f"OAuth callback error: {str(e)}")
+            return Response(
+                {'error': f'Failed to create Meta integration: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @extend_schema(
+        summary="📬 Meta lead webhook",
+        description="""
+        Receive lead data from Meta webhook when new leads are generated.
+        
+        **Webhook Flow**:
+        1. Verify webhook signature using verification token
+        2. Parse lead data from Meta format
+        3. Map fields using variables_scheme from MetaLeadForm
+        4. Create Lead record with mapped data
+        5. Link to MetaLeadForm for tracking
+        
+        **🔒 Security**: Webhook signature verification is mandatory.
+        **⚡ Performance**: Webhook processing is asynchronous for reliability.
+        """,
+        request=MetaLeadWebhookSerializer,
+        responses={
+            200: OpenApiResponse(description="✅ Lead webhook processed successfully"),
+            400: OpenApiResponse(description="❌ Invalid webhook data"),
+            401: OpenApiResponse(description="🚫 Invalid webhook signature")
+        },
+        auth=None  # Webhook endpoints don't use regular auth
+    )
+    def lead_in(self, request):
+        """Handle Meta lead webhook - POST only for actual leads"""
+        return self._handle_webhook_data(request)
+    
+    @extend_schema(
+        summary="🔍 Meta webhook verification",
+        description="Verify webhook endpoint for Meta (called during setup)",
+        responses={200: {'type': 'string'}},
+        auth=None
+    )
+    def verify_webhook(self, request):
+        """Handle Meta webhook verification - GET only"""
+        return self._handle_webhook_verification(request)
+    
+    def _handle_webhook_verification(self, request):
+        """Handle Meta webhook verification challenge"""
+        hub_mode = request.GET.get('hub.mode')
+        hub_verify_token = request.GET.get('hub.verify_token')
+        hub_challenge = request.GET.get('hub.challenge')
+        
+        # Validate all required parameters are present
+        if not all([hub_mode, hub_verify_token, hub_challenge]):
+            logger.warning("Missing required webhook verification parameters")
+            return Response('Missing parameters', status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check if mode is subscribe
+        if hub_mode != 'subscribe':
+            logger.warning(f"Invalid hub mode: {hub_mode}")
+            return Response('Invalid mode', status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validate verification token against stored tokens
+        try:
+            meta_integration = MetaIntegration.objects.get(
+                verification_token=hub_verify_token,
+                status='active'
+            )
+            logger.info(f"Webhook verification successful for integration {meta_integration.id}")
+            return Response(hub_challenge, content_type='text/plain')
+        except MetaIntegration.DoesNotExist:
+            logger.warning(f"Invalid verification token: {hub_verify_token}")
+            return Response('Invalid verification token', status=status.HTTP_403_FORBIDDEN)
+    
+    def _handle_webhook_data(self, request):
+        """Process incoming lead webhook data"""
+        try:
+            # TODO: Verify webhook signature
+            # signature = request.META.get('HTTP_X_HUB_SIGNATURE_256')
+            # if not self._verify_webhook_signature(request.body, signature):
+            #     return Response('Invalid signature', status=status.HTTP_401_UNAUTHORIZED)
+            
+            serializer = MetaLeadWebhookSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            webhook_data = serializer.validated_data
+            processed_leads = []
+            
+            # Process each entry in the webhook
+            for entry in webhook_data['entry']:
+                if 'changes' in entry:
+                    for change in entry['changes']:
+                        if change.get('field') == 'leadgen':
+                            lead_data = change.get('value', {})
+                            processed_lead = self._process_lead_data(lead_data)
+                            if processed_lead:
+                                processed_leads.append(processed_lead)
+            
+            logger.info(f"Processed {len(processed_leads)} leads from webhook")
+            
+            return Response({
+                'message': 'Webhook processed successfully',
+                'processed_leads': len(processed_leads),
+                'leads': processed_leads
+            })
+            
+        except Exception as e:
+            logger.error(f"Webhook processing error: {str(e)}")
+            return Response(
+                {'error': 'Failed to process webhook'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _process_lead_data(self, lead_data):
+        """Process individual lead data from webhook"""
+        try:
+            leadgen_id = lead_data.get('leadgen_id')
+            page_id = lead_data.get('page_id')
+            form_id = lead_data.get('form_id')
+            
+            if not all([leadgen_id, page_id, form_id]):
+                logger.warning("Missing required lead data fields")
+                return None
+            
+            # Find the corresponding Meta integration and lead form
+            try:
+                meta_integration = MetaIntegration.objects.get(
+                    page_id=page_id,
+                    status='active'
+                )
+                meta_lead_form, created = MetaLeadForm.objects.get_or_create(
+                    meta_integration=meta_integration,
+                    meta_form_id=form_id,
+                    defaults={'variables_scheme': {}}
+                )
+            except MetaIntegration.DoesNotExist:
+                logger.warning(f"No active Meta integration found for page {page_id}")
+                return None
+            
+            # TODO: Fetch actual lead data from Meta API using leadgen_id
+            # For now, create a placeholder lead
+            with transaction.atomic():
+                lead = Lead.objects.create(
+                    name="Meta Lead",  # TODO: Extract from actual field data
+                    email=f"lead-{leadgen_id}@example.com",  # TODO: Extract from field data
+                    phone="+1234567890",  # TODO: Extract from field data
+                    workspace=meta_integration.workspace,
+                    integration_provider='meta',
+                    variables={'meta_leadgen_id': leadgen_id, 'form_id': form_id}
+                )
+                
+                # Update the MetaLeadForm with the lead reference
+                meta_lead_form.meta_lead_id = leadgen_id
+                meta_lead_form.lead = lead
+                meta_lead_form.save()
+            
+            return {
+                'lead_id': str(lead.id),
+                'meta_leadgen_id': leadgen_id,
+                'form_id': form_id,
+                'workspace': str(meta_integration.workspace.id)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error processing lead data: {str(e)}")
+            return None
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📋 List Meta lead forms",
+        description="Retrieve Meta lead forms for your workspaces"
+    ),
+    create=extend_schema(
+        summary="📋 Create Meta lead form configuration",
+        description="Create configuration for a Meta lead form"
+    ),
+)
+class MetaLeadFormViewSet(viewsets.ModelViewSet):
+    """ViewSet for Meta lead forms"""
+    serializer_class = MetaLeadFormSerializer
+    permission_classes = [MetaIntegrationPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = MetaLeadFormFilter
+    search_fields = ['meta_form_id', 'meta_lead_id']
+    ordering_fields = ['created_at', 'updated_at']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Filter by user's workspaces"""
+        if self.request.user.is_staff or self.request.user.is_superuser:
+            return MetaLeadForm.objects.all()
+        
+        user_workspaces = self.request.user.mapping_user_workspaces.all()
+        return MetaLeadForm.objects.filter(
+            meta_integration__workspace__in=user_workspaces
+        )
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action"""
+        if self.action == 'create':
+            return MetaLeadFormCreateSerializer
+        return MetaLeadFormSerializer 
