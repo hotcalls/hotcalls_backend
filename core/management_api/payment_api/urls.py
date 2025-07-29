@@ -5,7 +5,10 @@ from .views import (
     create_customer_portal_session,
     retrieve_stripe_customer,
     stripe_webhook,
-    list_stripe_products
+    list_stripe_products,
+    create_checkout_session,
+    get_subscription_status,
+    cancel_subscription
 )
 
 urlpatterns = [
@@ -35,4 +38,17 @@ urlpatterns = [
     path('stripe/products/', 
          list_stripe_products, 
          name='list-stripe-products'),
+    
+    # Subscription management
+    path('stripe/create-checkout-session/', 
+         create_checkout_session, 
+         name='create-checkout-session'),
+    
+    path('workspaces/<uuid:workspace_id>/subscription/', 
+         get_subscription_status, 
+         name='get-subscription-status'),
+    
+    path('workspaces/<uuid:workspace_id>/subscription/cancel/', 
+         cancel_subscription, 
+         name='cancel-subscription'),
 ] 

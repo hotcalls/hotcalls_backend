@@ -78,3 +78,36 @@ class RetrieveStripeCustomerSerializer(serializers.Serializer):
             return value
         except Workspace.DoesNotExist:
             raise serializers.ValidationError("Workspace does not exist") 
+
+
+class CreateCheckoutSessionSerializer(serializers.Serializer):
+    """Serializer for creating Stripe checkout session"""
+    workspace_id = serializers.UUIDField()
+    price_id = serializers.CharField(
+        max_length=255,
+        help_text="Stripe Price ID (price_xxx)"
+    )
+    success_url = serializers.URLField(
+        help_text="URL to redirect after successful payment"
+    )
+    cancel_url = serializers.URLField(
+        help_text="URL to redirect if payment is cancelled"
+    )
+    
+    def validate_workspace_id(self, value):
+        """Validate workspace exists and user has access"""
+        try:
+            workspace = Workspace.objects.get(id=value)
+            
+            # Check if user is member of workspace
+            request = self.context.get('request')
+            if request and not workspace.users.filter(id=request.user.id).exists():
+                raise serializers.ValidationError("You don't have access to this workspace")
+            
+            # Check if workspace already has a Stripe customer
+            if not workspace.stripe_customer_id:
+                raise serializers.ValidationError("Workspace needs a Stripe customer first")
+                
+            return value
+        except Workspace.DoesNotExist:
+            raise serializers.ValidationError("Workspace does not exist") 
