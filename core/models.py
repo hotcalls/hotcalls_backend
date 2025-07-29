@@ -309,6 +309,46 @@ class Plan(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plan_name = models.CharField(max_length=100, unique=True)
     features = models.ManyToManyField('Feature', through='PlanFeature', related_name='mapping_plan_features')
+    
+    # Stripe integration fields
+    stripe_product_id = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        unique=True,
+        help_text="Stripe Product ID (prod_xxx)"
+    )
+    stripe_price_id_monthly = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        help_text="Stripe Price ID for monthly billing (price_xxx)"
+    )
+    stripe_price_id_yearly = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        help_text="Stripe Price ID for yearly billing (price_xxx)"
+    )
+    price_monthly = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Monthly price in EUR"
+    )
+    price_yearly = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Yearly price in EUR"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Is this plan available for new subscriptions?"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -357,6 +397,34 @@ class Workspace(models.Model):
         null=True,
         unique=True,
         help_text="Stripe Customer ID for billing"
+    )
+    
+    # Subscription
+    current_plan = models.ForeignKey(
+        'Plan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workspaces',
+        help_text="Current subscription plan"
+    )
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('trial', 'Trial'),
+            ('active', 'Active'),
+            ('cancelled', 'Cancelled'),
+            ('past_due', 'Past Due'),
+            ('unpaid', 'Unpaid'),
+        ],
+        default='trial',
+        help_text="Current subscription status"
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Current Stripe Subscription ID (sub_xxx)"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
