@@ -50,6 +50,10 @@ urlpatterns = [
          create_checkout_session, 
          name='create-checkout-session'),
     
+    path('stripe/checkout-session/', 
+         create_checkout_session, 
+         name='checkout-session'),
+    
     path('workspaces/<uuid:workspace_id>/subscription/', 
          get_subscription_status, 
          name='get-subscription-status'),
