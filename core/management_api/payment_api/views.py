@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
+from rest_framework.permissions import IsAuthenticated
 
 from core.models import Workspace
 from .serializers import (
@@ -377,6 +378,83 @@ def retrieve_stripe_customer(request):
             {"error": f"Stripe error: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         ) 
+
+
+@extend_schema(
+    summary="📦 List all Stripe products and prices",
+    description="""
+    Returns all active Stripe products and their prices (monthly/yearly).
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - (Optional: Staff only, if gewünscht)
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ List of Stripe products and prices",
+            examples=[
+                OpenApiExample(
+                    'Products',
+                    value={
+                        'products': [
+                            {
+                                'id': 'prod_123',
+                                'name': 'Pro Plan',
+                                'description': 'Best plan',
+                                'prices': [
+                                    {
+                                        'id': 'price_abc',
+                                        'unit_amount': 1900,
+                                        'currency': 'eur',
+                                        'recurring': {'interval': 'month'}
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_stripe_products(request):
+    """List all Stripe products and their prices"""
+    import stripe
+    from django.conf import settings
+    stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
+
+    # Get all active products
+    products = stripe.Product.list(active=True, limit=100)
+    # Get all prices (for all products)
+    prices = stripe.Price.list(active=True, limit=100)
+
+    # Map prices to products
+    price_map = {}
+    for price in prices['data']:
+        product_id = price['product']
+        price_map.setdefault(product_id, []).append({
+            'id': price['id'],
+            'unit_amount': price['unit_amount'],
+            'currency': price['currency'],
+            'recurring': price.get('recurring'),
+            'nickname': price.get('nickname'),
+        })
+
+    result = []
+    for product in products['data']:
+        result.append({
+            'id': product['id'],
+            'name': product['name'],
+            'description': product.get('description'),
+            'active': product['active'],
+            'prices': price_map.get(product['id'], [])
+        })
+
+    return Response({'products': result})
 
 
 @extend_schema(

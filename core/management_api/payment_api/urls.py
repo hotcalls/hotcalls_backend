@@ -4,7 +4,8 @@ from .views import (
     create_stripe_customer,
     create_customer_portal_session,
     retrieve_stripe_customer,
-    stripe_webhook
+    stripe_webhook,
+    list_stripe_products
 )
 
 urlpatterns = [
@@ -29,4 +30,9 @@ urlpatterns = [
     path('stripe/webhook/', 
          stripe_webhook, 
          name='stripe-webhook'),
+
+    # Stripe products
+    path('stripe/products/', 
+         list_stripe_products, 
+         name='list-stripe-products'),
 ] 
