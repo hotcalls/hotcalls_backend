@@ -461,11 +461,11 @@ STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
 
 # File upload settings
-# Maximum size for file uploads via forms (100MB)
-FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
+# Maximum size for file uploads via forms (1GB for voice files and images)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
 
-# Maximum allowed size for a request body (100MB)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
+# Maximum allowed size for a request body (1GB for voice files and images)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
 
 # For large files, Django will use temporary files instead of loading into memory
 FILE_UPLOAD_TEMP_DIR = None  # Use system default
