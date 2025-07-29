@@ -959,7 +959,7 @@ deploy_kubernetes() {
     # Set BASE_URL based on domain parameter
     if [[ -n "$DOMAIN" ]]; then
         export BASE_URL="https://${DOMAIN}"
-        export ALLOWED_HOSTS="${DOMAIN},*.${DOMAIN#*.},localhost,${EXTERNAL_IP}"
+        export ALLOWED_HOSTS="${DOMAIN},*.${DOMAIN#*.},localhost"
     else
         export BASE_URL="http://localhost:8000"
         export ALLOWED_HOSTS="*"
