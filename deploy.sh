@@ -956,6 +956,30 @@ deploy_kubernetes() {
         export DJANGO_SETTINGS_MODULE="hotcalls.settings.development"
     fi
     
+    # Set BASE_URL based on domain parameter
+    if [[ -n "$DOMAIN" ]]; then
+        export BASE_URL="https://${DOMAIN}"
+        export ALLOWED_HOSTS="${DOMAIN},*.${DOMAIN#*.},localhost,${EXTERNAL_IP}"
+    else
+        export BASE_URL="http://localhost:8000"
+        export ALLOWED_HOSTS="*"
+    fi
+    
+    # Set security settings for staging/production
+    if [[ "$ENVIRONMENT" == "staging" ]] || [[ "$ENVIRONMENT" == "production" ]]; then
+        export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-True}"
+        export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-True}"
+        export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-True}"
+        export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-True}"
+        export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+    else
+        export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
+        export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-False}"
+        export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-False}"
+        export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-False}"
+        export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-False}"
+    fi
+    
     # Validate Django settings module matches environment
     log_info "Validating Django configuration..."
     log_info "  ENVIRONMENT=$ENVIRONMENT"
@@ -965,6 +989,8 @@ deploy_kubernetes() {
     log_info "  DB_USER=$DB_USER"
     log_info "  DB_PORT=${DB_PORT:-5432}"
     log_info "  DB_SSLMODE=$DB_SSLMODE"
+    log_info "  BASE_URL=$BASE_URL"
+    log_info "  ALLOWED_HOSTS=$ALLOWED_HOSTS"
     
     # Validate critical database settings
     if [[ "$ENVIRONMENT" != "development" ]]; then
