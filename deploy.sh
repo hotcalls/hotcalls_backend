@@ -752,7 +752,12 @@ setup_kubernetes_environment() {
     export CORS_ALLOW_ALL_ORIGINS="${CORS_ALLOW_ALL_ORIGINS:-False}"
     export DEBUG="${DEBUG:-True}"  # True for staging, False for production
     export TIME_ZONE="${TIME_ZONE:-Europe/Berlin}"
-    export DB_SSLMODE="${DB_SSLMODE:-disable}"  # disable for dev/staging, require for prod
+    # Database SSL mode - require for Azure PostgreSQL in staging/production
+    if [[ "$ENVIRONMENT" == "development" ]]; then
+        export DB_SSLMODE="${DB_SSLMODE:-disable}"
+    else
+        export DB_SSLMODE="${DB_SSLMODE:-require}"  # Azure PostgreSQL requires SSL
+    fi
     
     # Security settings with proper defaults
     export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
