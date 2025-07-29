@@ -4,10 +4,16 @@ from .views import (
     create_stripe_customer,
     create_customer_portal_session,
     retrieve_stripe_customer,
-    stripe_webhook
+    stripe_webhook,
+    check_workspace_subscription
 )
 
 urlpatterns = [
+    # Workspace subscription status
+    path('workspaces/<uuid:workspace_id>/check-subscription/', 
+         check_workspace_subscription, 
+         name='check-workspace-subscription'),
+    
     # Stripe customer management
     path('workspaces/<uuid:workspace_id>/stripe-info/', 
          get_workspace_stripe_info, 
