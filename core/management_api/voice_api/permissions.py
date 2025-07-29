@@ -18,7 +18,12 @@ class VoicePermission(BasePermission):
     
     def has_permission(self, request, view):
         """Check if user has permission to access voice operations"""
-        # Must be authenticated and staff member
+        # Read operations: ALL users (including anonymous)
+        # Write operations: Staff only
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return True
+        
+        # Write operations require staff privileges
         return (
             request.user and 
             request.user.is_authenticated and 
@@ -27,7 +32,12 @@ class VoicePermission(BasePermission):
     
     def has_object_permission(self, request, view, obj):
         """Check if user has permission to access specific voice object"""
-        # Same as has_permission - staff only
+        # Read operations: ALL users (including anonymous)
+        # Write operations: Staff only
+        if request.method in ['GET', 'HEAD', 'OPTIONS']:
+            return True
+        
+        # Write operations require staff privileges
         return (
             request.user and 
             request.user.is_authenticated and 

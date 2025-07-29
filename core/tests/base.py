@@ -33,7 +33,7 @@ class BaseAPITestCase(TestCase):
         # Create test users
         self.admin_user = self.create_admin_user()
         self.staff_user = self.create_staff_user()
-        self.regular_user = self.create_regular_user()
+        self.regular_user = self.create_workspace_user()
         
         # Authenticate clients
         self.admin_client.force_authenticate(user=self.admin_user)
@@ -46,7 +46,6 @@ class BaseAPITestCase(TestCase):
     def create_admin_user(self):
         """Create a superuser for testing"""
         return User.objects.create_superuser(
-            username='admin',
             email='admin@test.com',
             password='testpass123',
             phone='+1234567890'
@@ -55,20 +54,18 @@ class BaseAPITestCase(TestCase):
     def create_staff_user(self):
         """Create a staff user for testing"""
         return User.objects.create_user(
-            username='staff',
             email='staff@test.com',
             password='testpass123',
-            phone='+1234567891',
+            phone='+1234567890',
             is_staff=True
         )
     
-    def create_regular_user(self):
+    def create_workspace_user(self):
         """Create a regular user for testing"""
         return User.objects.create_user(
-            username='testuser',
-            email='test@test.com',
+            email='user@test.com',
             password='testpass123',
-            phone='+1234567892'
+            phone='+1234567890'
         )
     
     def create_test_plan(self, name="Test Plan"):

@@ -4,10 +4,6 @@ services:
   db:
     image: postgres:15-alpine
     env_file: .env
-    environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -41,6 +37,10 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
+      # LiveKit Configuration
+      - LIVEKIT_URL=wss://hotcalls-awb9xz7j.livekit.cloud
+      - LIVEKIT_API_KEY=APIHk2CNUbsQdXg
+      - LIVEKIT_API_SECRET=W8AGLYB2NfBYgWsFGYdvMyUFNDOKyGhIRN3UNoIxCxb
     ports:
       - "8000:8000"
     volumes:

@@ -32,8 +32,8 @@ class AgentSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD (now FK to Voice)  
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'phone_numbers', 'phone_number_count',
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
+            'character', 'prompt', 'config_id', 'phone_numbers', 'phone_number_count',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
@@ -56,9 +56,28 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice', 
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to', 
-            'character', 'config_id', 'calendar_configuration'
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
+            'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
+    
+    def validate_workspace(self, value):
+        """Validate user can create agents in this workspace"""
+        request = self.context.get('request')
+        
+        if not request or not request.user:
+            raise serializers.ValidationError("Authentication required")
+        
+        # Staff can create agents in any workspace
+        if request.user.is_staff:
+            return value
+        
+        # Regular users can only create agents in workspaces they belong to
+        if request.user not in value.users.all():
+            raise serializers.ValidationError(
+                "You can only create agents in workspaces you belong to"
+            )
+        
+        return value
     
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
@@ -107,8 +126,8 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice',
             # EXISTING FIELDS
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'calendar_configuration'
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
+            'character', 'prompt', 'config_id', 'calendar_configuration'
         ]
     
     def validate_workdays(self, value):
@@ -201,7 +220,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             # UPDATED VOICE FIELD
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS  
-            'language', 'retry_interval', 'workdays', 'call_from', 'call_to',
+            'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_numbers', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]

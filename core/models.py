@@ -104,6 +104,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="When the verification email was last sent"
     )
     
+    # Password reset fields
+    password_reset_token = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Token for password reset"
+    )
+    password_reset_sent_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the password reset email was last sent"
+    )
+    
     # User profile fields
     first_name = models.CharField(
         max_length=150,
@@ -205,6 +218,36 @@ class User(AbstractBaseUser, PermissionsMixin):
             return True
         return False
     
+    def generate_password_reset_token(self):
+        """Generate a new password reset token"""
+        self.password_reset_token = secrets.token_urlsafe(32)
+        self.password_reset_sent_at = timezone.now()
+        self.save(update_fields=['password_reset_token', 'password_reset_sent_at'])
+        return self.password_reset_token
+    
+    def verify_password_reset_token(self, token):
+        """Verify password reset token and check if it's still valid (24 hours)"""
+        if not self.password_reset_token or self.password_reset_token != token:
+            return False
+        
+        # Check if token is expired (24 hours)
+        if self.password_reset_sent_at:
+            expiry_time = self.password_reset_sent_at + timezone.timedelta(hours=24)
+            if timezone.now() > expiry_time:
+                return False
+        
+        return True
+    
+    def reset_password_with_token(self, token, new_password):
+        """Reset password using the provided token"""
+        if self.verify_password_reset_token(token):
+            self.set_password(new_password)
+            self.password_reset_token = None
+            self.password_reset_sent_at = None
+            self.save(update_fields=['password', 'password_reset_token', 'password_reset_sent_at'])
+            return True
+        return False
+    
     def can_login(self):
         """Check if user can login (active and email verified)"""
         return self.is_active and self.status == 'active' and self.is_email_verified
@@ -221,14 +264,44 @@ class Voice(models.Model):
         max_length=50, 
         help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
     )
+    name = models.CharField(
+        max_length=100, 
+        help_text="Voice display name"
+    )
+    gender = models.CharField(
+        max_length=20,
+        choices=[
+            ('male', 'Male'),
+            ('female', 'Female'),
+            ('neutral', 'Neutral'),
+        ],
+        help_text="Voice gender"
+    )
+    tone = models.CharField(
+        max_length=50, 
+        help_text="Voice tone/style"
+    )
+    recommend = models.BooleanField(
+        default=False, 
+        help_text="Recommended voice"
+    )
+    voice_sample = models.FileField(
+        upload_to='voice_samples/',
+        blank=True,
+        null=True,
+        help_text="Voice sample file (.wav or .mp3 format)"
+    )
+    voice_picture = models.ImageField(
+        upload_to='voice_pictures/',
+        blank=True,
+        null=True,
+        help_text="Voice picture file (.png or .jpg format)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.provider}: {self.voice_external_id}"
-
-
-
+        return f"{self.name} ({self.provider})"
 
 
 class Plan(models.Model):
@@ -319,6 +392,10 @@ class Agent(models.Model):
         help_text="Retry interval in minutes",
         default=30
     )
+    max_retries = models.IntegerField(
+        help_text="Maximum number of retry attempts for calls",
+        default=3
+    )
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
@@ -326,6 +403,10 @@ class Agent(models.Model):
     call_from = models.TimeField(help_text="Start time for calls")
     call_to = models.TimeField(help_text="End time for calls")
     character = models.TextField(help_text="Agent character/personality description")
+    prompt = models.TextField(
+        help_text="Agent prompt/instructions for AI behavior",
+        blank=True
+    )
     config_id = models.CharField(
         max_length=255,
         null=True,

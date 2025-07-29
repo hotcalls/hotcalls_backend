@@ -8,6 +8,7 @@ from core.models import CallLog, Lead, Agent, Workspace
 import uuid
 from datetime import datetime, timedelta, time
 from django.utils import timezone
+from unittest.mock import patch
 
 
 class CallAPITestCase(BaseAPITestCase):
@@ -15,13 +16,25 @@ class CallAPITestCase(BaseAPITestCase):
     
     def setUp(self):
         super().setUp()
+        
+        # API endpoint URL
         self.call_logs_url = f"{self.base_url}/calls/call-logs/"
         
-        # Create test data with agents
-        self.test_workspace = self.create_test_workspace("Test Workspace")
-        self.test_agent = self.create_test_agent(self.test_workspace)
-        self.test_lead = self.create_test_lead("Test Lead")
-        self.test_call = self.create_test_call_log(self.test_lead, self.test_agent)
+        # Create workspace
+        self.workspace = self.create_test_workspace("Test Workspace")
+        
+        # Create workspace user and add to workspace
+        self.workspace_user = self.create_workspace_user()
+        self.workspace.users.add(self.workspace_user)
+        
+        # Create test agent
+        self.agent = self.create_test_agent(self.workspace)
+        
+        # Create test lead
+        self.lead = self.create_test_lead("Test Lead")
+        
+        # Create test call log
+        self.test_call = self.create_test_call_log(self.lead, self.agent)
         
     # ========== CALL LOG LIST TESTS ==========
     
@@ -29,8 +42,8 @@ class CallAPITestCase(BaseAPITestCase):
         """Test authenticated users can list call logs"""
         # Create additional call logs
         lead2 = self.create_test_lead("Lead 2")
-        self.create_test_call_log(lead2, self.test_agent, duration=180)
-        self.create_test_call_log(self.test_lead, self.test_agent, duration=90)
+        self.create_test_call_log(lead2, self.agent, duration=180)
+        self.create_test_call_log(self.lead, self.agent, duration=90)
         
         response = self.user_client.get(self.call_logs_url)
         self.assert_response_success(response)
@@ -52,7 +65,7 @@ class CallAPITestCase(BaseAPITestCase):
     def test_list_call_logs_with_filters(self):
         """Test filtering call logs"""
         # Create calls with different attributes
-        agent2 = self.create_test_agent(self.test_workspace)
+        agent2 = self.create_test_agent(self.workspace)
         lead2 = self.create_test_lead("Filter Lead")
         inbound_call = self.create_test_call_log(
             lead=lead2,
@@ -64,10 +77,10 @@ class CallAPITestCase(BaseAPITestCase):
         )
         
         # Filter by lead
-        response = self.user_client.get(f"{self.call_logs_url}?lead={self.test_lead.id}")
+        response = self.user_client.get(f"{self.call_logs_url}?lead={self.lead.id}")
         self.assert_response_success(response)
         for call in response.data['results']:
-            self.assertEqual(str(call['lead']), str(self.test_lead.id))
+            self.assertEqual(str(call['lead']), str(self.lead.id))
         
         # Filter by agent
         response = self.user_client.get(f"{self.call_logs_url}?agent={agent2.agent_id}")
@@ -84,9 +97,9 @@ class CallAPITestCase(BaseAPITestCase):
     def test_list_call_logs_with_status_filter(self):
         """Test filtering call logs by status"""
         # Create calls with different statuses
-        self.create_test_call_log_with_status('reached', self.test_lead, self.test_agent)
-        self.create_test_call_log_with_status('not_reached', self.test_lead, self.test_agent)
-        self.create_test_call_log_with_appointment(self.test_lead, self.test_agent)
+        self.create_test_call_log_with_status('reached', self.lead, self.agent)
+        self.create_test_call_log_with_status('not_reached', self.lead, self.agent)
+        self.create_test_call_log_with_appointment(self.lead, self.agent)
         
         # Filter by status
         response = self.user_client.get(f"{self.call_logs_url}?status=reached")
@@ -104,8 +117,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_list_call_logs_with_appointment_filter(self):
         """Test filtering call logs by appointment presence"""
         # Create calls with and without appointments
-        self.create_test_call_log_with_appointment(self.test_lead, self.test_agent)
-        self.create_test_call_log_with_status('reached', self.test_lead, self.test_agent)
+        self.create_test_call_log_with_appointment(self.lead, self.agent)
+        self.create_test_call_log_with_status('reached', self.lead, self.agent)
         
         # Filter calls with appointments
         response = self.user_client.get(f"{self.call_logs_url}?has_appointment=true")
@@ -122,8 +135,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_list_call_logs_with_search(self):
         """Test searching call logs by phone numbers and agent workspace"""
         unique_call = self.create_test_call_log(
-            lead=self.test_lead,
-            agent=self.test_agent,
+            lead=self.lead,
+            agent=self.agent,
             from_number="+19998887777",
             to_number="+18887776666",
             duration=200,
@@ -144,9 +157,9 @@ class CallAPITestCase(BaseAPITestCase):
     def test_list_call_logs_with_ordering(self):
         """Test ordering call logs"""
         # Create calls with different durations and statuses
-        self.create_test_call_log(self.test_lead, self.test_agent, duration=30)
-        self.create_test_call_log(self.test_lead, self.test_agent, duration=300)
-        self.create_test_call_log_with_appointment(self.test_lead, self.test_agent)
+        self.create_test_call_log(self.lead, self.agent, duration=30)
+        self.create_test_call_log(self.lead, self.agent, duration=300)
+        self.create_test_call_log_with_appointment(self.lead, self.agent)
         
         # Order by duration ascending
         response = self.user_client.get(f"{self.call_logs_url}?ordering=duration")
@@ -166,10 +179,10 @@ class CallAPITestCase(BaseAPITestCase):
         """Test filtering by date range"""
         # Create calls on different dates
         old_call = self.create_test_call_log(
-            lead=self.test_lead,
-            agent=self.test_agent,
+            lead=self.lead,
+            agent=self.agent,
             from_number="+15551234567",
-            to_number=self.test_lead.phone,
+            to_number=self.lead.phone,
             duration=100,
             direction="outbound"
         )
@@ -191,8 +204,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_create_call_log_as_admin(self):
         """Test admin can create call logs"""
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551112222',
             'to_number': '+15553334444',
             'duration': 245,
@@ -204,15 +217,15 @@ class CallAPITestCase(BaseAPITestCase):
         self.assert_response_success(response, status.HTTP_201_CREATED)
         self.assertEqual(response.data['duration'], 245)
         self.assertEqual(response.data['direction'], 'outbound')
-        self.assertEqual(str(response.data['agent']), str(self.test_agent.agent_id))
+        self.assertEqual(str(response.data['agent']), str(self.agent.agent_id))
         self.assertTrue(CallLog.objects.filter(from_number='+15551112222').exists())
     
     def test_create_call_log_with_appointment(self):
         """Test creating call log with appointment"""
         appointment_time = timezone.now() + timedelta(days=2)
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551112222',
             'to_number': '+15553334444',
             'duration': 245,
@@ -230,8 +243,8 @@ class CallAPITestCase(BaseAPITestCase):
         """Test appointment datetime validation"""
         # Test appointment_scheduled without appointment_datetime should fail
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551112222',
             'to_number': '+15553334444',
             'duration': 245,
@@ -245,8 +258,8 @@ class CallAPITestCase(BaseAPITestCase):
         
         # Test non-appointment_scheduled with appointment_datetime should fail
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551112222',
             'to_number': '+15553334444',
             'duration': 245,
@@ -262,8 +275,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_create_call_log_as_regular_user(self):
         """Test regular user cannot create call logs"""
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15555556666',
             'to_number': '+15557778888',
             'duration': 180,
@@ -284,8 +297,8 @@ class CallAPITestCase(BaseAPITestCase):
         
         # Invalid direction
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551234567',
             'to_number': '+15559876543',
             'duration': 100,
@@ -312,7 +325,7 @@ class CallAPITestCase(BaseAPITestCase):
     def test_create_call_log_without_agent_fails(self):
         """Test creating call log without agent fails"""
         call_data = {
-            'lead': str(self.test_lead.id),
+            'lead': str(self.lead.id),
             'from_number': '+15551234567',
             'to_number': '+15559876543',
             'duration': 120,
@@ -330,8 +343,8 @@ class CallAPITestCase(BaseAPITestCase):
         response = self.user_client.get(f"{self.call_logs_url}{self.test_call.id}/")
         self.assert_response_success(response)
         self.assertEqual(str(response.data['id']), str(self.test_call.id))
-        self.assertEqual(str(response.data['lead']), str(self.test_lead.id))
-        self.assertEqual(str(response.data['agent']), str(self.test_agent.agent_id))
+        self.assertEqual(str(response.data['lead']), str(self.lead.id))
+        self.assertEqual(str(response.data['agent']), str(self.agent.agent_id))
         self.assertIn('agent_workspace_name', response.data)
         self.assertIn('timestamp', response.data)
         self.assertIn('status', response.data)
@@ -401,7 +414,7 @@ class CallAPITestCase(BaseAPITestCase):
     
     def test_delete_call_log_as_admin(self):
         """Test admin can delete call logs"""
-        call_to_delete = self.create_test_call_log(agent=self.test_agent)
+        call_to_delete = self.create_test_call_log(agent=self.agent)
         
         response = self.admin_client.delete(f"{self.call_logs_url}{call_to_delete.id}/")
         self.assert_delete_success(response)
@@ -409,7 +422,7 @@ class CallAPITestCase(BaseAPITestCase):
     
     def test_delete_call_log_as_regular_user(self):
         """Test regular user cannot delete call logs"""
-        call_to_delete = self.create_test_call_log(self.test_lead, self.test_agent)
+        call_to_delete = self.create_test_call_log(self.lead, self.agent)
         
         response = self.user_client.delete(f"{self.call_logs_url}{call_to_delete.id}/")
         self.assert_response_error(response, status.HTTP_403_FORBIDDEN)
@@ -421,9 +434,9 @@ class CallAPITestCase(BaseAPITestCase):
         # Create more test data with various statuses
         for i in range(5):
             lead = self.create_test_lead(f"Analytics Lead {i}")
-            self.create_test_call_log_with_status('reached', lead, self.test_agent, duration=60 + i*30)
+            self.create_test_call_log_with_status('reached', lead, self.agent, duration=60 + i*30)
             if i < 3:  # Create some appointments
-                self.create_test_call_log_with_appointment(lead, self.test_agent)
+                self.create_test_call_log_with_appointment(lead, self.agent)
         
         response = self.admin_client.get(f"{self.call_logs_url}analytics/")
         self.assert_response_success(response)
@@ -455,11 +468,11 @@ class CallAPITestCase(BaseAPITestCase):
         statuses = ['reached', 'not_reached', 'no_interest']
         for status in statuses:
             for i in range(2):
-                self.create_test_call_log_with_status(status, agent=self.test_agent)
+                self.create_test_call_log_with_status(status, agent=self.agent)
         
         # Create appointments
         for i in range(3):
-            self.create_test_call_log_with_appointment(agent=self.test_agent)
+            self.create_test_call_log_with_appointment(agent=self.agent)
         
         response = self.admin_client.get(f"{self.call_logs_url}status_analytics/")
         self.assert_response_success(response)
@@ -476,15 +489,15 @@ class CallAPITestCase(BaseAPITestCase):
     def test_agent_performance_endpoint(self):
         """Test agent performance analytics endpoint"""
         # Create another agent for comparison
-        agent2 = self.create_test_agent(self.test_workspace)
+        agent2 = self.create_test_agent(self.workspace)
         
         # Create calls for different agents
         for i in range(3):
-            self.create_test_call_log_with_status('reached', agent=self.test_agent)
+            self.create_test_call_log_with_status('reached', agent=self.agent)
             self.create_test_call_log_with_status('not_reached', agent=agent2)
         
         # Create appointments
-        self.create_test_call_log_with_appointment(agent=self.test_agent)
+        self.create_test_call_log_with_appointment(agent=self.agent)
         
         response = self.admin_client.get(f"{self.call_logs_url}agent_performance/")
         self.assert_response_success(response)
@@ -508,9 +521,9 @@ class CallAPITestCase(BaseAPITestCase):
         future_appointment = timezone.now() + timedelta(days=5)
         past_appointment = timezone.now() - timedelta(days=2)
         
-        self.create_test_call_log_with_appointment(appointment_datetime=today_appointment, agent=self.test_agent)
-        self.create_test_call_log_with_appointment(appointment_datetime=future_appointment, agent=self.test_agent)
-        self.create_test_call_log_with_appointment(appointment_datetime=past_appointment, agent=self.test_agent)
+        self.create_test_call_log_with_appointment(appointment_datetime=today_appointment, agent=self.agent)
+        self.create_test_call_log_with_appointment(appointment_datetime=future_appointment, agent=self.agent)
+        self.create_test_call_log_with_appointment(appointment_datetime=past_appointment, agent=self.agent)
         
         response = self.admin_client.get(f"{self.call_logs_url}appointment_stats/")
         self.assert_response_success(response)
@@ -539,7 +552,7 @@ class CallAPITestCase(BaseAPITestCase):
                 lead = self.create_test_lead(f"Daily Lead {i}-{j}")
                 call = self.create_test_call_log(
                     lead=lead,
-                    agent=self.test_agent,
+                    agent=self.agent,
                     from_number="+15551234567",
                     to_number=lead.phone,
                     duration=60 + j*20,
@@ -590,7 +603,7 @@ class CallAPITestCase(BaseAPITestCase):
         
         for duration in test_durations:
             lead = self.create_test_lead(f"Bucket Lead {duration}")
-            self.create_test_call_log(lead, self.test_agent, duration=duration)
+            self.create_test_call_log(lead, self.agent, duration=duration)
         
         response = self.admin_client.get(f"{self.call_logs_url}duration_distribution/")
         self.assert_response_success(response)
@@ -611,8 +624,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_call_log_with_same_numbers(self):
         """Test creating call log where from and to numbers are the same"""
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551234567',
             'to_number': '+15551234567',  # Same as from
             'duration': 0,
@@ -626,8 +639,8 @@ class CallAPITestCase(BaseAPITestCase):
     def test_call_log_with_zero_duration(self):
         """Test creating call log with zero duration"""
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551234567',
             'to_number': '+15559876543',
             'duration': 0,
@@ -645,8 +658,8 @@ class CallAPITestCase(BaseAPITestCase):
         
         for call_status in english_statuses:
             call_data = {
-                'lead': str(self.test_lead.id),
-                'agent': str(self.test_agent.agent_id),
+                'lead': str(self.lead.id),
+                'agent': str(self.agent.agent_id),
                 'from_number': '+15551234567',
                 'to_number': '+15559876543',
                 'duration': 120,
@@ -666,8 +679,8 @@ class CallAPITestCase(BaseAPITestCase):
         """Test that appointments in the past are allowed"""
         past_appointment = timezone.now() - timedelta(days=1)
         call_data = {
-            'lead': str(self.test_lead.id),
-            'agent': str(self.test_agent.agent_id),
+            'lead': str(self.lead.id),
+            'agent': str(self.agent.agent_id),
             'from_number': '+15551234567',
             'to_number': '+15559876543',
             'duration': 120,
@@ -684,7 +697,7 @@ class CallAPITestCase(BaseAPITestCase):
     def test_appointment_scheduling_workflow(self):
         """Test complete appointment scheduling workflow"""
         # 1. Create initial call without appointment
-        call = self.create_test_call_log(self.test_lead, self.test_agent)
+        call = self.create_test_call_log(self.lead, self.agent)
         
         # 2. Update to schedule appointment
         appointment_time = timezone.now() + timedelta(days=2)
@@ -726,7 +739,7 @@ class CallAPITestCase(BaseAPITestCase):
             lead = leads[i % 10]
             call_data = {
                 'lead': str(lead.id),
-                'agent': str(self.test_agent.agent_id),
+                'agent': str(self.agent.agent_id),
                 'from_number': f'+1555{i:07d}',
                 'to_number': lead.phone,
                 'duration': 60 + i,
@@ -756,3 +769,154 @@ class CallAPITestCase(BaseAPITestCase):
         # Verify updated_at changed
         self.test_call.refresh_from_db()
         self.assertNotEqual(self.test_call.updated_at, initial_updated) 
+
+    def test_list_call_logs_filter_by_appointment_date_range(self):
+        """Test filtering call logs by appointment date range"""
+        # Implement this test in the future
+        pass
+
+    def test_make_outbound_call_minimal(self):
+        """Test making outbound call with minimal required fields"""
+        self.client.force_authenticate(user=self.workspace_user)
+        
+        data = {
+            'phone': '+491234567890',
+            'agent_id': str(self.agent.agent_id)
+        }
+        
+        # Mock the LiveKit call
+        with patch('core.management_api.call_api.views.make_outbound_call_sync') as mock_call:
+            mock_call.return_value = {
+                'success': True,
+                'room_name': 'test-room',
+                'participant_id': 'test-participant',
+                'dispatch_id': 'test-dispatch',
+                'sip_call_id': 'test-sip'
+            }
+            
+            response = self.client.post('/api/calls/call-logs/make_outbound_call/', data, format='json')
+            
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data['success'])
+        self.assertIn('call_log_id', response.data)
+        self.assertIn('used_greeting', response.data)
+    
+    def test_make_outbound_call_with_agent_config_override(self):
+        """Test making outbound call with agent configuration override"""
+        self.client.force_authenticate(user=self.workspace_user)
+        
+        data = {
+            'phone': '+491234567890',
+            'agent_id': str(self.agent.agent_id),
+            'agent_config': {
+                'name': 'Override Name',
+                'greeting_outbound': 'Custom greeting for testing',
+                'character': 'Very enthusiastic'
+            }
+        }
+        
+        with patch('core.management_api.call_api.views.make_outbound_call_sync') as mock_call:
+            mock_call.return_value = {
+                'success': True,
+                'room_name': 'test-room',
+                'participant_id': 'test-participant'
+            }
+            
+            response = self.client.post('/api/calls/call-logs/make_outbound_call/', data, format='json')
+            
+            # Verify agent config was passed with overrides
+            call_args = mock_call.call_args[1]
+            self.assertEqual(call_args['agent_config']['name'], 'Override Name')
+            self.assertEqual(call_args['agent_config']['greeting_outbound'], 'Custom greeting for testing')
+            self.assertEqual(call_args['agent_config']['character'], 'Very enthusiastic')
+            
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['used_greeting'], 'Custom greeting for testing')
+    
+    def test_make_outbound_call_with_lead_data(self):
+        """Test making outbound call with custom lead data"""
+        self.client.force_authenticate(user=self.workspace_user)
+        
+        data = {
+            'phone': '+491234567890',
+            'agent_id': str(self.agent.agent_id),
+            'lead_data': {
+                'name': 'Max',
+                'surname': 'Mustermann',
+                'email': 'max@example.com',
+                'custom_fields': {
+                    'topic': 'Software Demo',
+                    'budget': '10000 EUR'
+                }
+            }
+        }
+        
+        with patch('core.management_api.call_api.views.make_outbound_call_sync') as mock_call:
+            mock_call.return_value = {
+                'success': True,
+                'room_name': 'test-room',
+                'participant_id': 'test-participant'
+            }
+            
+            response = self.client.post('/api/calls/call-logs/make_outbound_call/', data, format='json')
+            
+            # Verify lead data was passed correctly
+            call_args = mock_call.call_args[1]
+            self.assertEqual(call_args['lead_data']['name'], 'Max')
+            self.assertEqual(call_args['lead_data']['surname'], 'Mustermann')
+            self.assertIn('topic', call_args['lead_data']['meta_data'])
+            
+        self.assertEqual(response.status_code, 200)
+    
+    def test_make_outbound_call_with_custom_greeting(self):
+        """Test making outbound call with custom greeting template"""
+        self.client.force_authenticate(user=self.workspace_user)
+        
+        data = {
+            'phone': '+491234567890',
+            'agent_id': str(self.agent.agent_id),
+            'lead_data': {
+                'name': 'Sarah',
+                'custom_fields': {
+                    'company': 'TechCorp',
+                    'position': 'CEO'
+                }
+            },
+            'custom_greeting': 'Hello {name}, I heard you are the {position} at {company}!'
+        }
+        
+        with patch('core.management_api.call_api.views.make_outbound_call_sync') as mock_call:
+            mock_call.return_value = {
+                'success': True,
+                'room_name': 'test-room',
+                'participant_id': 'test-participant'
+            }
+            
+            response = self.client.post('/api/calls/call-logs/make_outbound_call/', data, format='json')
+            
+            # Verify greeting was processed correctly
+            call_args = mock_call.call_args[1]
+            expected_greeting = 'Hello Sarah, I heard you are the CEO at TechCorp!'
+            self.assertEqual(call_args['agent_config']['greeting_outbound'], expected_greeting)
+            
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['used_greeting'], 'Hello Sarah, I heard you are the CEO at TechCorp!')
+    
+    def test_make_outbound_call_invalid_agent_config_field(self):
+        """Test validation of invalid agent config fields"""
+        self.client.force_authenticate(user=self.workspace_user)
+        
+        data = {
+            'phone': '+491234567890',
+            'agent_id': str(self.agent.agent_id),
+            'agent_config': {
+                'invalid_field': 'some value',
+                'name': 'Valid Name'
+            }
+        }
+        
+        response = self.client.post('/api/calls/call-logs/make_outbound_call/', data, format='json')
+        
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('agent_config', response.data)
+        self.assertIn('invalid_field', str(response.data['agent_config'])) 
