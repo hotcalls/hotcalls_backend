@@ -126,6 +126,7 @@ def get_workspace_stripe_info(request, workspace_id):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@csrf_exempt
 @permission_classes([IsWorkspaceMember])
 def create_stripe_customer(request):
     """Create a Stripe customer for a workspace"""
@@ -233,6 +234,7 @@ def create_stripe_customer(request):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@csrf_exempt
 @permission_classes([IsWorkspaceMember])
 def create_customer_portal_session(request):
     """Create a Stripe customer portal session"""
@@ -328,6 +330,7 @@ def create_customer_portal_session(request):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@csrf_exempt
 @permission_classes([IsWorkspaceMember])
 def retrieve_stripe_customer(request):
     """Retrieve Stripe customer details for a workspace"""
