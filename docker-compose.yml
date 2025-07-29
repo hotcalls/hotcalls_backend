@@ -39,6 +39,9 @@ services:
       target: development
     env_file: .env
     environment:
+      # Django settings configuration
+      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
+      - ENVIRONMENT=development
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
@@ -63,6 +66,9 @@ services:
       target: development
     env_file: .env
     environment:
+      # Django settings configuration
+      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
+      - ENVIRONMENT=development
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
@@ -81,6 +87,9 @@ services:
       target: development
     env_file: .env
     environment:
+      # Django settings configuration
+      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
+      - ENVIRONMENT=development
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis

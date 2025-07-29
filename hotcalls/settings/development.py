@@ -5,6 +5,7 @@ These settings are used for local development and should never be used in produc
 """
 
 from .base import *
+import os
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -116,15 +117,6 @@ CACHES = {
         'TIMEOUT': 300,  # 5 minutes default timeout
     }
 }
-
-# Database configuration (can be overridden by environment variables)
-if os.environ.get('DB_HOST') != 'db':  # Not using Docker
-    DATABASES['default'].update({
-        'HOST': 'localhost',
-        'OPTIONS': {
-            'sslmode': 'disable',  # Disable SSL for local development
-        }
-    })
 
 # Logging for development
 LOGGING['loggers']['django']['level'] = 'DEBUG'

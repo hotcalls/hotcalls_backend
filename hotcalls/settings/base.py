@@ -13,20 +13,42 @@ from dotenv import load_dotenv
 # Setup logging for settings module
 logger = logging.getLogger(__name__)
 
-# Load environment variables from .env file - with error handling
-try:
-    load_dotenv()
-except Exception as e:
-    logger.warning(f"Failed to load .env file: {str(e)}")
-    logger.warning("Continuing with default environment variables")
+# Determine environment - development, staging, or production
+ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
+
+# Log which settings module is being used
+logger.info(f"Loading {__name__} settings module for ENVIRONMENT={ENVIRONMENT}")
+
+# Only load .env file in development environment
+# In staging/production, Kubernetes provides all environment variables via secrets
+if ENVIRONMENT == 'development':
+    try:
+        load_dotenv()
+        logger.info("Development environment: Loaded .env file")
+    except Exception as e:
+        logger.warning(f"Failed to load .env file: {str(e)}")
+        logger.warning("Continuing with environment variables")
+else:
+    logger.info(f"{ENVIRONMENT.capitalize()} environment: Using environment variables from Kubernetes secrets, not .env file")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get(
-    "SECRET_KEY", "django-insecure-=a8o!^u&0e(!-p_$f)ppq2r=*)$g8v(3lrb*vl@+b%i!pn8-=r"
-)
+if ENVIRONMENT != 'development':
+    # CRITICAL: No default SECRET_KEY in staging/production!
+    try:
+        SECRET_KEY = os.environ['SECRET_KEY']
+    except KeyError:
+        raise RuntimeError(
+            f"CRITICAL: SECRET_KEY not set in {ENVIRONMENT} environment!\n"
+            "This is a security requirement - set SECRET_KEY in environment variables."
+        )
+else:
+    # Development can use a default key
+    SECRET_KEY = os.environ.get(
+        "SECRET_KEY", "django-insecure-=a8o!^u&0e(!-p_$f)ppq2r=*)$g8v(3lrb*vl@+b%i!pn8-=r"
+    )
 
 # Custom User Model
 AUTH_USER_MODEL = 'core.User'
@@ -98,20 +120,45 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'hotcalls.wsgi.application'
 
-# Database configuration
-DATABASES = {
-    'default': {
-        'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql'),
-        'NAME': os.environ.get('DB_NAME', 'hotcalls_db'),
-        'USER': os.environ.get('DB_USER', 'hotcalls_user'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
-        'OPTIONS': {
-            'sslmode': os.environ.get('DB_SSLMODE', 'prefer'),
-        },
+# Database configuration - FAIL FAST if not configured!
+# In staging/production, these MUST come from environment variables
+if ENVIRONMENT != 'development':
+    # CRITICAL: No defaults in staging/production - fail if not set!
+    try:
+        DATABASES = {
+            'default': {
+                'ENGINE': os.environ['DB_ENGINE'],  # Will raise KeyError if missing
+                'NAME': os.environ['DB_NAME'],
+                'USER': os.environ['DB_USER'],
+                'PASSWORD': os.environ['DB_PASSWORD'],
+                'HOST': os.environ['DB_HOST'],  # MUST be set - no localhost fallback!
+                'PORT': os.environ.get('DB_PORT', '5432'),
+                'OPTIONS': {
+                    'sslmode': os.environ.get('DB_SSLMODE', 'require'),
+                },
+            }
+        }
+    except KeyError as e:
+        raise RuntimeError(
+            f"CRITICAL: Missing required database configuration: {e}\n"
+            f"Environment: {ENVIRONMENT}\n"
+            f"Required variables: DB_ENGINE, DB_NAME, DB_USER, DB_PASSWORD, DB_HOST"
+        )
+else:
+    # Development can have defaults for convenience
+    DATABASES = {
+        'default': {
+            'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql'),
+            'NAME': os.environ.get('DB_NAME', 'hotcalls_db'),
+            'USER': os.environ.get('DB_USER', 'postgres'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+            'OPTIONS': {
+                'sslmode': os.environ.get('DB_SSLMODE', 'disable'),
+            },
+        }
     }
-}
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -325,10 +372,25 @@ POST /api/auth/login/
 }
 
 # Celery Configuration - Dynamically constructed from Redis env vars
-REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
-REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
-REDIS_DB = os.environ.get("REDIS_DB", "0")
-REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
+if ENVIRONMENT != 'development':
+    # CRITICAL: No defaults in staging/production - fail if not set!
+    try:
+        REDIS_HOST = os.environ['REDIS_HOST']
+        REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
+    except KeyError as e:
+        raise RuntimeError(
+            f"CRITICAL: Missing required Redis configuration: {e}\n"
+            f"Environment: {ENVIRONMENT}\n"
+            f"Required variables: REDIS_HOST, REDIS_PASSWORD"
+        )
+    REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
+    REDIS_DB = os.environ.get("REDIS_DB", "0")
+else:
+    # Development can have defaults
+    REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
+    REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
+    REDIS_DB = os.environ.get("REDIS_DB", "0")
+    REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
 
 # Construct Redis URL with optional password
 if REDIS_PASSWORD:

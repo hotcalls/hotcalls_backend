@@ -14,8 +14,11 @@ metadata:
 data:
   # Django settings
   ENVIRONMENT: "${ENVIRONMENT}"
-  DEBUG: "${DEBUG}"
+  DEBUG: "False"
+  DJANGO_SETTINGS_MODULE: "hotcalls.settings.${ENVIRONMENT}"
   TIME_ZONE: "${TIME_ZONE}"
+  ALLOWED_HOSTS: "${ALLOWED_HOSTS}"
+  BASE_URL: "${BASE_URL}"
   
   # Database configuration (non-sensitive)
   DB_ENGINE: "django.db.backends.postgresql"

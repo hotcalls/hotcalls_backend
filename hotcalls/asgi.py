@@ -11,6 +11,8 @@ import os
 from django.core.asgi import get_asgi_application
 
 # Set default settings module based on environment
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotcalls.settings.development')
+environment = os.environ.get('ENVIRONMENT', 'development')
+default_settings = f'hotcalls.settings.{environment}'
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', default_settings)
 
 application = get_asgi_application()

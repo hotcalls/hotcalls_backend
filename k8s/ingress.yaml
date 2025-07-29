@@ -23,16 +23,10 @@ metadata:
     nginx.ingress.kubernetes.io/force-ssl-redirect: "${ENABLE_TLS:-false}"
 spec:
   # TLS configuration - only added when ENABLE_TLS=true
-  ${ENABLE_TLS:+tls:}
-  ${ENABLE_TLS:+- hosts:}
-  ${ENABLE_TLS:+    - ${HOST_DOMAIN}}
-  ${ENABLE_TLS:+  secretName: ${TLS_SECRET_NAME}}
+  # tls: # Uncomment when TLS is needed
   rules:
-  # Host-based routing when domain is configured
-  ${HOST_DOMAIN:+- host: ${HOST_DOMAIN}}
-  ${HOST_DOMAIN:+  http:}
   # Default routing without host restriction
-  ${HOST_DOMAIN:-}- http:
+  - http:
       paths:
       # API routes (order matters - most specific first)
       - path: /api
