@@ -474,4 +474,12 @@ FILE_UPLOAD_TEMP_DIR = None  # Use system default
 FILE_UPLOAD_PERMISSIONS = 0o644
 
 # Maximum number of fields in a multipart form (default is 1000)
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000 
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+# Meta (Facebook/Instagram) Integration Configuration
+META_APP_ID = os.getenv('META_APP_ID', '')
+META_APP_SECRET = os.getenv('META_APP_SECRET', '')
+META_REDIRECT_URI = os.getenv('META_REDIRECT_URI', '')
+META_API_VERSION = os.getenv('META_API_VERSION', 'v18.0')
+
+# LiveKit Configuration
