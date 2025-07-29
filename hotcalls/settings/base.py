@@ -391,7 +391,7 @@ HEALTH_CHECK = {
 }
 
 # API configuration
-API_VERSION = 'v1'
+API_VERSION = 'v1' 
 
 # Stripe configuration
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
