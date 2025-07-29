@@ -19,9 +19,31 @@ from django.contrib import admin
 from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import JsonResponse
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from core.health import health_check
 from core.utils import CORSMediaView
+
+def api_root(request):
+    """API root endpoint that lists available API endpoints"""
+    return JsonResponse({
+        "message": "HotCalls API v1",
+        "endpoints": {
+            "auth": "/api/auth/",
+            "users": "/api/users/",
+            "workspaces": "/api/workspaces/",
+            "agents": "/api/agents/",
+            "leads": "/api/leads/",
+            "calls": "/api/calls/",
+            "calendars": "/api/calendars/",
+            "voices": "/api/voices/",
+            "subscriptions": "/api/subscriptions/",
+            "payments": "/api/payments/",
+            "meta": "/api/meta/",
+            "docs": "/api/docs/",
+            "schema": "/api/schema/"
+        }
+    })
 
 urlpatterns = [
     # Admin interface
@@ -30,6 +52,9 @@ urlpatterns = [
     # Health check
     path('health/', health_check, name='health_check'),
     path('health/', include('health_check.urls')),
+    
+    # API Root
+    path('api/', api_root, name='api-root'),
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

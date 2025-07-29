@@ -222,8 +222,8 @@ def login_view(request):
                     from django.conf import settings
                     stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
                     
-                    subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
-                    if subscription.status == 'active':
+                    stripe_subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                    if stripe_subscription.status == 'active':
                         has_active_subscription = True
                         needs_payment = False
                     else:

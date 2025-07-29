@@ -17,7 +17,7 @@ logger.info(f"Loaded {__name__} settings module")
 ENVIRONMENT = 'staging'
 
 # Debug should always be True for staging to help troubleshoot issues
-DEBUG = True  # Always True for staging
+DEBUG = False  # Set to False for more production-like behavior
 
 # ALLOWED_HOSTS - ALWAYS use wildcard per user requirement
 ALLOWED_HOSTS = ["*"]
