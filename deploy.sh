@@ -1371,9 +1371,18 @@ wait_for_deployment() {
             log_info "   - For most DNS providers: Create A record: $DOMAIN → $EXTERNAL_IP"
         fi
         
-        # Update BASE_URL in secrets with the actual ingress IP
-        kubectl patch secret ${PROJECT_NAME}-secrets -n "$NAMESPACE" \
-            --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
+        # Update BASE_URL in secrets based on domain configuration
+        if [[ -n "$DOMAIN" ]]; then
+            # Use HTTPS domain if provided
+            log_info "Setting BASE_URL to: https://$DOMAIN"
+            kubectl patch secret ${PROJECT_NAME}-secrets -n "$NAMESPACE" \
+                --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "https://$DOMAIN" | base64)'}]"
+        else
+            # Fall back to HTTP with external IP
+            log_info "Setting BASE_URL to: http://$EXTERNAL_IP"
+            kubectl patch secret ${PROJECT_NAME}-secrets -n "$NAMESPACE" \
+                --type='json' -p="[{'op': 'replace', 'path': '/data/BASE_URL', 'value': '$(echo -n "http://$EXTERNAL_IP" | base64)'}]"
+        fi
         
         # Restart deployment to pick up new BASE_URL
         kubectl rollout restart deployment/${PROJECT_NAME}-backend -n "$NAMESPACE"
