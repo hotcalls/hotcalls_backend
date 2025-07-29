@@ -968,14 +968,14 @@ def stripe_webhook(request):
     elif event_type == 'customer.subscription.updated':
         subscription = event_data
         customer_id = subscription['customer']
-        status = subscription['status']
+        subscription_status = subscription['status']
         
         # Update workspace subscription status
         try:
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
-            workspace.subscription_status = status
+            workspace.subscription_status = subscription_status
             workspace.save()
-            print(f"Updated workspace subscription status to {status}")
+            print(f"Updated workspace subscription status to {subscription_status}")
         except Workspace.DoesNotExist:
             print(f"No workspace found for customer {customer_id}")
     
