@@ -6,8 +6,9 @@ class WorkspacePermission(permissions.BasePermission):
     Custom permission for Workspace operations
     - Users can view workspaces they belong to
     - Users can modify workspaces they belong to
+    - Users can create their first workspace
     - Staff can view and modify all workspaces
-    - Only staff can create new workspaces
+    - Staff can create unlimited workspaces
     - Only superusers can delete workspaces
     """
     
@@ -24,9 +25,16 @@ class WorkspacePermission(permissions.BasePermission):
         if request.method in ['PUT', 'PATCH']:
             return True
             
-        # Create operations: require staff privileges
+        # Create operations: allow users to create their first workspace or staff to create any
         if request.method == 'POST':
-            return request.user.is_staff
+            # Staff can always create workspaces
+            if request.user.is_staff:
+                return True
+            
+            # Regular users can create workspace if they don't have any
+            from core.models import Workspace
+            user_workspaces_count = Workspace.objects.filter(users=request.user).count()
+            return user_workspaces_count == 0
         
         # Delete operations: require superuser privileges  
         if request.method == 'DELETE':

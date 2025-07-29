@@ -441,6 +441,34 @@ class Workspace(models.Model):
         help_text="Current Stripe Subscription ID (sub_xxx)"
     )
     
+    # Subscription
+    current_plan = models.ForeignKey(
+        'Plan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workspaces',
+        help_text="Current subscription plan"
+    )
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('trial', 'Trial'),
+            ('active', 'Active'),
+            ('cancelled', 'Cancelled'),
+            ('past_due', 'Past Due'),
+            ('unpaid', 'Unpaid'),
+        ],
+        default='trial',
+        help_text="Current subscription status"
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Current Stripe Subscription ID (sub_xxx)"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -466,8 +494,16 @@ class Agent(models.Model):
     )
     
     # UPDATED: Multiple greeting types
-    greeting_inbound = models.TextField(help_text="Greeting for inbound calls")
-    greeting_outbound = models.TextField(help_text="Greeting for outbound calls")
+    greeting_inbound = models.TextField(
+        help_text="Greeting for inbound calls",
+        blank=True,
+        default="Hello! How can I help you today?"
+    )
+    greeting_outbound = models.TextField(
+        help_text="Greeting for outbound calls", 
+        blank=True,
+        default="Hello! I'm calling from our team. Is this a good time to talk?"
+    )
     
     # UPDATED: Voice as relationship to Voice model
     voice = models.ForeignKey(
@@ -479,7 +515,11 @@ class Agent(models.Model):
         help_text="Voice configuration for this agent"
     )
     
-    language = models.CharField(max_length=50, help_text="Agent language")
+    language = models.CharField(
+        max_length=50, 
+        help_text="Agent language",
+        default="en"
+    )
     retry_interval = models.IntegerField(
         help_text="Retry interval in minutes",
         default=30
@@ -490,11 +530,22 @@ class Agent(models.Model):
     )
     workdays = models.JSONField(
         default=list,
-        help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
+        help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']",
+        blank=True
     )
-    call_from = models.TimeField(help_text="Start time for calls")
-    call_to = models.TimeField(help_text="End time for calls")
-    character = models.TextField(help_text="Agent character/personality description")
+    call_from = models.TimeField(
+        help_text="Start time for calls",
+        default="09:00:00"
+    )
+    call_to = models.TimeField(
+        help_text="End time for calls",
+        default="17:00:00"
+    )
+    character = models.TextField(
+        help_text="Agent character/personality description",
+        blank=True,
+        default="I am a helpful and professional AI assistant."
+    )
     prompt = models.TextField(
         help_text="Agent prompt/instructions for AI behavior",
         blank=True

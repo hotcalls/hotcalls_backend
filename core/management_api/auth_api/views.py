@@ -201,9 +201,45 @@ def login_view(request):
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
         
+        # Get the first workspace
+        workspace = user.mapping_user_workspaces.first()
+        
+        # Check if workspace has active subscription
+        has_active_subscription = False
+        needs_payment = False
+        
+        if workspace:
+            # Check subscription status
+            if workspace.subscription_status in ['active', 'trial']:
+                has_active_subscription = True
+            else:
+                needs_payment = True
+                
+            # If there's a Stripe subscription, verify with Stripe
+            if workspace.stripe_subscription_id:
+                try:
+                    import stripe
+                    from django.conf import settings
+                    stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
+                    
+                    subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                    if subscription.status == 'active':
+                        has_active_subscription = True
+                        needs_payment = False
+                    else:
+                        has_active_subscription = False
+                        needs_payment = True
+                except:
+                    pass  # Use database values if Stripe fails
+        
+        # Return user data with subscription info
         return Response({
-            'message': 'Login successful',
-            'user': UserProfileSerializer(user).data
+            'user': UserProfileSerializer(user).data,
+            'workspace_id': str(workspace.id) if workspace else None,
+            'has_active_subscription': has_active_subscription,
+            'needs_payment': needs_payment,
+            'subscription_status': workspace.subscription_status if workspace else None,
+            'message': 'Login successful' if has_active_subscription else 'Payment required'
         }, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -314,6 +350,15 @@ def verify_email(request, token):
         
         # Verify the email
         if user.verify_email(token):
+            # Create initial workspace for the user if they don't have any
+            from core.models import Workspace
+            if not Workspace.objects.filter(users=user).exists():
+                workspace = Workspace.objects.create(
+                    workspace_name=f"{user.first_name or user.email.split('@')[0]}'s Workspace"
+                )
+                workspace.users.add(user)
+                workspace.save()
+            
             return render(request, 'auth/verification_success.html', {
                 'email': user.email
             })

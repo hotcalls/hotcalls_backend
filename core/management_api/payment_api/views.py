@@ -1,6 +1,7 @@
 import stripe
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.authentication import TokenAuthentication, BasicAuthentication, SessionAuthentication
 from rest_framework.response import Response
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
@@ -16,6 +17,12 @@ from .serializers import (
     CreateCheckoutSessionSerializer
 )
 from .permissions import IsWorkspaceMember
+
+
+# Custom SessionAuthentication without CSRF for API endpoints
+class CsrfExemptSessionAuthentication(SessionAuthentication):
+    def enforce_csrf(self, request):
+        return  # Don't enforce CSRF
 
 
 # Initialize Stripe
@@ -128,6 +135,7 @@ def get_workspace_stripe_info(request, workspace_id):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsWorkspaceMember])
 def create_stripe_customer(request):
     """Create a Stripe customer for a workspace"""
@@ -235,6 +243,7 @@ def create_stripe_customer(request):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsWorkspaceMember])
 def create_customer_portal_session(request):
     """Create a Stripe customer portal session"""
@@ -330,6 +339,7 @@ def create_customer_portal_session(request):
     tags=["Payment Management"]
 )
 @api_view(['POST'])
+@authentication_classes([CsrfExemptSessionAuthentication])
 @permission_classes([IsWorkspaceMember])
 def retrieve_stripe_customer(request):
     """Retrieve Stripe customer details for a workspace"""
@@ -988,3 +998,84 @@ def stripe_webhook(request):
     
     # Return success response
     return Response({"received": True}, status=status.HTTP_200_OK) 
+
+
+@extend_schema(
+    summary="🔍 Check workspace subscription status",
+    description="""
+    Check if a workspace has an active subscription.
+    
+    **Returns**:
+    - `has_active_subscription`: Boolean indicating if subscription is active
+    - `subscription_status`: Current status (trial, active, cancelled, past_due, unpaid)
+    - `subscription_end_date`: When the subscription ends (if active)
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Subscription status retrieved",
+            examples=[
+                OpenApiExample(
+                    'Active Subscription',
+                    value={
+                        'has_active_subscription': True,
+                        'subscription_status': 'active',
+                        'subscription_end_date': '2024-12-31T23:59:59Z',
+                        'stripe_subscription_id': 'sub_123abc'
+                    }
+                ),
+                OpenApiExample(
+                    'No Active Subscription',
+                    value={
+                        'has_active_subscription': False,
+                        'subscription_status': 'trial',
+                        'subscription_end_date': None,
+                        'stripe_subscription_id': None
+                    }
+                )
+            ]
+        ),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_workspace_subscription(request, workspace_id):
+    """Check if workspace has active subscription"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        
+        # Check if user is member of workspace
+        if not workspace.users.filter(id=request.user.id).exists():
+            return Response(
+                {"error": "Not a member of this workspace"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check subscription status
+        has_active = workspace.subscription_status in ['active', 'trial']
+        
+        response_data = {
+            'has_active_subscription': has_active,
+            'subscription_status': workspace.subscription_status,
+            'subscription_end_date': None,
+            'stripe_subscription_id': workspace.stripe_subscription_id
+        }
+        
+        # If there's a Stripe subscription, get more details
+        if workspace.stripe_subscription_id:
+            try:
+                subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                response_data['subscription_end_date'] = subscription.current_period_end
+                response_data['subscription_status'] = subscription.status
+                response_data['has_active_subscription'] = subscription.status == 'active'
+            except stripe.error.StripeError:
+                pass  # Use database values if Stripe fails
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"},
+            status=status.HTTP_404_NOT_FOUND
+        ) 

@@ -1,16 +1,26 @@
+from django.db.models import Q, Count, Avg, Sum
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 from rest_framework import viewsets, status, filters
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse, OpenApiExample
+from drf_spectacular.types import OpenApiTypes
 
 from core.models import Workspace, User
 from .serializers import (
-    WorkspaceSerializer, WorkspaceCreateSerializer, WorkspaceUserSerializer,
-    WorkspaceUserAssignmentSerializer, WorkspaceStatsSerializer
+    WorkspaceSerializer, 
+    WorkspaceCreateSerializer,
+    WorkspaceUserSerializer,
+    WorkspaceUserAssignmentSerializer,
+    WorkspaceStatsSerializer
 )
+from .permissions import WorkspacePermission, WorkspaceUserManagementPermission, IsWorkspaceMemberOrStaff
 from .filters import WorkspaceFilter
-from .permissions import WorkspacePermission, WorkspaceUserManagementPermission
 
 
 @extend_schema_view(
@@ -278,6 +288,13 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         else:
             # Regular users can only see workspaces they belong to
             return Workspace.objects.filter(users=user)
+    
+    def perform_create(self, serializer):
+        """Create workspace and automatically add creator as member"""
+        workspace = serializer.save()
+        # Add the creator as a member of the workspace
+        workspace.users.add(self.request.user)
+        workspace.save()
     
     @extend_schema(
         summary="👥 Get workspace users",
