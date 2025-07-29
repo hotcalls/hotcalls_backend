@@ -1,68 +1,98 @@
+# Git
+.git
+.gitignore
+
 # Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
+__pycache__
+*.pyc
+*.pyo
+*.pyd
 .Python
-venv/
 env/
+venv/
 ENV/
-.venv
+env.bak/
+venv.bak/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Django
+*.log
+*.pot
+*.pyc
+media/
+staticfiles/
+db.sqlite3
+local_settings.py
+
+# Frontend source (we only need the built dist)
+frontend/node_modules/
+frontend/src/
+frontend/public/
+frontend/.git/
+frontend/.env*
+frontend/package-lock.json
+frontend/yarn.lock
+frontend/bun.lockb
+frontend/*.md
+frontend/tsconfig.json
+frontend/vite.config.ts
+frontend/tailwind.config.ts
+frontend/postcss.config.js
+frontend/eslint.config.js
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 
 # Terraform
 terraform/
 *.tfstate
 *.tfstate.*
 .terraform/
-
-# Git
-.git/
-.gitignore
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Project specific
-staticfiles/
-media/
-*.log
-*.sqlite3
-db.sqlite3
-.env
-.env.*
-celerybeat-schedule
-celerybeat.pid
-
-# Frontend build artifacts (except dist which we need)
-node_modules/
-frontend/node_modules/
-frontend/.next/
-frontend/build/
-frontend/coverage/
-*.lock
-yarn-error.log
-npm-debug.log*
-
-# Documentation and scripts
-*.md
-deploy.sh
-cleanup.sh
-redeploy-staging.sh
-terraform-deploy.sh
+*.tfvars
+!terraform.tfvars.example
 
 # Kubernetes
 k8s/
 
-# Frontend deployment 
-frontend-deploy/
+# Documentation
+*.md
+docs/
+README.md
+LICENSE
 
-# Keep dist for frontend image
-!dist/ 
+# Scripts
+deploy.sh
+cleanup.sh
+*.sh
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Docker files (don't include these in the build context)
+Dockerfile*
+docker-compose*.yml
+.dockerignore 

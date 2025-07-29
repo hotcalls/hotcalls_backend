@@ -315,51 +315,21 @@ checkout_branch() {
 setup_frontend() {
     log_info "Setting up frontend..."
     
-    # Check if frontend repository URL is configured
-    if [[ -z "${FRONTEND_REPO_URL:-}" ]]; then
-        log_warning "No frontend repository configured. Skipping frontend setup."
-        return 0
-    fi
-    
-    # Check if dist directory already exists
-    if [[ -d "dist" ]]; then
-        log_info "Frontend dist/ directory already exists. Skipping build."
-        return 0
-    fi
-    
-    # Check if frontend source already exists
+    # Check if frontend directory exists
     if [[ ! -d "frontend" ]]; then
-        log_info "Cloning frontend repository..."
-        
-        # Clone the private repository
-        if ! git clone "$FRONTEND_REPO_URL" frontend; then
-            log_error "Failed to clone frontend repository. Please ensure:"
-            log_error "1. Your SSH key is added to your GitHub account"
-            log_error "2. The repository URL is correct: $FRONTEND_REPO_URL"
-            log_error "3. You have access to the private repository"
-            exit 1
-        fi
-        
-        # If branch is specified, checkout that branch after cloning
-        if [[ -n "$BRANCH" ]]; then
-            cd frontend
-            git fetch origin
-            if git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-                git checkout -b "$BRANCH" "origin/$BRANCH"
-                log_info "Checked out frontend to branch: $BRANCH"
-            else
-                log_warning "Branch '$BRANCH' not found in frontend repository, using default branch"
-            fi
-            cd ..
-        fi
-        
-        log_success "Frontend repository cloned!"
-    else
-        log_info "Frontend directory exists. Branch checkout already handled."
+        log_error "Frontend directory not found! Expected ./frontend directory with the React app."
+        log_error "This project includes a local frontend directory - no external repo needed."
+        exit 1
+    fi
+    
+    # Check if we should skip frontend build (useful for backend-only updates)
+    if [[ "${SKIP_FRONTEND:-false}" == "true" ]]; then
+        log_warning "SKIP_FRONTEND is set to true. Skipping frontend build."
+        return 0
     fi
     
     # Build the frontend
-    log_info "Building frontend..."
+    log_info "Building frontend from local directory..."
     cd frontend
     
     # Check if package.json exists
@@ -370,37 +340,56 @@ setup_frontend() {
     
     # Install dependencies
     log_info "Installing frontend dependencies..."
-    if command -v npm >/dev/null 2>&1; then
+    if command -v bun >/dev/null 2>&1; then
+        log_info "Using bun to install dependencies..."
+        bun install
+    elif command -v npm >/dev/null 2>&1; then
+        log_info "Using npm to install dependencies..."
         npm install
     elif command -v yarn >/dev/null 2>&1; then
+        log_info "Using yarn to install dependencies..."
         yarn install
     else
-        log_error "Neither npm nor yarn found. Please install Node.js and npm"
+        log_error "Neither bun, npm, nor yarn found. Please install Node.js and npm or bun"
         exit 1
     fi
     
     # Build the project
     log_info "Building frontend project..."
-    if npm run build; then
+    if command -v bun >/dev/null 2>&1; then
+        if bun run build; then
+            log_success "Frontend built successfully with bun!"
+        else
+            log_error "Frontend build failed"
+            exit 1
+        fi
+    elif npm run build; then
         log_success "Frontend built successfully!"
     else
         log_error "Frontend build failed"
         exit 1
     fi
     
-    # Copy build output to expected location
+    # Check if build output exists and copy to project root for Docker build
     if [[ -d "dist" ]]; then
-        cp -r dist ../
-        log_info "Copied dist/ to project root"
+        cd ..
+        # Remove old dist if exists
+        rm -rf dist
+        # Copy new dist to project root
+        cp -r frontend/dist .
+        log_info "Copied frontend/dist/ to project root for Docker build"
     elif [[ -d "build" ]]; then
-        cp -r build ../dist
-        log_info "Copied build/ to project root as dist/"
+        cd ..
+        # Remove old dist if exists
+        rm -rf dist
+        # Copy build as dist to project root
+        cp -r frontend/build ./dist
+        log_info "Copied frontend/build/ to project root as dist/ for Docker build"
     else
         log_error "No dist/ or build/ directory found after frontend build"
         exit 1
     fi
     
-    cd ..
     log_success "Frontend setup completed!"
 }
 

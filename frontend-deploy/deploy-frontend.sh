@@ -37,27 +37,24 @@ fi
 
 # Set default values
 IMAGE_TAG=${IMAGE_TAG:-latest}
-FRONTEND_REPO="https://github.com/malmachengbr/hotcalls-visual-prototype.git"
-FRONTEND_DIR="../hotcalls-visual-prototype"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+FRONTEND_DIR="$SCRIPT_DIR/../frontend"
 
 print_status "Starting frontend deployment process..."
 print_status "Environment: $ENVIRONMENT"
 print_status "ACR: $ACR_LOGIN_SERVER"
 print_status "Image tag: $IMAGE_TAG"
+print_status "Using local frontend at: $FRONTEND_DIR"
 
-# Step 1: Clone frontend repo if it doesn't exist
+# Step 1: Check if frontend directory exists
 if [ ! -d "$FRONTEND_DIR" ]; then
-    print_status "Cloning frontend repository..."
-    git clone $FRONTEND_REPO $FRONTEND_DIR
-else
-    print_status "Frontend repository already exists at $FRONTEND_DIR"
+    print_error "Frontend directory not found at $FRONTEND_DIR"
+    exit 1
 fi
 
-# Step 2: Checkout meta branch and pull latest
-cd $FRONTEND_DIR
-print_status "Checking out 'meta' branch and pulling latest changes..."
-git checkout meta
-git pull
+# Step 2: Navigate to frontend directory
+cd "$FRONTEND_DIR"
+print_status "Working in frontend directory: $(pwd)"
 
 # Step 3: Install dependencies and build
 print_status "Installing dependencies..."
@@ -89,11 +86,11 @@ print_status "Build output found in $BUILD_DIR directory"
 
 # Step 4: Copy Dockerfile to frontend directory
 print_status "Copying Dockerfile..."
-cp ../hotcalls/frontend-deploy/Dockerfile .
+cp "$SCRIPT_DIR/Dockerfile" .
 
 # Update Dockerfile to use correct build directory
 if [ "$BUILD_DIR" = "build" ]; then
-    sed -i '' 's/COPY dist\//COPY build\//' Dockerfile
+    sed -i.bak 's/COPY dist\//COPY build\//' Dockerfile && rm Dockerfile.bak
 fi
 
 # Step 5: Build Docker image
@@ -109,14 +106,18 @@ print_status "Pushing image to ACR..."
 docker push $ACR_LOGIN_SERVER/hotcalls-frontend:$IMAGE_TAG
 
 # Step 8: Deploy to Kubernetes
-cd ../hotcalls
+cd "$SCRIPT_DIR/.."
 print_status "Deploying frontend to Kubernetes..."
+
+# Set project prefix based on environment
+PROJECT_PREFIX="hotcalls"
 
 # Apply frontend deployment
 print_status "Applying frontend deployment..."
 export ENVIRONMENT=$ENVIRONMENT
 export ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER
 export IMAGE_TAG=$IMAGE_TAG
+export PROJECT_PREFIX=$PROJECT_PREFIX
 export FRONTEND_REPLICAS=${FRONTEND_REPLICAS:-2}
 
 envsubst < k8s/frontend-deployment.yaml | kubectl apply -f -
@@ -131,16 +132,15 @@ envsubst < k8s/ingress.yaml | kubectl apply -f -
 
 # Wait for deployment to be ready
 print_status "Waiting for frontend deployment to be ready..."
-kubectl rollout status deployment/hotcalls-frontend -n hotcalls-$ENVIRONMENT
+kubectl rollout status deployment/${PROJECT_PREFIX}-frontend -n ${PROJECT_PREFIX}-$ENVIRONMENT
 
 # Check pod status
 print_status "Checking pod status..."
-kubectl get pods -n hotcalls-$ENVIRONMENT -l app.kubernetes.io/component=frontend
+kubectl get pods -n ${PROJECT_PREFIX}-$ENVIRONMENT -l app.kubernetes.io/component=frontend
 
 print_status "Frontend deployment completed successfully!"
-print_status "Access your application at: https://app1.hotcalls.ai"
-print_warning "Make sure to configure DNS for app1.hotcalls.ai to point to your ingress controller"
+print_status "Access your application at your configured domain"
 
 # Display ingress details
 print_status "Ingress details:"
-kubectl get ingress -n hotcalls-$ENVIRONMENT 
+kubectl get ingress -n ${PROJECT_PREFIX}-$ENVIRONMENT 
