@@ -528,55 +528,26 @@ class GoogleCalendar(models.Model):
         on_delete=models.CASCADE, 
         related_name='google_calendar'
     )
-    connection = models.ForeignKey(
-        'GoogleCalendarConnection', 
-        on_delete=models.CASCADE, 
-        related_name='calendars'
-    )
-    
     # Google Calendar API fields
     external_id = models.CharField(
         max_length=255, 
         unique=True,
         help_text="Google Calendar ID"
     )
-    summary = models.CharField(
-        max_length=500,
-        help_text="Calendar title from Google"
-    )
-    description = models.TextField(blank=True, null=True)
-    
-    # Visual properties
-    color_id = models.CharField(max_length=20, blank=True, null=True)
-    background_color = models.CharField(max_length=7, blank=True, null=True)
-    foreground_color = models.CharField(max_length=7, blank=True, null=True)
-    
     # Calendar properties
     primary = models.BooleanField(default=False)
-    access_role = models.CharField(
-        max_length=20,
-        choices=[
-            ('reader', 'Reader'),
-            ('writer', 'Writer'), 
-            ('owner', 'Owner'),
-        ]
-    )
     time_zone = models.CharField(max_length=50)
-    selected = models.BooleanField(default=True)
     
-    # Google API metadata
-    etag = models.CharField(max_length=255, blank=True, null=True)
-    kind = models.CharField(max_length=50, default='calendar#calendarListEntry')
+    refresh_token = models.CharField(max_length=255, help_text="Google Calendar API refresh token")
+    access_token = models.CharField(max_length=255, help_text="Google Calendar API access token")
+    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    scopes = models.JSONField(
+        default=list,
+        help_text="Granted OAuth scopes"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        unique_together = ['connection', 'external_id']
-        indexes = [
-            models.Index(fields=['connection', 'primary']),
-            models.Index(fields=['external_id']),
-        ]
     
     def __str__(self):
         return f"{self.summary} ({self.external_id})"
