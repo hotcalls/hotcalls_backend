@@ -5,6 +5,12 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from core.models import Voice, User
 from .base import BaseAPITestCase
+from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+import io
+from PIL import Image
+
+User = get_user_model()
 
 
 class VoiceAPITestCase(BaseAPITestCase):
@@ -387,3 +393,168 @@ class VoiceAPITestCase(BaseAPITestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['agent_count'], 2)  # Now 2 agents use this voice 
+
+    def test_list_voices_requires_staff(self):
+        """Test that listing voices requires staff permissions"""
+        # Regular user cannot list voices
+        response = self.client.get('/api/voices/voices/')
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        
+        # Staff user can list voices
+        self.client.force_authenticate(user=self.staff_user)
+        response = self.client.get('/api/voices/voices/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+    
+    def test_create_voice_with_files(self):
+        """Test creating voice with sample and picture files"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        # Create a small test audio file
+        audio_content = b'fake audio content'
+        audio_file = SimpleUploadedFile(
+            "test_sample.mp3",
+            audio_content,
+            content_type="audio/mpeg"
+        )
+        
+        # Create a small test image
+        image = Image.new('RGB', (100, 100), color='red')
+        image_file = io.BytesIO()
+        image.save(image_file, 'PNG')
+        image_file.seek(0)
+        picture_file = SimpleUploadedFile(
+            "test_picture.png",
+            image_file.read(),
+            content_type="image/png"
+        )
+        
+        data = {
+            'voice_external_id': 'test-voice-with-files',
+            'provider': 'elevenlabs',
+            'name': 'Test Voice With Files',
+            'gender': 'male',
+            'tone': 'friendly',
+            'recommend': True,
+            'voice_sample': audio_file,
+            'voice_picture': picture_file
+        }
+        
+        response = self.client.post('/api/voices/voices/', data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Voice.objects.filter(voice_external_id='test-voice-with-files').exists())
+    
+    def test_voice_sample_size_validation(self):
+        """Test that voice samples over 50MB are rejected"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        # Create a file that's too large (simulate 51MB)
+        large_content = b'x' * (51 * 1024 * 1024)
+        large_file = SimpleUploadedFile(
+            "large_sample.mp3",
+            large_content,
+            content_type="audio/mpeg"
+        )
+        
+        data = {
+            'voice_external_id': 'test-large-sample',
+            'provider': 'elevenlabs',
+            'name': 'Test Large Sample',
+            'gender': 'female',
+            'tone': 'calm',
+            'voice_sample': large_file
+        }
+        
+        response = self.client.post('/api/voices/voices/', data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Voice sample file size cannot exceed 50MB', str(response.data))
+    
+    def test_voice_picture_size_validation(self):
+        """Test that voice pictures over 5MB are rejected"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        # Create a file that's too large (simulate 6MB)
+        large_content = b'x' * (6 * 1024 * 1024)
+        large_file = SimpleUploadedFile(
+            "large_picture.png",
+            large_content,
+            content_type="image/png"
+        )
+        
+        data = {
+            'voice_external_id': 'test-large-picture',
+            'provider': 'elevenlabs',
+            'name': 'Test Large Picture',
+            'gender': 'male',
+            'tone': 'energetic',
+            'voice_picture': large_file
+        }
+        
+        response = self.client.post('/api/voices/voices/', data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Voice picture file size cannot exceed 5MB', str(response.data))
+    
+    def test_voice_sample_format_validation(self):
+        """Test that only allowed audio formats are accepted"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        # Try with invalid format
+        invalid_file = SimpleUploadedFile(
+            "test_sample.txt",
+            b"not an audio file",
+            content_type="text/plain"
+        )
+        
+        data = {
+            'voice_external_id': 'test-invalid-format',
+            'provider': 'elevenlabs',
+            'name': 'Test Invalid Format',
+            'gender': 'neutral',
+            'tone': 'robotic',
+            'voice_sample': invalid_file
+        }
+        
+        response = self.client.post('/api/voices/voices/', data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('Only MP3, WAV, M4A, and OGG files are allowed', str(response.data))
+    
+    def test_update_voice(self):
+        """Test updating voice configuration"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        data = {
+            'name': 'Updated Voice Name',
+            'tone': 'updated tone'
+        }
+        
+        response = self.client.patch(f'/api/voices/voices/{self.test_voice1.id}/', data)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        
+        self.test_voice1.refresh_from_db()
+        self.assertEqual(self.test_voice1.name, 'Updated Voice Name')
+        self.assertEqual(self.test_voice1.tone, 'updated tone')
+    
+    def test_delete_voice(self):
+        """Test deleting voice configuration"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        response = self.client.delete(f'/api/voices/voices/{self.test_voice1.id}/')
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Voice.objects.filter(id=self.test_voice1.id).exists())
+    
+    def test_voice_statistics(self):
+        """Test voice statistics endpoint"""
+        self.client.force_authenticate(user=self.staff_user)
+        
+        # Create additional voices
+        Voice.objects.create(
+            voice_external_id='test-voice-2',
+            provider='elevenlabs',
+            name='Test Voice 2',
+            gender='female',
+            tone='warm'
+        )
+        
+        response = self.client.get('/api/voices/voices/statistics/')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('total_voices', response.data)
+        self.assertIn('provider_breakdown', response.data) 

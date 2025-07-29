@@ -21,6 +21,9 @@ metadata:
     # SSL redirect settings - these will be overridden by envsubst based on ENABLE_TLS
     nginx.ingress.kubernetes.io/ssl-redirect: "${ENABLE_TLS:-false}"
     nginx.ingress.kubernetes.io/force-ssl-redirect: "${ENABLE_TLS:-false}"
+    # File upload size limits
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/client-body-buffer-size: "10m"
 spec:
   # TLS configuration - only added when ENABLE_TLS=true
   # tls: # Uncomment when TLS is needed

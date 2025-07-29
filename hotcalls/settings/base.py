@@ -458,4 +458,20 @@ API_VERSION = 'v1'
 # Stripe configuration
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
-STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '') 
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+
+# File upload settings
+# Maximum size for file uploads via forms (100MB)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
+
+# Maximum allowed size for a request body (100MB)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 100 * 1024 * 1024  # 100MB
+
+# For large files, Django will use temporary files instead of loading into memory
+FILE_UPLOAD_TEMP_DIR = None  # Use system default
+
+# Permissions for uploaded files
+FILE_UPLOAD_PERMISSIONS = 0o644
+
+# Maximum number of fields in a multipart form (default is 1000)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000 

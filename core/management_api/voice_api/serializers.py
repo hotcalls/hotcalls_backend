@@ -67,6 +67,25 @@ class VoiceCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Voice name cannot exceed 100 characters")
         return value.strip()
 
+    def validate_voice_sample(self, value):
+        """Validate voice sample format and size"""
+        if value:
+            # Check file extension
+            allowed_extensions = ['.mp3', '.wav', '.m4a', '.ogg']
+            file_extension = value.name.lower().split('.')[-1]
+            if f'.{file_extension}' not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Invalid file format. Only MP3, WAV, M4A, and OGG files are allowed."
+                )
+            
+            # Check file size (max 50MB for voice samples)
+            if value.size > 50 * 1024 * 1024:
+                raise serializers.ValidationError(
+                    "Voice sample file size cannot exceed 50MB."
+                )
+        
+        return value
+
     def validate_voice_picture(self, value):
         """Validate voice picture format"""
         if value:
@@ -147,6 +166,25 @@ class VoiceUpdateSerializer(serializers.ModelSerializer):
         if len(value) > 100:
             raise serializers.ValidationError("Voice name cannot exceed 100 characters")
         return value.strip()
+
+    def validate_voice_sample(self, value):
+        """Validate voice sample format and size"""
+        if value:
+            # Check file extension
+            allowed_extensions = ['.mp3', '.wav', '.m4a', '.ogg']
+            file_extension = value.name.lower().split('.')[-1]
+            if f'.{file_extension}' not in allowed_extensions:
+                raise serializers.ValidationError(
+                    f"Invalid file format. Only MP3, WAV, M4A, and OGG files are allowed."
+                )
+            
+            # Check file size (max 50MB for voice samples)
+            if value.size > 50 * 1024 * 1024:
+                raise serializers.ValidationError(
+                    "Voice sample file size cannot exceed 50MB."
+                )
+        
+        return value
 
     def validate_voice_picture(self, value):
         """Validate voice picture format"""
