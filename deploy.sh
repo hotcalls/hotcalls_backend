@@ -1196,6 +1196,7 @@ spec:
         app.kubernetes.io/component: migration
     spec:
       restartPolicy: Never
+      serviceAccountName: ${PROJECT_PREFIX}-sa
       containers:
       - name: migrate
         image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
