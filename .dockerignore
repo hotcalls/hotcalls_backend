@@ -30,6 +30,11 @@ staticfiles/
 db.sqlite3
 local_settings.py
 
+# Celery
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
+
 # Frontend source (we only need the built dist)
 frontend/node_modules/
 frontend/src/
