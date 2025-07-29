@@ -30,6 +30,17 @@ SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").
 SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
 X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 
+# CSRF Configuration for staging
+# Can be configured via environment variable CSRF_TRUSTED_ORIGINS (comma-separated)
+csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
+
+# CORS Settings for staging
+CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "False").lower() == "true"
+cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "https://app.hotcalls.de")
+CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()] if cors_origins else ["https://app.hotcalls.de"]
+CORS_ALLOW_CREDENTIALS = True
+
 # Static files configuration
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'

@@ -43,6 +43,11 @@ cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "")
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(",") if origin.strip()] if cors_origins else []
 CORS_ALLOW_CREDENTIALS = True
 
+# CSRF Configuration for production
+# Can be configured via environment variable CSRF_TRUSTED_ORIGINS (comma-separated)
+csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
+
 # Azure Blob Storage configuration
 AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
 AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY')
