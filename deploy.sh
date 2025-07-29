@@ -1172,37 +1172,27 @@ run_django_migrations() {
     # Give the pod a moment to fully initialize
     sleep 5
     
-    # Handle --purge option
+    # Handle --purge option - drop database completely
     if [[ "$PURGE_DB" == "true" ]]; then
-        log_warning "PURGE MODE: This will DELETE ALL DATA in the database!"
-        log_info "Step 1: Resetting all migrations to zero state..."
+        log_warning "PURGE MODE: Dropping ALL database tables..."
         
-        # Reset migrations for all apps
-        for app in core admin auth authtoken contenttypes sessions django_celery_beat; do
-            kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
-                python manage.py migrate $app zero --fake 2>/dev/null || true
-        done
-        
-        log_info "Step 2: Dropping all tables from database..."
-        # Drop all tables using Django's sqlflush
         kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
             python -c "
+import os
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotcalls.settings.${ENVIRONMENT}')
+import django
+django.setup()
 from django.db import connection
 with connection.cursor() as cursor:
-    cursor.execute('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
+    cursor.execute('DROP SCHEMA public CASCADE;')
+    cursor.execute('CREATE SCHEMA public;')
     cursor.execute('GRANT ALL ON SCHEMA public TO PUBLIC;')
-print('Database purged successfully!')
-"
-        
-        log_info "Step 3: Deleting old migration files..."
-        # Delete all migration files except __init__.py
-        kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
-            find /app/core/migrations -name "*.py" -not -name "__init__.py" -delete
-        
-        log_info "Step 4: Creating fresh migrations..."
-        # Create new migrations
-        kubectl exec deployment/${PROJECT_NAME}-backend -n "$NAMESPACE" -- \
-            python manage.py makemigrations --noinput
+    cursor.execute('GRANT ALL ON SCHEMA public TO postgres;')
+print('Database COMPLETELY PURGED!')
+" || {
+            log_error "Failed to purge database"
+            return 1
+        }
         
         log_success "Database purged! Now running fresh migrations..."
     fi
@@ -1539,6 +1529,27 @@ main() {
         setup_frontend
         get_infrastructure_outputs_update_only
         configure_kubectl
+        
+        # Handle --purge preparation BEFORE building images
+        if [[ "$PURGE_DB" == "true" ]]; then
+            log_warning "PURGE MODE: Preparing fresh migrations..."
+            
+            log_info "Step 1: Deleting ALL existing migration files (except __init__.py)..."
+            find core/migrations -name "*.py" -not -name "__init__.py" -delete 2>/dev/null || true
+            
+            log_info "Step 2: Creating fresh migrations..."
+            # Activate virtual environment if it exists
+            if [ -d "venv" ]; then
+                source venv/bin/activate
+            fi
+            python manage.py makemigrations --noinput || {
+                log_error "Failed to create migrations. Make sure Django is installed locally."
+                exit 1
+            }
+            
+            log_success "Fresh migrations created! Will be included in Docker image."
+        fi
+        
         build_and_push_images
         deploy_kubernetes
         wait_for_deployment
@@ -1558,6 +1569,27 @@ main() {
         get_infrastructure_outputs
         configure_kubectl
         install_ingress_controller
+        
+        # Handle --purge preparation BEFORE building images
+        if [[ "$PURGE_DB" == "true" ]]; then
+            log_warning "PURGE MODE: Preparing fresh migrations..."
+            
+            log_info "Step 1: Deleting ALL existing migration files (except __init__.py)..."
+            find core/migrations -name "*.py" -not -name "__init__.py" -delete 2>/dev/null || true
+            
+            log_info "Step 2: Creating fresh migrations..."
+            # Activate virtual environment if it exists
+            if [ -d "venv" ]; then
+                source venv/bin/activate
+            fi
+            python manage.py makemigrations --noinput || {
+                log_error "Failed to create migrations. Make sure Django is installed locally."
+                exit 1
+            }
+            
+            log_success "Fresh migrations created! Will be included in Docker image."
+        fi
+        
         build_and_push_images
         deploy_kubernetes
         wait_for_deployment
