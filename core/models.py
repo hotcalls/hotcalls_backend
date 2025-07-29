@@ -631,7 +631,7 @@ class GoogleCalendar(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.summary} ({self.external_id})"
+        return f"{self.calendar.name} ({self.external_id})"
 
 
 class CalendarConfiguration(models.Model):

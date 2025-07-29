@@ -33,6 +33,10 @@ services:
       context: .
       target: development
     env_file: .env
+    environment:
+      # Override for Docker networking
+      - DB_HOST=db
+      - REDIS_HOST=redis
     ports:
       - "8000:8000"
     volumes:

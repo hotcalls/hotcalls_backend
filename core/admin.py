@@ -4,6 +4,7 @@ from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, P
 from .models import (
     GoogleCalendarConnection, GoogleCalendar
 )
+from django.utils import timezone
 
 
 @admin.register(User)
@@ -95,8 +96,8 @@ class PlanFeatureInline(admin.TabularInline):
 class GoogleCalendarInline(admin.TabularInline):
     model = GoogleCalendar
     extra = 0
-    fields = ('external_id', 'summary', 'primary', 'access_role', 'time_zone')
-    readonly_fields = ('external_id', 'summary', 'primary', 'access_role', 'time_zone', 'created_at', 'updated_at')
+    fields = ('external_id', 'primary', 'time_zone')
+    readonly_fields = ('external_id', 'primary', 'time_zone', 'created_at', 'updated_at')
 
 
 class CalendarInline(admin.TabularInline):
@@ -238,25 +239,18 @@ class GoogleCalendarConnectionAdmin(admin.ModelAdmin):
 
 @admin.register(GoogleCalendar)
 class GoogleCalendarAdmin(admin.ModelAdmin):
-    list_display = ('summary', 'get_workspace', 'connection', 'primary', 'access_role', 'selected')
-    list_filter = ('primary', 'access_role', 'selected', 'connection__workspace', 'created_at')
-    search_fields = ('summary', 'external_id', 'connection__account_email', 'connection__workspace__workspace_name')
+    list_display = ('get_calendar_name', 'external_id', 'primary', 'time_zone', 'created_at')
+    list_filter = ('primary', 'time_zone', 'created_at')
+    search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
     ordering = ('-created_at',)
-    readonly_fields = ('external_id', 'etag', 'kind', 'created_at', 'updated_at')
+    readonly_fields = ('external_id', 'created_at', 'updated_at')
     
     fieldsets = (
         ('Calendar Info', {
-            'fields': ('calendar', 'connection', 'external_id', 'summary', 'description')
+            'fields': ('calendar', 'external_id', 'primary', 'time_zone')
         }),
-        ('Visual Properties', {
-            'fields': ('color_id', 'background_color', 'foreground_color'),
-            'classes': ('collapse',)
-        }),
-        ('Calendar Properties', {
-            'fields': ('primary', 'access_role', 'time_zone', 'selected')
-        }),
-        ('Google API Metadata', {
-            'fields': ('etag', 'kind'),
+        ('OAuth Tokens', {
+            'fields': ('refresh_token', 'access_token', 'token_expires_at', 'scopes'),
             'classes': ('collapse',)
         }),
         ('Timestamps', {
@@ -265,9 +259,10 @@ class GoogleCalendarAdmin(admin.ModelAdmin):
         }),
     )
     
-    def get_workspace(self, obj):
-        return obj.connection.workspace.workspace_name
-    get_workspace.short_description = 'Workspace'
+    def get_calendar_name(self, obj):
+        return obj.calendar.name
+    get_calendar_name.short_description = 'Calendar Name'
+    get_calendar_name.admin_order_field = 'calendar__name'
 
 
 @admin.register(Calendar)
@@ -285,13 +280,12 @@ class CalendarAdmin(admin.ModelAdmin):
     
     def get_connection_status(self, obj):
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
-            connection = obj.google_calendar.connection
-            if not connection.active:
-                return '❌ Disconnected'
-            elif connection.sync_errors:
-                return '⚠️ Errors'
-            else:
+            # Check if the Google calendar has valid tokens
+            google_cal = obj.google_calendar
+            if google_cal.token_expires_at and google_cal.token_expires_at > timezone.now():
                 return '✅ Connected'
+            else:
+                return '⚠️ Token Expired'
         return '❓ Unknown'
     get_connection_status.short_description = 'Status'
 
