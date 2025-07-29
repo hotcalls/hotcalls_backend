@@ -30,15 +30,18 @@ SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").
 SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
 X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 
-# CSRF Configuration for staging
-# Can be configured via environment variable CSRF_TRUSTED_ORIGINS (comma-separated)
-csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
-CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
+# CSRF - COMPLETELY DISABLED FOR STAGING
+# WARNING: This removes ALL CSRF protection - NEVER use in production!
+# This modifies the MIDDLEWARE list from base.py to remove CSRF
+MIDDLEWARE = list(MIDDLEWARE)  # Convert tuple to list if needed
+if 'django.middleware.csrf.CsrfViewMiddleware' in MIDDLEWARE:
+    MIDDLEWARE.remove('django.middleware.csrf.CsrfViewMiddleware')
 
-# CORS Settings for staging - ALLOW ALL for easier testing
-CORS_ALLOW_ALL_ORIGINS = True  # Allow all origins in staging
+# CORS - COMPLETELY OPEN FOR STAGING
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-# Note: CORS_ALLOWED_ORIGINS is ignored when CORS_ALLOW_ALL_ORIGINS is True
+CORS_ALLOW_HEADERS = ["*"]
+CORS_ALLOW_METHODS = ["*"]
 
 # Static files configuration
 STATIC_URL = '/static/'
