@@ -1,18 +1,25 @@
+import logging
+from datetime import datetime, timedelta
+from django.conf import settings
+from django.utils import timezone
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
-from datetime import datetime, timedelta
 
-from core.models import Calendar, CalendarConfiguration
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace
+from core.services.google_calendar import GoogleCalendarService, GoogleOAuthService, CalendarServiceFactory
 from .serializers import (
-    CalendarSerializer, CalendarCreateSerializer,
+    CalendarSerializer, GoogleCalendarConnectionSerializer,
     CalendarConfigurationSerializer, CalendarConfigurationCreateSerializer,
-    CalendarAvailabilityRequestSerializer, CalendarAvailabilityResponseSerializer
+    CalendarAvailabilityRequestSerializer, CalendarAvailabilityResponseSerializer,
+    GoogleOAuthCallbackSerializer, EventCreateSerializer
 )
 from .filters import CalendarFilter, CalendarConfigurationFilter
 from .permissions import CalendarPermission, CalendarConfigurationPermission
+
+logger = logging.getLogger(__name__)
 
 
 @extend_schema_view(
@@ -44,38 +51,14 @@ from .permissions import CalendarPermission, CalendarConfigurationPermission
         },
         tags=["Calendar Management"]
     ),
-    create=extend_schema(
-        summary="➕ Create calendar integration",
-        description="""
-        Create a new calendar integration for a workspace (Staff only).
-        
-        **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot create calendar integrations
-        - **✅ Staff Members**: Can create calendar integrations
-        - **✅ Superusers**: Can create calendar integrations
-        
-        **📅 Integration Setup**:
-        - Connects external calendar services (Google, Outlook)
-        - Establishes authentication with calendar providers
-        - Enables scheduling and availability checking
-        """,
-        request=CalendarCreateSerializer,
-        responses={
-            201: OpenApiResponse(response=CalendarSerializer, description="✅ Calendar integration created successfully"),
-            400: OpenApiResponse(description="❌ Validation error - Check integration settings"),
-            401: OpenApiResponse(description="🚫 Authentication required"),
-            403: OpenApiResponse(description="🚫 Permission denied - Staff access required")
-        },
-        tags=["Calendar Management"]
-    ),
     retrieve=extend_schema(
         summary="Get calendar details",
-        description="Retrieve detailed information about a specific calendar",
+        description="Retrieve detailed information about a specific calendar with provider details",
         tags=["Calendar Management"]
     ),
     update=extend_schema(
         summary="Update calendar",
-        description="Update all fields of a calendar (staff only)",
+        description="Update calendar information (staff only)",
         tags=["Calendar Management"]
     ),
     partial_update=extend_schema(
@@ -91,35 +74,273 @@ from .permissions import CalendarPermission, CalendarConfigurationPermission
 )
 class CalendarViewSet(viewsets.ModelViewSet):
     """
-    📅 **Calendar Integration Management with Workspace-Based Access**
+    📅 **Calendar Integration Management with Google Calendar Support**
     
     Manages calendar integrations with workspace-filtered access:
     - **👤 Regular Users**: Access only calendars in their workspaces
     - **👔 Staff**: Full calendar administration across all workspaces
     - **🔧 Superusers**: Complete calendar control including deletion
+    
+    **🆕 Google Calendar Integration:**
+    - OAuth authentication flow
+    - Automatic calendar synchronization
+    - Real-time availability checking
+    - Event creation capabilities
     """
     queryset = Calendar.objects.all()
     permission_classes = [CalendarPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarFilter
-    search_fields = ['account_id', 'workspace__workspace_name']
-    ordering_fields = ['calendar_type', 'created_at', 'updated_at']
+    search_fields = ['name', 'workspace__workspace_name']
+    ordering_fields = ['provider', 'created_at', 'updated_at']
     ordering = ['-created_at']
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
-        if self.action == 'create':
-            return CalendarCreateSerializer
         return CalendarSerializer
     
     def get_queryset(self):
         """Filter queryset based on user permissions"""
         user = self.request.user
         if user.is_staff:
-            return Calendar.objects.all()
+            return Calendar.objects.all().select_related('workspace').prefetch_related('google_calendar')
         else:
             # Regular users can only see calendars in their workspaces
-            return Calendar.objects.filter(workspace__users=user)
+            return Calendar.objects.filter(
+                workspace__users=user
+            ).select_related('workspace').prefetch_related('google_calendar')
+    
+    # 🎯 GOOGLE OAUTH ENDPOINTS
+    
+    @extend_schema(
+        summary="🔗 Google OAuth Callback",
+        description="""
+        **Handle Google OAuth callback and create calendar connection**
+        
+        This endpoint is called by Google after user grants permissions.
+        
+        **📋 Process Flow:**
+        1. Receives authorization code from Google
+        2. Exchanges code for access & refresh tokens
+        3. Creates GoogleCalendarConnection
+        4. Fetches and saves user's calendar list
+        5. Returns connection details + available calendars
+        
+        **🔐 Required Parameters:**
+        - `code`: Authorization code from Google OAuth
+        - `state`: Optional state parameter for security
+        
+        **📊 Response:**
+        - Connection details
+        - List of synchronized calendars
+        - Success/error status
+        """,
+        responses={
+            200: OpenApiResponse(response=GoogleOAuthCallbackSerializer, description="✅ OAuth successful, connection created"),
+            400: OpenApiResponse(description="❌ OAuth failed or missing authorization code"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            500: OpenApiResponse(description="💥 Server error during OAuth process")
+        },
+        tags=["Google Calendar"]
+    )
+    @action(detail=False, methods=['get'], url_path='google_callback')
+    def google_oauth_callback(self, request):
+        """
+        🎯 MAIN ENTRY POINT - Handle Google OAuth callback
+        This is where our backend picks up the OAuth flow
+        """
+        code = request.GET.get('code')
+        error = request.GET.get('error')
+        
+        if error:
+            logger.warning(f"Google OAuth error: {error}")
+            return Response({'error': f'OAuth failed: {error}'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        if not code:
+            logger.warning("No authorization code received in OAuth callback")
+            return Response({'error': 'No authorization code received'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # 1. Exchange code for tokens
+            credentials = GoogleOAuthService.exchange_code_for_tokens(code)
+            
+            # 2. Get user info from Google
+            user_info = GoogleOAuthService.get_user_info(credentials)
+            
+            # 3. Get user's workspace (assuming users belong to workspaces)
+            user_workspace = self._get_user_workspace(request.user)
+            if not user_workspace:
+                return Response({
+                    'error': 'User must belong to a workspace to connect Google Calendar'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 4. Create or update GoogleCalendarConnection
+            connection, created = GoogleCalendarConnection.objects.update_or_create(
+                workspace=user_workspace,
+                account_email=user_info['email'],
+                defaults={
+                    'user': request.user,
+                    'refresh_token': credentials.refresh_token,
+                    'access_token': credentials.token,
+                    'token_expires_at': credentials.expiry,
+                    'scopes': list(credentials.scopes),
+                    'active': True
+                }
+            )
+            
+            # 5. Immediately sync calendar list
+            service = GoogleCalendarService(connection)
+            synced_calendars = service.sync_calendars()
+            
+            logger.info(f"{'Created' if created else 'Updated'} Google Calendar connection for {user_info['email']}")
+            
+            # 6. Return success with calendar data
+            return Response({
+                'success': True,
+                'connection': {
+                    'id': connection.id,
+                    'account_email': connection.account_email,
+                    'calendars_count': len(synced_calendars),
+                    'created': created
+                },
+                'calendars': CalendarSerializer(synced_calendars, many=True).data,
+                'message': f'Successfully connected {connection.account_email}'
+            })
+            
+        except Exception as e:
+            logger.error(f"Google OAuth callback failed: {str(e)}")
+            return Response({
+                'error': 'Failed to connect Google Calendar',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _get_user_workspace(self, user):
+        """Get user's workspace (customize based on your user-workspace relationship)"""
+        # Assuming users have a default workspace or belong to one workspace
+        # Adjust this logic based on your actual user-workspace relationship
+        if hasattr(user, 'workspaces'):
+            return user.workspaces.first()
+        elif hasattr(user, 'workspace'):
+            return user.workspace
+        else:
+            # If user doesn't have workspace, try to get or create one
+            workspace, _ = Workspace.objects.get_or_create(
+                workspace_name=f"{user.username}_workspace",
+                defaults={'description': f'Default workspace for {user.username}'}
+            )
+            return workspace
+    
+    # 🔗 GOOGLE CONNECTION MANAGEMENT
+    
+    @extend_schema(
+        summary="📋 List Google Calendar Connections",
+        description="Get all Google Calendar connections for the user's workspace",
+        responses={200: OpenApiResponse(response=GoogleCalendarConnectionSerializer(many=True))},
+        tags=["Google Calendar"]
+    )
+    @action(detail=False, methods=['get'], url_path='google_connections')
+    def list_google_connections(self, request):
+        """List Google Calendar connections for workspace"""
+        user = request.user
+        if user.is_staff:
+            connections = GoogleCalendarConnection.objects.all()
+        else:
+            user_workspace = self._get_user_workspace(user)
+            connections = GoogleCalendarConnection.objects.filter(workspace=user_workspace)
+        
+        serializer = GoogleCalendarConnectionSerializer(connections, many=True)
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="🔄 Refresh Google Connection",
+        description="Refresh tokens and sync calendars for a Google connection",
+        responses={200: OpenApiResponse(response=GoogleCalendarConnectionSerializer)},
+        tags=["Google Calendar"]
+    )
+    @action(detail=True, methods=['post'], url_path='google_refresh')
+    def refresh_google_connection(self, request, pk=None):
+        """Refresh Google connection tokens and sync calendars"""
+        try:
+            connection = GoogleCalendarConnection.objects.get(pk=pk)
+            
+            # Check permissions
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            
+            service = GoogleCalendarService(connection)
+            
+            # Test and refresh connection
+            test_result = service.test_connection()
+            if not test_result['success']:
+                return Response({
+                    'error': 'Connection test failed',
+                    'details': test_result.get('error')
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Sync calendars
+            synced_calendars = service.sync_calendars()
+            
+            return Response({
+                'success': True,
+                'connection': GoogleCalendarConnectionSerializer(connection).data,
+                'calendars_synced': len(synced_calendars),
+                'message': f'Successfully refreshed connection for {connection.account_email}'
+            })
+            
+        except GoogleCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to refresh Google connection: {str(e)}")
+            return Response({
+                'error': 'Failed to refresh connection',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="🔌 Disconnect Google Calendar",
+        description="Revoke Google tokens and deactivate connection",
+        tags=["Google Calendar"]
+    )
+    @action(detail=True, methods=['post'], url_path='google_disconnect')
+    def disconnect_google_connection(self, request, pk=None):
+        """Disconnect Google Calendar connection"""
+        try:
+            connection = GoogleCalendarConnection.objects.get(pk=pk)
+            
+            # Check permissions
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            
+            # Revoke token at Google
+            revoked = GoogleOAuthService.revoke_token(connection.refresh_token)
+            
+            # Deactivate connection and related calendars
+            connection.active = False
+            connection.save()
+            
+            # Deactivate related calendars
+            Calendar.objects.filter(
+                google_calendar__connection=connection
+            ).update(active=False)
+            
+            logger.info(f"Disconnected Google Calendar for {connection.account_email}")
+            
+            return Response({
+                'success': True,
+                'message': f'Successfully disconnected {connection.account_email}',
+                'token_revoked': revoked
+            })
+            
+        except GoogleCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to disconnect Google connection: {str(e)}")
+            return Response({
+                'error': 'Failed to disconnect',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    # 📊 CALENDAR FUNCTIONALITY
     
     @extend_schema(
         summary="Get calendar configurations",
@@ -130,12 +351,12 @@ class CalendarViewSet(viewsets.ModelViewSet):
     def configurations(self, request, pk=None):
         """Get all configurations for a specific calendar"""
         calendar = self.get_object()
-        configurations = calendar.mapping_calendar_configurations.all()
+        configurations = calendar.configurations.all()
         serializer = CalendarConfigurationSerializer(configurations, many=True)
         return Response(serializer.data)
     
     @extend_schema(
-        summary="Test calendar connection",
+        summary="🧪 Test calendar connection",
         description="Test the connection to the calendar service",
         tags=["Calendar Management"]
     )
@@ -144,16 +365,89 @@ class CalendarViewSet(viewsets.ModelViewSet):
         """Test calendar connection"""
         calendar = self.get_object()
         
-        # This would contain actual calendar API integration logic
-        # For now, return a mock response
-        return Response({
-            'calendar_id': calendar.id,
-            'calendar_type': calendar.calendar_type,
-            'account_id': calendar.account_id,
-            'connection_status': 'success',
-            'message': 'Calendar connection test successful',
-            'last_tested': datetime.now().isoformat()
-        })
+        try:
+            service = CalendarServiceFactory.get_service(calendar)
+            result = service.test_connection()
+            
+            return Response({
+                'calendar_id': calendar.id,
+                'provider': calendar.provider,
+                'name': calendar.name,
+                **result,
+                'last_tested': timezone.now().isoformat()
+            })
+            
+        except Exception as e:
+            logger.error(f"Calendar connection test failed for {calendar.id}: {str(e)}")
+            return Response({
+                'calendar_id': calendar.id,
+                'provider': calendar.provider,
+                'connection_status': 'error',
+                'error': str(e),
+                'last_tested': timezone.now().isoformat()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="🗓️ Create calendar event",
+        description="Create an event in the calendar",
+        request=EventCreateSerializer,
+        tags=["Calendar Management"]
+    )
+    @action(detail=True, methods=['post'], url_path='create-event')
+    def create_event(self, request, pk=None):
+        """Create an event in the calendar"""
+        calendar = self.get_object()
+        serializer = EventCreateSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            service = CalendarServiceFactory.get_service(calendar)
+            
+            # Prepare event data for Google Calendar API
+            event_data = {
+                'summary': serializer.validated_data['summary'],
+                'description': serializer.validated_data.get('description', ''),
+                'start': {
+                    'dateTime': serializer.validated_data['start_time'].isoformat(),
+                    'timeZone': 'UTC'
+                },
+                'end': {
+                    'dateTime': serializer.validated_data['end_time'].isoformat(),
+                    'timeZone': 'UTC'
+                }
+            }
+            
+            # Add attendees if provided
+            if serializer.validated_data.get('attendee_emails'):
+                event_data['attendees'] = [
+                    {'email': email} for email in serializer.validated_data['attendee_emails']
+                ]
+            
+            event = service.create_event(
+                serializer.validated_data['calendar_id'],
+                event_data
+            )
+            
+            return Response({
+                'success': True,
+                'event': {
+                    'id': event['id'],
+                    'summary': event['summary'],
+                    'start': event['start'],
+                    'end': event['end'],
+                    'html_link': event.get('htmlLink')
+                },
+                'message': 'Event created successfully'
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to create event in calendar {calendar.id}: {str(e)}")
+            return Response({
+                'error': 'Failed to create event',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @extend_schema_view(
@@ -200,7 +494,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     permission_classes = [CalendarConfigurationPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarConfigurationFilter
-    search_fields = ['sub_calendar_id', 'calendar__account_id', 'calendar__workspace__workspace_name']
+    search_fields = ['calendar__name', 'calendar__workspace__workspace_name']
     ordering_fields = ['duration', 'prep_time', 'created_at', 'updated_at']
     ordering = ['-created_at']
     
@@ -214,49 +508,108 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         """Filter queryset based on user permissions"""
         user = self.request.user
         if user.is_staff:
-            return CalendarConfiguration.objects.all()
+            return CalendarConfiguration.objects.all().select_related('calendar__workspace')
         else:
             # Regular users can only see configurations for calendars in their workspaces
             return CalendarConfiguration.objects.filter(
                 calendar__workspace__users=user
-            )
+            ).select_related('calendar__workspace')
     
     @extend_schema(
-        summary="Check availability",
-        description="Check available time slots for a specific date",
+        summary="🔍 Check availability",
+        description="Check available time slots for a specific date using real Google Calendar data",
+        request=CalendarAvailabilityRequestSerializer,
+        responses={200: OpenApiResponse(response=CalendarAvailabilityResponseSerializer)},
         tags=["Calendar Management"]
     )
     @action(detail=True, methods=['post'])
     def check_availability(self, request, pk=None):
-        """Check availability for a specific configuration and date"""
+        """Check availability for a specific configuration and date using real Google Calendar API"""
         configuration = self.get_object()
         serializer = CalendarAvailabilityRequestSerializer(data=request.data)
         
-        if serializer.is_valid():
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
             date = serializer.validated_data['date']
             duration_minutes = serializer.validated_data['duration_minutes']
             
-            # Mock availability logic - replace with actual calendar API integration
-            available_slots = []
-            current_time = datetime.combine(date, configuration.from_time)
-            end_time = datetime.combine(date, configuration.to_time)
+            # Get calendar service
+            calendar = configuration.calendar
+            service = CalendarServiceFactory.get_service(calendar)
             
-            while current_time + timedelta(minutes=duration_minutes) <= end_time:
-                slot = {
-                    'start_time': current_time.time().isoformat(),
-                    'end_time': (current_time + timedelta(minutes=duration_minutes)).time().isoformat(),
-                    'available': True  # In real implementation, check against calendar API
-                }
-                available_slots.append(slot)
-                current_time += timedelta(minutes=30)  # 30-minute intervals
+            # Check if it's a Google calendar and get the external ID
+            if calendar.provider == 'google':
+                google_calendar = calendar.google_calendar
+                calendar_id = google_calendar.external_id
+            else:
+                return Response({
+                    'error': 'Real availability checking only supported for Google Calendar'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Define time window for the day
+            start_datetime = datetime.combine(date, configuration.from_time)
+            end_datetime = datetime.combine(date, configuration.to_time)
+            
+            # Get busy times from Google Calendar
+            busy_times = service.check_availability(calendar_id, start_datetime, end_datetime)
+            
+            # Calculate available slots
+            available_slots = self._calculate_available_slots(
+                start_datetime, end_datetime, busy_times, duration_minutes
+            )
             
             response_data = {
                 'date': date,
                 'available_slots': available_slots,
-                'calendar_config_id': configuration.id
+                'calendar_config_id': configuration.id,
+                'busy_times': busy_times
             }
             
             response_serializer = CalendarAvailabilityResponseSerializer(response_data)
             return Response(response_serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Failed to check availability for config {configuration.id}: {str(e)}")
+            return Response({
+                'error': 'Failed to check availability',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _calculate_available_slots(self, start_time, end_time, busy_times, duration_minutes):
+        """Calculate available time slots based on busy times"""
+        available_slots = []
+        current_time = start_time
+        slot_duration = timedelta(minutes=duration_minutes)
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST) 
+        # Convert busy times to datetime objects
+        busy_periods = []
+        for busy in busy_times:
+            busy_start = datetime.fromisoformat(busy['start'].replace('Z', '+00:00'))
+            busy_end = datetime.fromisoformat(busy['end'].replace('Z', '+00:00'))
+            busy_periods.append((busy_start, busy_end))
+        
+        # Sort busy periods
+        busy_periods.sort(key=lambda x: x[0])
+        
+        while current_time + slot_duration <= end_time:
+            slot_end = current_time + slot_duration
+            
+            # Check if this slot conflicts with any busy period
+            is_available = True
+            for busy_start, busy_end in busy_periods:
+                if (current_time < busy_end and slot_end > busy_start):
+                    is_available = False
+                    break
+            
+            if is_available:
+                available_slots.append({
+                    'start_time': current_time.time().isoformat(),
+                    'end_time': slot_end.time().isoformat(),
+                    'available': True
+                })
+            
+            current_time += timedelta(minutes=30)  # 30-minute intervals
+        
+        return available_slots 
