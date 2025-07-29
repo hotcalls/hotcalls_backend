@@ -4,6 +4,11 @@ services:
   db:
     image: postgres:15-alpine
     env_file: .env
+    environment:
+      # Map our .env variables to what PostgreSQL expects
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME}
     ports:
       - "5432:5432"
     volumes:
