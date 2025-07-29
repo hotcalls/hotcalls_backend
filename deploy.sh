@@ -938,7 +938,12 @@ deploy_kubernetes() {
     
     # Application settings with defaults
     export IMAGE_TAG="${IMAGE_TAG:-latest}"
-    export DEBUG="${DEBUG:-False}"
+    # DEBUG should be True for staging, False for production
+    if [[ "$ENVIRONMENT" == "staging" ]]; then
+        export DEBUG="${DEBUG:-True}"
+    else
+        export DEBUG="${DEBUG:-False}"
+    fi
     export TIME_ZONE="${TIME_ZONE:-UTC}"
     export DB_SSLMODE="${DB_SSLMODE:-require}"
     
@@ -1038,6 +1043,9 @@ deploy_kubernetes() {
     # Deploy backend applications (depends on Redis and config)
     envsubst < deployment.yaml | kubectl apply -f -
     
+    # Run Django migrations after backend is deployed
+    run_django_migrations
+    
     # Apply ingress last (after services are ready)
     log_info "Creating networking..."
     
@@ -1122,6 +1130,85 @@ EOF
     # Wait a moment for the service account patch to propagate
     log_info "Waiting for service account configuration to propagate..."
     sleep 5
+}
+
+# Run Django migrations
+run_django_migrations() {
+    log_info "Running Django database migrations..."
+    
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
+    # Wait for backend deployment to have at least one ready pod
+    log_info "Waiting for backend pods to be ready..."
+    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-backend \
+        -n "$NAMESPACE" --timeout=300s || {
+        log_error "Backend deployment not ready for migrations"
+        return 1
+    }
+    
+    # Give the pod a moment to fully initialize
+    sleep 5
+    
+    # Create a migration job
+    log_info "Creating migration job..."
+    cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: django-migrate-$(date +%s)
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: migration
+    environment: ${ENVIRONMENT}
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
+        command: ["python", "manage.py", "migrate", "--noinput"]
+        envFrom:
+        - configMapRef:
+            name: ${PROJECT_PREFIX}-config
+        - secretRef:
+            name: ${PROJECT_PREFIX}-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+EOF
+    
+    # Wait for migration job to complete
+    JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=migration \
+        --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+    
+    if [[ -n "$JOB_NAME" ]]; then
+        log_info "Waiting for migration job $JOB_NAME to complete..."
+        if kubectl wait --for=condition=complete job/$JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+            log_success "Database migrations completed successfully!"
+            
+            # Show migration logs
+            log_info "Migration logs:"
+            kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=50
+        else
+            log_error "Migration job failed or timed out!"
+            kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=100
+            return 1
+        fi
+    else
+        log_error "Could not find migration job!"
+        return 1
+    fi
 }
 
 # Install nginx ingress controller if not present

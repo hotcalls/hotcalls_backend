@@ -16,8 +16,8 @@ logger.info(f"Loaded {__name__} settings module")
 # Staging environment identifier
 ENVIRONMENT = 'staging'
 
-# Debug can be True for staging to help troubleshoot issues
-DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
+# Debug should always be True for staging to help troubleshoot issues
+DEBUG = True  # Always True for staging
 
 # Get allowed hosts from environment (set by deploy.sh)
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
