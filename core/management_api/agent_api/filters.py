@@ -26,6 +26,7 @@ class AgentFilter(django_filters.FilterSet):
     # EXISTING: Other filters
     language = django_filters.CharFilter(lookup_expr='icontains')
     character = django_filters.CharFilter(lookup_expr='icontains')
+    prompt = django_filters.CharFilter(lookup_expr='icontains')
     config_id = django_filters.CharFilter(lookup_expr='icontains')
     
     # Workspace filters
@@ -57,7 +58,7 @@ class AgentFilter(django_filters.FilterSet):
     
     class Meta:
         model = Agent
-        fields = ['workspace', 'name', 'status', 'voice', 'language', 'retry_interval']
+        fields = ['workspace', 'name', 'status', 'voice', 'language', 'retry_interval', 'character', 'prompt']
     
     def filter_search(self, queryset, name, value):
         """Global search across multiple fields"""
@@ -65,6 +66,7 @@ class AgentFilter(django_filters.FilterSet):
             models.Q(name__icontains=value) |
             models.Q(language__icontains=value) |
             models.Q(character__icontains=value) |
+            models.Q(prompt__icontains=value) |
             models.Q(greeting_inbound__icontains=value) |
             models.Q(greeting_outbound__icontains=value) |
             models.Q(workspace__workspace_name__icontains=value) |

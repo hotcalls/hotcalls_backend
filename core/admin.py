@@ -1,6 +1,10 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
+from .models import (
+    GoogleCalendarConnection, GoogleCalendar
+)
+from django.utils import timezone
 
 
 @admin.register(User)
@@ -89,17 +93,24 @@ class PlanFeatureInline(admin.TabularInline):
     extra = 1
 
 
+class GoogleCalendarInline(admin.TabularInline):
+    model = GoogleCalendar
+    extra = 0
+    fields = ('external_id', 'primary', 'time_zone')
+    readonly_fields = ('external_id', 'primary', 'time_zone', 'created_at', 'updated_at')
+
+
 class CalendarInline(admin.TabularInline):
     model = Calendar
     extra = 0
-    fields = ('calendar_type', 'account_id')
+    fields = ('name', 'provider', 'active')
     readonly_fields = ('created_at', 'updated_at')
 
 
 class CalendarConfigurationInline(admin.TabularInline):
     model = CalendarConfiguration
     extra = 0
-    fields = ('sub_calendar_id', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+    fields = ('duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
 
 
 @admin.register(Plan)
@@ -116,15 +127,19 @@ class PlanAdmin(admin.ModelAdmin):
 
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):
-    list_display = ('workspace_name', 'get_calendars_count', 'created_at', 'updated_at')
+    list_display = ('workspace_name', 'get_calendars_count', 'get_google_connections_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
     inlines = [CalendarInline]
     
     def get_calendars_count(self, obj):
-        return obj.mapping_workspace_calendars.count()
+        return obj.calendars.count()
     get_calendars_count.short_description = 'Calendars'
+    
+    def get_google_connections_count(self, obj):
+        return obj.google_calendar_connections.filter(active=True).count()
+    get_google_connections_count.short_description = 'Google Connections'
 
 
 @admin.register(Agent)
@@ -191,28 +206,122 @@ class CallLogAdmin(admin.ModelAdmin):
     readonly_fields = ('timestamp', 'updated_at')
 
 
+@admin.register(GoogleCalendarConnection)
+class GoogleCalendarConnectionAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'account_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
+    list_filter = ('active', 'workspace', 'last_sync', 'created_at')
+    search_fields = ('workspace__workspace_name', 'account_email')
+    ordering = ('-created_at',)
+    readonly_fields = ('access_token', 'refresh_token', 'token_expires_at', 'scopes', 'sync_errors', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Connection Info', {
+            'fields': ('workspace', 'user', 'account_email', 'active')
+        }),
+        ('OAuth Tokens (Read Only)', {
+            'fields': ('access_token', 'refresh_token', 'token_expires_at', 'scopes'),
+            'classes': ('collapse',)
+        }),
+        ('Sync Status', {
+            'fields': ('last_sync', 'sync_errors'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_calendars_count(self, obj):
+        return obj.calendars.count()
+    get_calendars_count.short_description = 'Calendars'
+
+
+@admin.register(GoogleCalendar)
+class GoogleCalendarAdmin(admin.ModelAdmin):
+    list_display = ('get_calendar_name', 'external_id', 'primary', 'time_zone', 'created_at')
+    list_filter = ('primary', 'time_zone', 'created_at')
+    search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
+    ordering = ('-created_at',)
+    readonly_fields = ('external_id', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Calendar Info', {
+            'fields': ('calendar', 'external_id', 'primary', 'time_zone')
+        }),
+        ('OAuth Tokens', {
+            'fields': ('refresh_token', 'access_token', 'token_expires_at', 'scopes'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_calendar_name(self, obj):
+        return obj.calendar.name
+    get_calendar_name.short_description = 'Calendar Name'
+    get_calendar_name.admin_order_field = 'calendar__name'
+
+
 @admin.register(Calendar)
 class CalendarAdmin(admin.ModelAdmin):
-    list_display = ('workspace', 'calendar_type', 'account_id', 'get_configs_count', 'created_at', 'updated_at')
-    list_filter = ('calendar_type', 'workspace', 'created_at')
-    search_fields = ('workspace__workspace_name', 'account_id', 'calendar_type')
+    list_display = ('name', 'workspace', 'provider', 'active', 'get_configs_count', 'get_connection_status', 'created_at')
+    list_filter = ('provider', 'active', 'workspace', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
-    inlines = [CalendarConfigurationInline]
+    inlines = [CalendarConfigurationInline, GoogleCalendarInline]
     
     def get_configs_count(self, obj):
-        return obj.mapping_calendar_configurations.count()
+        return obj.configurations.count()
     get_configs_count.short_description = 'Configurations'
+    
+    def get_connection_status(self, obj):
+        if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
+            # Check if the Google calendar has valid tokens
+            google_cal = obj.google_calendar
+            if google_cal.token_expires_at and google_cal.token_expires_at > timezone.now():
+                return '✅ Connected'
+            else:
+                return '⚠️ Token Expired'
+        return '❓ Unknown'
+    get_connection_status.short_description = 'Status'
 
 
 @admin.register(CalendarConfiguration)
 class CalendarConfigurationAdmin(admin.ModelAdmin):
-    list_display = ('get_workspace', 'calendar', 'sub_calendar_id', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
-    list_filter = ('calendar__calendar_type', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
-    search_fields = ('calendar__workspace__workspace_name', 'calendar__account_id', 'sub_calendar_id')
+    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+    list_filter = ('calendar__provider', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
+    search_fields = ('calendar__workspace__workspace_name', 'calendar__name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Calendar Info', {
+            'fields': ('calendar',)
+        }),
+        ('Scheduling Settings', {
+            'fields': ('duration', 'prep_time', 'days_buffer')
+        }),
+        ('Availability Window', {
+            'fields': ('from_time', 'to_time', 'workdays')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
     
     def get_workspace(self, obj):
         return obj.calendar.workspace.workspace_name
     get_workspace.short_description = 'Workspace'
+    
+    def get_calendar_name(self, obj):
+        return obj.calendar.name
+    get_calendar_name.short_description = 'Calendar'
+    
+    def get_provider(self, obj):
+        return obj.calendar.provider.title()
+    get_provider.short_description = 'Provider'

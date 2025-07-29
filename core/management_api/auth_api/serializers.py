@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from core.models import User
-from core.utils import send_email_verification
+from core.utils import send_email_verification, create_user_workspace
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -33,7 +33,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Create user with email verification required"""
+        """Create user with email verification required and automatic workspace creation"""
         validated_data.pop('password_confirm')
         password = validated_data.pop('password')
         
@@ -46,6 +46,15 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         
         # Send verification email
         send_email_verification(user, self.context.get('request'))
+        
+        # Create workspace for the user automatically
+        workspace = create_user_workspace(user)
+        
+        # Log workspace creation result
+        if workspace:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Workspace '{workspace.workspace_name}' created for new user {user.email}")
         
         return user
 

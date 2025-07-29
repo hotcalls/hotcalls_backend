@@ -80,7 +80,7 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         Create a new AI agent for a workspace.
         
         **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot create agents
+        - **✅ Regular Users**: Can create agents in workspaces they belong to
         - **✅ Staff Members**: Can create agents for any workspace
         - **✅ Superusers**: Can create agents for any workspace
         
@@ -91,8 +91,10 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         - Calendar integration options
         
         **📝 Required Information**:
-        - `workspace`: Target workspace ID
-        - `greeting`: Agent greeting message
+        - `workspace`: Target workspace ID (must be a workspace you belong to)
+        - `name`: Agent name
+        - `greeting_inbound`: Greeting for inbound calls
+        - `greeting_outbound`: Greeting for outbound calls
         - `voice`: Voice configuration
         - `language`: Agent language
         - `workdays`: Available working days
@@ -111,7 +113,9 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
                         value={
                             'agent_id': 'new-agent-uuid',
                             'workspace_name': 'Customer Support',
-                            'greeting': 'Hi! I\'m your AI assistant. How can I help you today?',
+                            'name': 'Sales Assistant',
+                            'greeting_inbound': 'Hi! I\'m your AI assistant. How can I help you today?',
+                            'greeting_outbound': 'Hello! I\'m calling from [Company]. Is this a good time to talk?',
                             'voice': 'en-US-AriaNeural',
                             'language': 'English',
                             'phone_number_count': 0,
@@ -120,15 +124,15 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
                     )
                 ]
             ),
-            400: OpenApiResponse(description="❌ Validation error - Check agent configuration"),
+            400: OpenApiResponse(description="❌ Validation error - Check agent configuration or workspace access"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(
-                description="🚫 Permission denied - Staff access required for agent creation",
+                description="🚫 Permission denied - You can only create agents in workspaces you belong to",
                 examples=[
                     OpenApiExample(
-                        'Access Denied',
-                        summary='Regular user attempted agent creation',
-                        value={'detail': 'You do not have permission to perform this action.'}
+                        'Workspace Access Denied',
+                        summary='User attempted to create agent in workspace they don\'t belong to',
+                        value={'workspace': ['You can only create agents in workspaces you belong to']}
                     )
                 ]
             )
@@ -161,10 +165,10 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
     update=extend_schema(
         summary="✏️ Update AI agent",
         description="""
-        Update AI agent configuration (Staff only).
+        Update AI agent configuration.
         
         **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot modify agents
+        - **✅ Regular Users**: Can update agents in workspaces they belong to
         - **✅ Staff Members**: Can update any agent configuration
         - **✅ Superusers**: Can update any agent configuration
         
@@ -178,7 +182,16 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
             200: OpenApiResponse(response=AgentSerializer, description="✅ Agent updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
             401: OpenApiResponse(description="🚫 Authentication required"),
-            403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
+            403: OpenApiResponse(
+                description="🚫 Permission denied - You can only update agents in workspaces you belong to",
+                examples=[
+                    OpenApiExample(
+                        'Workspace Access Denied',
+                        summary='User attempted to update agent in workspace they don\'t belong to',
+                        value={'detail': 'You do not have permission to perform this action.'}
+                    )
+                ]
+            ),
             404: OpenApiResponse(description="🚫 Agent not found")
         },
         tags=["Agent Management"]
@@ -186,16 +199,21 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
     partial_update=extend_schema(
         summary="✏️ Partially update AI agent",
         description="""
-        Update specific fields of an AI agent (Staff only).
+        Update specific fields of an AI agent.
         
-        **🔐 Permission Requirements**: Staff access required
+        **🔐 Permission Requirements**:
+        - **✅ Regular Users**: Can update agents in workspaces they belong to
+        - **✅ Staff Members**: Can update any agent configuration
+        - **✅ Superusers**: Can update any agent configuration
         """,
         request=AgentCreateSerializer,
         responses={
             200: OpenApiResponse(response=AgentSerializer, description="✅ Agent updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
             401: OpenApiResponse(description="🚫 Authentication required"),
-            403: OpenApiResponse(description="🚫 Permission denied"),
+            403: OpenApiResponse(
+                description="🚫 Permission denied - You can only update agents in workspaces you belong to"
+            ),
             404: OpenApiResponse(description="🚫 Agent not found")
         },
         tags=["Agent Management"]
@@ -206,9 +224,9 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         **⚠️ DESTRUCTIVE OPERATION - Permanently delete an AI agent.**
         
         **🔐 Permission Requirements**:
-        - **❌ Regular Users**: No access to agent deletion
-        - **❌ Staff Members**: Cannot delete agents
-        - **✅ Superuser ONLY**: Can delete agents
+        - **✅ Regular Users**: Can delete agents in workspaces they belong to
+        - **✅ Staff Members**: Can delete any agent
+        - **✅ Superusers**: Can delete any agent
         
         **💥 Critical Impact**:
         - Removes agent and all configurations
@@ -225,11 +243,11 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
             204: OpenApiResponse(description="✅ Agent deleted successfully"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(
-                description="🚫 Permission denied - Only superusers can delete agents",
+                description="🚫 Permission denied - You can only delete agents in workspaces you belong to",
                 examples=[
                     OpenApiExample(
-                        'Insufficient Permissions',
-                        summary='Non-superuser attempted agent deletion',
+                        'Workspace Access Denied',
+                        summary='User attempted to delete agent in workspace they don\'t belong to',
                         value={'detail': 'You do not have permission to perform this action.'}
                     )
                 ]
@@ -244,9 +262,9 @@ class AgentViewSet(viewsets.ModelViewSet):
     🤖 **AI Agent Management with Workspace-Based Access Control**
     
     Manages AI agents with workspace-filtered access:
-    - **👤 Regular Users**: Access only agents in their workspaces
+    - **👤 Regular Users**: Can view, create, update, and delete agents in their workspaces
     - **👔 Staff**: Full agent administration across all workspaces
-    - **🔧 Superusers**: Complete agent control including deletion
+    - **🔧 Superusers**: Complete agent control across all workspaces
     """
     queryset = Agent.objects.all()
     permission_classes = [AgentPermission]

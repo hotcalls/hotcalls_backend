@@ -41,10 +41,7 @@ SOCIAL_PROVIDER_CHOICES = [
     ('facebook', 'Facebook'),
 ]
 
-CALENDAR_TYPE_CHOICES = [
-    ('google', 'Google'),
-    ('outlook', 'Outlook'),
-]
+
 
 
 class CustomUserManager(BaseUserManager):
@@ -105,6 +102,19 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         null=True,
         help_text="When the verification email was last sent"
+    )
+    
+    # Password reset fields
+    password_reset_token = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Token for password reset"
+    )
+    password_reset_sent_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="When the password reset email was last sent"
     )
     
     # User profile fields
@@ -208,6 +218,36 @@ class User(AbstractBaseUser, PermissionsMixin):
             return True
         return False
     
+    def generate_password_reset_token(self):
+        """Generate a new password reset token"""
+        self.password_reset_token = secrets.token_urlsafe(32)
+        self.password_reset_sent_at = timezone.now()
+        self.save(update_fields=['password_reset_token', 'password_reset_sent_at'])
+        return self.password_reset_token
+    
+    def verify_password_reset_token(self, token):
+        """Verify password reset token and check if it's still valid (24 hours)"""
+        if not self.password_reset_token or self.password_reset_token != token:
+            return False
+        
+        # Check if token is expired (24 hours)
+        if self.password_reset_sent_at:
+            expiry_time = self.password_reset_sent_at + timezone.timedelta(hours=24)
+            if timezone.now() > expiry_time:
+                return False
+        
+        return True
+    
+    def reset_password_with_token(self, token, new_password):
+        """Reset password using the provided token"""
+        if self.verify_password_reset_token(token):
+            self.set_password(new_password)
+            self.password_reset_token = None
+            self.password_reset_sent_at = None
+            self.save(update_fields=['password', 'password_reset_token', 'password_reset_sent_at'])
+            return True
+        return False
+    
     def can_login(self):
         """Check if user can login (active and email verified)"""
         return self.is_active and self.status == 'active' and self.is_email_verified
@@ -224,14 +264,44 @@ class Voice(models.Model):
         max_length=50, 
         help_text="Voice provider (e.g., 'elevenlabs', 'openai', 'google')"
     )
+    name = models.CharField(
+        max_length=100, 
+        help_text="Voice display name"
+    )
+    gender = models.CharField(
+        max_length=20,
+        choices=[
+            ('male', 'Male'),
+            ('female', 'Female'),
+            ('neutral', 'Neutral'),
+        ],
+        help_text="Voice gender"
+    )
+    tone = models.CharField(
+        max_length=50, 
+        help_text="Voice tone/style"
+    )
+    recommend = models.BooleanField(
+        default=False, 
+        help_text="Recommended voice"
+    )
+    voice_sample = models.FileField(
+        upload_to='voice_samples/',
+        blank=True,
+        null=True,
+        help_text="Voice sample file (.wav or .mp3 format)"
+    )
+    voice_picture = models.ImageField(
+        upload_to='voice_pictures/',
+        blank=True,
+        null=True,
+        help_text="Voice picture file (.png or .jpg format)"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.provider}: {self.voice_external_id}"
-
-
-
+        return f"{self.name} ({self.provider})"
 
 
 class Plan(models.Model):
@@ -279,6 +349,16 @@ class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
+    
+    # Stripe integration
+    stripe_customer_id = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        unique=True,
+        help_text="Stripe Customer ID for billing"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -322,6 +402,10 @@ class Agent(models.Model):
         help_text="Retry interval in minutes",
         default=30
     )
+    max_retries = models.IntegerField(
+        help_text="Maximum number of retry attempts for calls",
+        default=3
+    )
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
@@ -329,6 +413,10 @@ class Agent(models.Model):
     call_from = models.TimeField(help_text="Start time for calls")
     call_to = models.TimeField(help_text="End time for calls")
     character = models.TextField(help_text="Agent character/personality description")
+    prompt = models.TextField(
+        help_text="Agent prompt/instructions for AI behavior",
+        blank=True
+    )
     config_id = models.CharField(
         max_length=255,
         null=True,
@@ -450,80 +538,138 @@ class CallLog(models.Model):
         return f"Call: {self.from_number} → {self.to_number} ({self.timestamp})"
 
 
-class Calendar(models.Model):
-    """Calendar integration for scheduling"""
+class GoogleCalendarConnection(models.Model):
+    """Google OAuth connection and API credentials"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    workspace = models.ForeignKey(
-        Workspace, 
+    user = models.ForeignKey(
+        'User', 
         on_delete=models.CASCADE, 
-        related_name='mapping_workspace_calendars',
-        null=True,
-        blank=True
+        related_name='google_calendar_connections'
     )
-    calendar_type = models.CharField(
-        max_length=20,
-        choices=CALENDAR_TYPE_CHOICES,
-        help_text="Calendar provider type",
-        default="google"
+    workspace = models.ForeignKey(
+        'Workspace', 
+        on_delete=models.CASCADE, 
+        related_name='google_calendar_connections'
     )
-    account_id = models.CharField(
-        max_length=255,
-        help_text="Account ID for the calendar service",
-        default="default@calendar.com"
+    
+    # Google OAuth fields
+    account_email = models.EmailField(help_text="Google account email")
+    refresh_token = models.TextField(help_text="OAuth refresh token")
+    access_token = models.TextField(help_text="OAuth access token")
+    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    scopes = models.JSONField(
+        default=list,
+        help_text="Granted OAuth scopes"
     )
-    auth_token = models.TextField(
-        help_text="Authentication token for calendar access",
-        default="default_token"
-    )
+    
+    # Connection status
+    active = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    sync_errors = models.JSONField(default=dict, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        unique_together = ['workspace', 'calendar_type', 'account_id']
+        unique_together = ['workspace', 'account_email']
+        indexes = [
+            models.Index(fields=['workspace', 'active']),
+            models.Index(fields=['token_expires_at']),
+        ]
     
     def __str__(self):
-        return f"{self.workspace.workspace_name} - {self.calendar_type.title()} ({self.account_id})"
+        return f"{self.workspace.workspace_name} - {self.account_email}"
+
+
+class Calendar(models.Model):
+    """Generic calendar - provider agnostic"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        'Workspace', 
+        on_delete=models.CASCADE, 
+        related_name='calendars'
+    )
+    name = models.CharField(max_length=255, default='', help_text="Display name for the calendar")
+    provider = models.CharField(
+        max_length=20, 
+        choices=[
+            ('google', 'Google Calendar'),
+            ('outlook', 'Microsoft Outlook'),
+        ],
+        default='google'
+    )
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['workspace', 'name', 'provider']
+        indexes = [
+            models.Index(fields=['workspace', 'provider', 'active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.name} ({self.provider})"
+
+
+class GoogleCalendar(models.Model):
+    """Google-specific calendar metadata"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    calendar = models.OneToOneField(
+        'Calendar', 
+        on_delete=models.CASCADE, 
+        related_name='google_calendar'
+    )
+    # Google Calendar API fields
+    external_id = models.CharField(
+        max_length=255, 
+        unique=True,
+        help_text="Google Calendar ID"
+    )
+    # Calendar properties
+    primary = models.BooleanField(default=False)
+    time_zone = models.CharField(max_length=50)
+    
+    refresh_token = models.CharField(max_length=255, help_text="Google Calendar API refresh token")
+    access_token = models.CharField(max_length=255, help_text="Google Calendar API access token")
+    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    scopes = models.JSONField(
+        default=list,
+        help_text="Granted OAuth scopes"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.calendar.name} ({self.external_id})"
 
 
 class CalendarConfiguration(models.Model):
     """Configuration settings for calendar scheduling"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     calendar = models.ForeignKey(
-        Calendar, 
+        'Calendar', 
         on_delete=models.CASCADE, 
-        related_name='mapping_calendar_configurations'
+        related_name='configurations'
     )
-    sub_calendar_id = models.CharField(
-        max_length=255,
-        help_text="Google subcalendar or actual calendar ID",
-        default="primary"
-    )
-    duration = models.IntegerField(
-        help_text="Duration of appointments in minutes",
-        default=30
-    )
-    prep_time = models.IntegerField(
-        help_text="Preparation time in minutes before appointments",
-        default=5
-    )
+    
+    # Scheduling settings
+    duration = models.IntegerField(help_text="Duration of appointments in minutes")
+    prep_time = models.IntegerField(help_text="Preparation time in minutes before appointments")
     days_buffer = models.IntegerField(
         default=0,
         help_text="Days buffer for scheduling (0 = same day)"
     )
-    from_time = models.TimeField(
-        help_text="Start time for scheduling availability",
-        default="09:00:00"
-    )
-    to_time = models.TimeField(
-        help_text="End time for scheduling availability", 
-        default="17:00:00"
-    )
+    from_time = models.TimeField(help_text="Start time for scheduling availability")
+    to_time = models.TimeField(help_text="End time for scheduling availability")
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
     )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"Config for {self.calendar} - {self.sub_calendar_id}"
+        return f"Config for {self.calendar.name} - {self.duration}min"

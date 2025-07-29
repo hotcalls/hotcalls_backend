@@ -10,6 +10,7 @@ class VoiceFilter(django_filters.FilterSet):
     search = django_filters.CharFilter(method='filter_search', label='Search')
     voice_external_id = django_filters.CharFilter(lookup_expr='icontains')
     provider = django_filters.CharFilter(lookup_expr='iexact')
+    name = django_filters.CharFilter(lookup_expr='icontains')
     
     # Provider choices filter
     provider_exact = django_filters.ChoiceFilter(
@@ -22,6 +23,18 @@ class VoiceFilter(django_filters.FilterSet):
             ('aws', 'AWS'),
         ]
     )
+    
+    # New field filters
+    gender = django_filters.ChoiceFilter(
+        field_name='gender',
+        choices=[
+            ('male', 'Male'),
+            ('female', 'Female'),
+            ('neutral', 'Neutral'),
+        ]
+    )
+    tone = django_filters.CharFilter(lookup_expr='icontains')
+    recommend = django_filters.BooleanFilter(field_name='recommend')
     
     # Date filters
     created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
@@ -40,13 +53,15 @@ class VoiceFilter(django_filters.FilterSet):
     
     class Meta:
         model = Voice
-        fields = ['provider', 'voice_external_id']
+        fields = ['provider', 'voice_external_id', 'name', 'gender', 'tone', 'recommend']
     
     def filter_search(self, queryset, name, value):
         """Global search across multiple fields"""
         return queryset.filter(
             models.Q(voice_external_id__icontains=value) |
-            models.Q(provider__icontains=value)
+            models.Q(provider__icontains=value) |
+            models.Q(name__icontains=value) |
+            models.Q(tone__icontains=value)
         )
     
     def filter_has_agents(self, queryset, name, value):

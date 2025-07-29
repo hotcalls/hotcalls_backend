@@ -225,3 +225,32 @@ pyrightconfig.json
 # Secret files
 create-staging-secrets.sh
 secrets.yaml
+cookies.txt
+# Media and binary files
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.svg
+*.webp
+*.raw
+*.heic
+
+# Audio files
+*.mp3
+*.wav
+*.ogg
+*.m4a
+*.flac
+*.aac
+*.wma
+*.aiff
+
+# Media directories
+media/
+uploads/
+assets/media/
+static/media/

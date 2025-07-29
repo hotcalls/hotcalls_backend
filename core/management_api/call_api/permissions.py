@@ -5,19 +5,26 @@ class CallLogPermission(permissions.BasePermission):
     """
     Custom permission for CallLog operations
     - All authenticated users can view call logs
-    - Only staff can create/modify call logs
+    - All authenticated users can make outbound calls
+    - Only staff can create/modify call logs (except outbound calls)
     - Only superusers can delete call logs
     """
     
     def has_permission(self, request, view):
-        # Authenticated users can access the API for read operations
+        # All authenticated users need access
+        if not (request.user and request.user.is_authenticated):
+            return False
+            
+        # Read operations for all authenticated users
         if request.method in permissions.SAFE_METHODS:
-            return request.user and request.user.is_authenticated
+            return True
         
-        # Write operations require staff privileges
-        return (request.user and 
-                request.user.is_authenticated and 
-                request.user.is_staff)
+        # Special case: make_outbound_call action is allowed for all authenticated users
+        if view.action == 'make_outbound_call':
+            return True
+        
+        # Other write operations require staff privileges
+        return request.user.is_staff
     
     def has_object_permission(self, request, view, obj):
         # Read permissions for authenticated users

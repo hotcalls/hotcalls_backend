@@ -20,14 +20,55 @@ SECURE_CONTENT_TYPE_NOSNIFF = False
 X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 
 # CORS Settings (permissive for development)
-CORS_ALLOW_ALL_ORIGINS = os.environ.get("CORS_ALLOW_ALL_ORIGINS", "True").lower() == "true"
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",  # React development server
     "http://127.0.0.1:3000",
+    "http://localhost:5173",  # Vite development server (actual port)
+    "http://127.0.0.1:5173",
+    "http://localhost:5175",  # Alternative Vite port
+    "http://127.0.0.1:5175",
     "http://localhost:8080",  # Vue development server
     "http://127.0.0.1:8080",
 ]
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'range',
+]
+CORS_EXPOSE_HEADERS = [
+    'content-length',
+    'content-range',
+    'accept-ranges',
+]
+
+# Session Configuration for Cookie Authentication
+SESSION_COOKIE_AGE = 86400  # 24 hours
+SESSION_COOKIE_HTTPONLY = False  # Allow JavaScript access for debugging
+SESSION_COOKIE_SECURE = False  # False for development (HTTP)
+SESSION_COOKIE_SAMESITE = 'Lax'  # Allow cross-site requests
+SESSION_SAVE_EVERY_REQUEST = True
+
+# CSRF Configuration for development
+CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript access
+CSRF_COOKIE_SECURE = False  # False for development (HTTP)  
+CSRF_COOKIE_SAMESITE = 'Lax'
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",  # Vite development server (actual port)
+    "http://127.0.0.1:5173",
+    "http://localhost:5175",  # Alternative Vite port
+    "http://127.0.0.1:5175",
+    "http://localhost:3000",  # React development server
+    "http://127.0.0.1:3000",
+]
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'

@@ -105,6 +105,150 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class OutboundCallSerializer(serializers.Serializer):
+    """Serializer for making outbound calls via LiveKit"""
+    
+    # Phone number to call (required)
+    phone = serializers.CharField(
+        required=True,
+        help_text="Phone number to call (required)"
+    )
+    
+    # Agent Selection (required)
+    agent_id = serializers.UUIDField(
+        required=True,
+        help_text="Agent UUID to make the call (required)"
+    )
+    
+    # Lead Selection (optional)
+    lead_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Lead UUID to associate with call (optional)"
+    )
+    
+    # NEW: Dynamic agent configuration override (optional)
+    agent_config = serializers.DictField(
+        required=False,
+        allow_null=True,
+        default=dict,
+        help_text="Optional: Override agent configuration fields for this call"
+    )
+    
+    # NEW: Lead data including custom fields (optional)
+    lead_data = serializers.DictField(
+        required=False,
+        allow_null=True,
+        default=dict,
+        help_text="Optional: Lead information with custom fields for personalization"
+    )
+    
+    # NEW: Custom greeting template (optional)
+    custom_greeting = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        max_length=1000,
+        help_text="Optional: Custom greeting with placeholders like {name}, {topic}, etc."
+    )
+    
+    def validate_agent_id(self, value):
+        """Validate agent exists and belongs to user's workspace"""
+        try:
+            agent = Agent.objects.get(agent_id=value)
+            request = self.context.get('request')
+            
+            # Check if user has access to this agent
+            if request and request.user:
+                if not request.user.is_staff:
+                    if request.user not in agent.workspace.users.all():
+                        raise serializers.ValidationError(
+                            "You can only use agents from your own workspace"
+                        )
+            
+            return value
+        except Agent.DoesNotExist:
+            raise serializers.ValidationError("Agent not found")
+    
+    def validate_lead_id(self, value):
+        """Validate lead exists if provided"""
+        if value and not Lead.objects.filter(id=value).exists():
+            raise serializers.ValidationError("Lead not found")
+        return value
+    
+    def validate_phone(self, value):
+        """Basic phone validation"""
+        if not value:
+            raise serializers.ValidationError("Phone number is required")
+        # Remove spaces and validate it starts with +
+        cleaned = value.replace(" ", "")
+        if not cleaned.startswith("+"):
+            raise serializers.ValidationError("Phone number must start with + and country code")
+        return cleaned
+    
+    def validate_agent_config(self, value):
+        """Validate agent_config contains only allowed fields"""
+        if not value:
+            return value
+        
+        # Define allowed fields based on Agent model
+        allowed_fields = {
+            'name', 'status', 'greeting_inbound', 'greeting_outbound',
+            'voice', 'language', 'retry_interval', 'max_retries',
+            'workdays', 'call_from', 'call_to', 'character', 
+            'prompt', 'config_id', 'calendar_configuration'
+        }
+        
+        # Check for invalid fields
+        invalid_fields = set(value.keys()) - allowed_fields
+        if invalid_fields:
+            raise serializers.ValidationError(
+                f"Invalid agent configuration fields: {', '.join(invalid_fields)}. "
+                f"Allowed fields are: {', '.join(sorted(allowed_fields))}"
+            )
+        
+        # Validate specific field types if provided
+        if 'workdays' in value and value['workdays'] is not None:
+            if not isinstance(value['workdays'], list):
+                raise serializers.ValidationError(
+                    {"workdays": "Must be a list of weekday names"}
+                )
+            valid_days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'}
+            for day in value['workdays']:
+                if day.lower() not in valid_days:
+                    raise serializers.ValidationError(
+                        {"workdays": f"'{day}' is not a valid weekday"}
+                    )
+        
+        if 'retry_interval' in value and value['retry_interval'] is not None:
+            if not isinstance(value['retry_interval'], int) or value['retry_interval'] < 0:
+                raise serializers.ValidationError(
+                    {"retry_interval": "Must be a positive integer"}
+                )
+                
+        if 'max_retries' in value and value['max_retries'] is not None:
+            if not isinstance(value['max_retries'], int) or value['max_retries'] < 0:
+                raise serializers.ValidationError(
+                    {"max_retries": "Must be a positive integer"}
+                )
+        
+        return value
+    
+    def validate_lead_data(self, value):
+        """Validate lead_data structure"""
+        if not value:
+            return value
+            
+        # Ensure custom_fields is a dict if provided
+        if 'custom_fields' in value and value['custom_fields'] is not None:
+            if not isinstance(value['custom_fields'], dict):
+                raise serializers.ValidationError(
+                    {"custom_fields": "Must be a dictionary of key-value pairs"}
+                )
+        
+        return value
+
+
 class CallLogAnalyticsSerializer(serializers.Serializer):
     """Serializer for call analytics"""
     total_calls = serializers.IntegerField(read_only=True)
