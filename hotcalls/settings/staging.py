@@ -19,8 +19,8 @@ ENVIRONMENT = 'staging'
 # Debug should always be True for staging to help troubleshoot issues
 DEBUG = True  # Always True for staging
 
-# Get allowed hosts from environment (set by deploy.sh)
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "*").split(",")
+# ALLOWED_HOSTS - ALWAYS use wildcard per user requirement
+ALLOWED_HOSTS = ["*"]
 
 # Security settings for staging (can be less strict than production)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"

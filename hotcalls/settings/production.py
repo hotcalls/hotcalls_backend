@@ -20,9 +20,8 @@ ENVIRONMENT = 'production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
-if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
-    raise ValueError("ALLOWED_HOSTS must be set in production")
+# ALLOWED_HOSTS - ALWAYS use wildcard per user requirement
+ALLOWED_HOSTS = ["*"]
 
 # Security settings (strict for production)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"

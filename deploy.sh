@@ -748,7 +748,7 @@ setup_kubernetes_environment() {
     log_info "Setting up Kubernetes environment variables..."
     
     # Fix environment variable substitution issues with EXPLICIT defaults
-    export ALLOWED_HOSTS="*"  # Allow all hosts (fix for pod IPs)
+    export ALLOWED_HOSTS="*"  # ALWAYS allow all hosts per user requirement
     export CORS_ALLOW_ALL_ORIGINS="${CORS_ALLOW_ALL_ORIGINS:-False}"
     export DEBUG="${DEBUG:-True}"  # True for staging, False for production
     export TIME_ZONE="${TIME_ZONE:-Europe/Berlin}"
@@ -959,11 +959,10 @@ deploy_kubernetes() {
     # Set BASE_URL based on domain parameter
     if [[ -n "$DOMAIN" ]]; then
         export BASE_URL="https://${DOMAIN}"
-        export ALLOWED_HOSTS="${DOMAIN},*.${DOMAIN#*.},localhost"
     else
         export BASE_URL="http://localhost:8000"
-        export ALLOWED_HOSTS="*"
     fi
+    # ALLOWED_HOSTS is ALWAYS * per user requirement - already set above
     
     # Set security settings for staging/production
     if [[ "$ENVIRONMENT" == "staging" ]] || [[ "$ENVIRONMENT" == "production" ]]; then

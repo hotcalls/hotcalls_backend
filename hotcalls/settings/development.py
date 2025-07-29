@@ -10,7 +10,8 @@ import os
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0").split(",")
+# ALLOWED_HOSTS - ALWAYS use wildcard per user requirement
+ALLOWED_HOSTS = ["*"]
 
 # Security settings (relaxed for development)
 SECURE_SSL_REDIRECT = False
