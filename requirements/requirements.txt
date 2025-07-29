@@ -19,6 +19,12 @@ openapi-spec-validator>=0.5.0
 livekit>=0.11.1           # LiveKit Python SDK for SIP calls
 livekit-api>=0.5.0        # LiveKit API client
 
+# Google Calendar Integration
+google-auth>=2.17.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.88.0
+
 # Celery and Redis for background tasks
 celery>=5.3.1             # Task queue
 django-celery-beat>=2.5.0 # For periodic task scheduling
