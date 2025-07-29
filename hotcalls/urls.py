@@ -22,7 +22,6 @@ from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from core.health import health_check
 from core.utils import CORSMediaView
-from core.management_api import api_root
 
 urlpatterns = [
     # Admin interface
@@ -31,9 +30,6 @@ urlpatterns = [
     # Health check
     path('health/', health_check, name='health_check'),
     path('health/', include('health_check.urls')),
-    
-    # API Root - shows available endpoints
-    path('api/', api_root, name='api_root'),
     
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
@@ -53,6 +49,11 @@ urlpatterns = [
     path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
     path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
+    # Meta Integration Management API
+    path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
+    
+    # Meta Webhooks (for Meta to call)
+    path('api/integrations/meta/', include('core.management_api.meta_api.webhook_urls')),
 ]
 
 # Serve media files in development with CORS support

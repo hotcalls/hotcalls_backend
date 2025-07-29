@@ -54,11 +54,20 @@ def readiness_check(request):
     # Check database connectivity
     try:
         db_conn = connections['default']
+        # Log database connection details for debugging
+        db_settings = db_conn.settings_dict
+        logger.info(f"Database connection attempt - Host: {db_settings.get('HOST')}, "
+                   f"Port: {db_settings.get('PORT')}, "
+                   f"Database: {db_settings.get('NAME')}, "
+                   f"User: {db_settings.get('USER')}, "
+                   f"SSL Mode: {db_settings.get('OPTIONS', {}).get('sslmode', 'none')}")
+        
         db_conn.cursor()
         checks['database'] = True
         logger.debug("Database check passed")
     except Exception as e:
         logger.error(f"Database check failed: {str(e)}")
+        logger.error(f"Database configuration: {connections['default'].settings_dict}")
         overall_status = 'unhealthy'
     
     # Check cache availability

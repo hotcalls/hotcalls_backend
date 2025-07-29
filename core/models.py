@@ -41,6 +41,20 @@ SOCIAL_PROVIDER_CHOICES = [
     ('facebook', 'Facebook'),
 ]
 
+INTEGRATION_PROVIDER_CHOICES = [
+    ('meta', 'Meta (Facebook/Instagram)'),
+    ('google', 'Google'),
+    ('manual', 'Manual Entry'),
+]
+
+META_INTEGRATION_STATUS_CHOICES = [
+    ('active', 'Active'),
+    ('expired', 'Expired'),
+    ('revoked', 'Revoked'),
+    ('error', 'Error'),
+    ('disconnected', 'Disconnected'),
+]
+
 
 
 
@@ -390,6 +404,28 @@ class Workspace(models.Model):
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
     
+    # Subscription
+    current_plan = models.ForeignKey(
+        'Plan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workspaces',
+        help_text="Current subscription plan"
+    )
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('trial', 'Trial'),
+            ('active', 'Active'),
+            ('cancelled', 'Cancelled'),
+            ('past_due', 'Past Due'),
+            ('unpaid', 'Unpaid'),
+        ],
+        default='trial',
+        help_text="Current subscription status"
+    )
+    
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
@@ -397,6 +433,12 @@ class Workspace(models.Model):
         null=True,
         unique=True,
         help_text="Stripe Customer ID for billing"
+    )
+    stripe_subscription_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Current Stripe Subscription ID (sub_xxx)"
     )
     
     # Subscription
@@ -555,6 +597,28 @@ class Lead(models.Model):
         max_length=50,
         help_text="Lead's phone number"
     )
+    
+    # Integration fields
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='leads',
+        null=True,  # Allow existing leads to have null workspace during migration
+        blank=True,
+        help_text="Workspace this lead belongs to"
+    )
+    integration_provider = models.CharField(
+        max_length=20,
+        choices=INTEGRATION_PROVIDER_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Integration provider source"
+    )
+    variables = models.JSONField(
+        default=dict,
+        help_text="Concrete lead variables from integration"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     meta_data = models.JSONField(
         default=dict,
@@ -764,3 +828,97 @@ class CalendarConfiguration(models.Model):
     
     def __str__(self):
         return f"Config for {self.calendar.name} - {self.duration}min"
+
+
+class MetaIntegration(models.Model):
+    """Meta (Facebook/Instagram) integration for workspaces"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace, 
+        on_delete=models.CASCADE, 
+        related_name='meta_integrations'
+    )
+    business_account_id = models.CharField(
+        max_length=255,
+        help_text="Meta Business Account ID"
+    )
+    page_id = models.CharField(
+        max_length=255,
+        help_text="Facebook/Instagram Page ID"
+    )
+    access_token = models.TextField(
+        help_text="Meta API access token (encrypted at rest)"
+    )
+    access_token_expires_at = models.DateTimeField(
+        help_text="When the access token expires"
+    )
+    verification_token = models.CharField(
+        max_length=255,
+        help_text="Webhook verification token for Meta"
+    )
+    scopes = models.JSONField(
+        default=list,
+        help_text="Granted Meta API scopes"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=META_INTEGRATION_STATUS_CHOICES,
+        default='active',
+        help_text="Integration status"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['workspace', 'business_account_id', 'page_id']
+        indexes = [
+            models.Index(fields=['workspace', 'status']),
+            models.Index(fields=['access_token_expires_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - Meta Integration ({self.status})"
+
+
+class MetaLeadForm(models.Model):
+    """Meta lead form configuration and mapping"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    meta_integration = models.ForeignKey(
+        MetaIntegration,
+        on_delete=models.CASCADE,
+        related_name='lead_forms'
+    )
+    meta_form_id = models.CharField(
+        max_length=255,
+        help_text="Meta Lead Form ID"
+    )
+    meta_lead_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Meta Lead ID (for tracking specific leads)"
+    )
+    variables_scheme = models.JSONField(
+        default=dict,
+        help_text="Field mapping schema for lead form variables"
+    )
+    lead = models.ForeignKey(
+        'Lead',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='meta_lead_forms',
+        help_text="Associated lead record"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['meta_integration', 'meta_form_id']
+        indexes = [
+            models.Index(fields=['meta_integration', 'meta_form_id']),
+            models.Index(fields=['meta_lead_id']),
+        ]
+    
+    def __str__(self):
+        return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"

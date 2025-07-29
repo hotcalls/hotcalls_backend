@@ -51,7 +51,7 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 USER django
 
 # Collect static files
-RUN ALLOWED_HOSTS=localhost python manage.py collectstatic --noinput --settings=hotcalls.settings.production
+RUN ALLOWED_HOSTS=localhost DJANGO_SETTINGS_MODULE=hotcalls.settings.production python manage.py collectstatic --noinput
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \

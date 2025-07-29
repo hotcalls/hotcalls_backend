@@ -13,7 +13,8 @@ from .serializers import (
     StripeCustomerSerializer,
     CreateStripeCustomerSerializer,
     StripePortalSessionSerializer,
-    RetrieveStripeCustomerSerializer
+    RetrieveStripeCustomerSerializer,
+    CreateCheckoutSessionSerializer
 )
 from .permissions import IsWorkspaceMember
 
@@ -391,6 +392,386 @@ def retrieve_stripe_customer(request):
 
 
 @extend_schema(
+    summary="📦 List all Stripe products and prices",
+    description="""
+    Returns all active Stripe products and their prices (monthly/yearly).
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - (Optional: Staff only, if gewünscht)
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ List of Stripe products and prices",
+            examples=[
+                OpenApiExample(
+                    'Products',
+                    value={
+                        'products': [
+                            {
+                                'id': 'prod_123',
+                                'name': 'Pro Plan',
+                                'description': 'Best plan',
+                                'prices': [
+                                    {
+                                        'id': 'price_abc',
+                                        'unit_amount': 1900,
+                                        'currency': 'eur',
+                                        'recurring': {'interval': 'month'}
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_stripe_products(request):
+    """List all Stripe products and their prices"""
+    import stripe
+    from django.conf import settings
+    stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
+
+    # Get all active products
+    products = stripe.Product.list(active=True, limit=100)
+    # Get all prices (for all products)
+    prices = stripe.Price.list(active=True, limit=100)
+
+    # Map prices to products
+    price_map = {}
+    for price in prices['data']:
+        product_id = price['product']
+        price_map.setdefault(product_id, []).append({
+            'id': price['id'],
+            'unit_amount': price['unit_amount'],
+            'currency': price['currency'],
+            'recurring': price.get('recurring'),
+            'nickname': price.get('nickname'),
+        })
+
+    result = []
+    for product in products['data']:
+        result.append({
+            'id': product['id'],
+            'name': product['name'],
+            'description': product.get('description'),
+            'active': product['active'],
+            'prices': price_map.get(product['id'], [])
+        })
+
+    return Response({'products': result})
+
+
+@extend_schema(
+    summary="💳 Create Stripe checkout session",
+    description="""
+    Create a Stripe Checkout session for subscription payment.
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+    - Workspace must have a Stripe customer
+    
+    **🎯 Process**:
+    1. Creates checkout session with selected price
+    2. Returns checkout URL
+    3. User completes payment on Stripe Checkout page
+    4. After payment, user is redirected to success_url
+    5. Webhook updates subscription status
+    """,
+    request=CreateCheckoutSessionSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Checkout session created",
+            examples=[
+                OpenApiExample(
+                    'Checkout URL',
+                    value={
+                        'checkout_url': 'https://checkout.stripe.com/pay/cs_xxx',
+                        'session_id': 'cs_xxx'
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(
+            description="❌ Validation error",
+            examples=[
+                OpenApiExample(
+                    'No Customer',
+                    value={'error': 'Workspace needs a Stripe customer first'}
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
+        500: OpenApiResponse(description="❌ Stripe API error")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@permission_classes([IsWorkspaceMember])
+def create_checkout_session(request):
+    """Create Stripe checkout session for subscription"""
+    serializer = CreateCheckoutSessionSerializer(
+        data=request.data,
+        context={'request': request}
+    )
+    
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    workspace_id = serializer.validated_data['workspace_id']
+    price_id = serializer.validated_data['price_id']
+    success_url = serializer.validated_data['success_url']
+    cancel_url = serializer.validated_data['cancel_url']
+    
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        
+        # Create checkout session
+        session = stripe.checkout.Session.create(
+            customer=workspace.stripe_customer_id,
+            payment_method_types=['card'],
+            line_items=[{
+                'price': price_id,
+                'quantity': 1,
+            }],
+            mode='subscription',
+            success_url=success_url + '?session_id={CHECKOUT_SESSION_ID}',
+            cancel_url=cancel_url,
+            metadata={
+                'workspace_id': str(workspace.id),
+                'workspace_name': workspace.workspace_name
+            }
+        )
+        
+        return Response({
+            'checkout_url': session.url,
+            'session_id': session.id
+        })
+        
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except stripe.error.StripeError as e:
+        return Response(
+            {"error": f"Stripe error: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="📊 Get workspace subscription status",
+    description="""
+    Get the current subscription status for a workspace.
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+    
+    **📊 Returns**:
+    - Current subscription details
+    - Plan information
+    - Next billing date
+    - Subscription status
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Subscription details retrieved",
+            examples=[
+                OpenApiExample(
+                    'Active Subscription',
+                    value={
+                        'has_subscription': True,
+                        'subscription': {
+                            'id': 'sub_xxx',
+                            'status': 'active',
+                            'current_period_end': 1234567890,
+                            'cancel_at_period_end': False,
+                            'plan': {
+                                'id': 'price_xxx',
+                                'product': 'prod_xxx',
+                                'amount': 4900,
+                                'currency': 'eur',
+                                'interval': 'month'
+                            }
+                        }
+                    }
+                ),
+                OpenApiExample(
+                    'No Subscription',
+                    value={
+                        'has_subscription': False,
+                        'subscription': None
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsWorkspaceMember])
+def get_subscription_status(request, workspace_id):
+    """Get current subscription status for workspace"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        
+        if not workspace.stripe_customer_id:
+            return Response({
+                'has_subscription': False,
+                'subscription': None
+            })
+        
+        # Get active subscriptions
+        subscriptions = stripe.Subscription.list(
+            customer=workspace.stripe_customer_id,
+            status='active',
+            limit=1
+        )
+        
+        if subscriptions['data']:
+            subscription = subscriptions['data'][0]
+            
+            # Update workspace subscription status
+            workspace.stripe_subscription_id = subscription.id
+            workspace.subscription_status = 'active'
+            workspace.save()
+            
+            return Response({
+                'has_subscription': True,
+                'subscription': {
+                    'id': subscription.id,
+                    'status': subscription.status,
+                    'current_period_end': subscription.current_period_end,
+                    'cancel_at_period_end': subscription.cancel_at_period_end,
+                    'plan': {
+                        'id': subscription['items']['data'][0]['price']['id'],
+                        'product': subscription['items']['data'][0]['price']['product'],
+                        'amount': subscription['items']['data'][0]['price']['unit_amount'],
+                        'currency': subscription['items']['data'][0]['price']['currency'],
+                        'interval': subscription['items']['data'][0]['price']['recurring']['interval']
+                    }
+                }
+            })
+        else:
+            # Check for other statuses
+            all_subs = stripe.Subscription.list(
+                customer=workspace.stripe_customer_id,
+                limit=1
+            )
+            
+            if all_subs['data']:
+                sub = all_subs['data'][0]
+                workspace.stripe_subscription_id = sub.id
+                workspace.subscription_status = sub.status
+                workspace.save()
+            else:
+                workspace.subscription_status = 'none'
+                workspace.save()
+            
+            return Response({
+                'has_subscription': False,
+                'subscription': None
+            })
+            
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except stripe.error.StripeError as e:
+        return Response(
+            {"error": f"Stripe error: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="🚫 Cancel subscription",
+    description="""
+    Cancel the workspace subscription at the end of the billing period.
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+    - Workspace must have an active subscription
+    
+    **⚠️ Note**:
+    - Subscription remains active until end of billing period
+    - Can be reactivated before period ends
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Subscription cancelled",
+            examples=[
+                OpenApiExample(
+                    'Cancelled',
+                    value={
+                        'message': 'Subscription will be cancelled at period end',
+                        'cancel_at': 1234567890
+                    }
+                )
+            ]
+        ),
+        400: OpenApiResponse(description="❌ No active subscription"),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@permission_classes([IsWorkspaceMember])
+def cancel_subscription(request, workspace_id):
+    """Cancel workspace subscription"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        
+        if not workspace.stripe_subscription_id:
+            return Response(
+                {"error": "No active subscription"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Cancel at period end
+        subscription = stripe.Subscription.modify(
+            workspace.stripe_subscription_id,
+            cancel_at_period_end=True
+        )
+        
+        workspace.subscription_status = 'cancelled'
+        workspace.save()
+        
+        return Response({
+            'message': 'Subscription will be cancelled at period end',
+            'cancel_at': subscription.current_period_end
+        })
+        
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except stripe.error.StripeError as e:
+        return Response(
+            {"error": f"Stripe error: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
     summary="🔔 Stripe webhook endpoint",
     description="""
     Receive and process Stripe webhook events.
@@ -400,6 +781,7 @@ def retrieve_stripe_customer(request):
     - No authentication required (Stripe sends directly)
     
     **📊 Handled Events**:
+    - checkout.session.completed
     - customer.created
     - customer.updated
     - customer.deleted
@@ -542,7 +924,41 @@ def stripe_webhook(request):
         customer_id = invoice['customer']
         print(f"Invoice payment failed for customer {customer_id}")
     
-    # Subscription events (for future use with usage-based billing)
+    # Checkout completed
+    elif event_type == 'checkout.session.completed':
+        session = event_data
+        customer_id = session.get('customer')
+        subscription_id = session.get('subscription')
+        metadata = session.get('metadata', {})
+        workspace_id = metadata.get('workspace_id')
+        
+        if workspace_id and subscription_id:
+            try:
+                workspace = Workspace.objects.get(id=workspace_id)
+                workspace.stripe_subscription_id = subscription_id
+                workspace.subscription_status = 'active'
+                
+                # Get subscription details to find the plan
+                subscription = stripe.Subscription.retrieve(subscription_id)
+                if subscription['items']['data']:
+                    price_id = subscription['items']['data'][0]['price']['id']
+                    # Try to match with a plan
+                    from core.models import Plan
+                    plan = Plan.objects.filter(
+                        stripe_price_id_monthly=price_id
+                    ).first() or Plan.objects.filter(
+                        stripe_price_id_yearly=price_id
+                    ).first()
+                    
+                    if plan:
+                        workspace.current_plan = plan
+                
+                workspace.save()
+                print(f"Subscription {subscription_id} activated for workspace {workspace_id}")
+            except Workspace.DoesNotExist:
+                print(f"Workspace {workspace_id} not found")
+    
+    # Subscription events
     elif event_type == 'customer.subscription.created':
         subscription = event_data
         customer_id = subscription['customer']
@@ -551,12 +967,30 @@ def stripe_webhook(request):
     elif event_type == 'customer.subscription.updated':
         subscription = event_data
         customer_id = subscription['customer']
-        print(f"Subscription updated for customer {customer_id}")
+        status = subscription['status']
+        
+        # Update workspace subscription status
+        try:
+            workspace = Workspace.objects.get(stripe_customer_id=customer_id)
+            workspace.subscription_status = status
+            workspace.save()
+            print(f"Updated workspace subscription status to {status}")
+        except Workspace.DoesNotExist:
+            print(f"No workspace found for customer {customer_id}")
     
     elif event_type == 'customer.subscription.deleted':
         subscription = event_data
         customer_id = subscription['customer']
-        print(f"Subscription cancelled for customer {customer_id}")
+        
+        # Mark subscription as cancelled
+        try:
+            workspace = Workspace.objects.get(stripe_customer_id=customer_id)
+            workspace.subscription_status = 'cancelled'
+            workspace.stripe_subscription_id = None
+            workspace.save()
+            print(f"Subscription cancelled for workspace {workspace.id}")
+        except Workspace.DoesNotExist:
+            print(f"No workspace found for customer {customer_id}")
     
     else:
         # Unhandled event type

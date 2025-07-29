@@ -42,6 +42,7 @@ LOCATION_SHORT="ne"
 UPDATE_ONLY=false
 BRANCH=""
 DOMAIN=""
+NO_CACHE=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -70,6 +71,10 @@ while [[ $# -gt 0 ]]; do
             DOMAIN="${1#*=}"
             shift
             ;;
+        --no-cache)
+            NO_CACHE=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 --project-name=NAME [OPTIONS]"
             echo ""
@@ -83,6 +88,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --update-only          Only update Kubernetes deployment, skip infrastructure"
             echo "  --branch=BRANCH        Git pull and checkout specified branch for both frontend and backend"
             echo "  --domain=DOMAIN        Configure ingress with domain and TLS (requires certs/tls.cer and certs/private.key)"
+            echo "  --no-cache             Force fresh Docker build without using cache (slower but ensures all changes are included)"
             echo "  -h, --help             Show this help message"
             echo ""
             echo "Examples:"
@@ -91,6 +97,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --project-name=test-rg --update-only   # Update K8s only in test-rg"
             echo "  $0 --project-name=staging --branch=main   # Deploy staging with main branch"
             echo "  $0 --project-name=prod --domain=app.example.com  # Deploy with HTTPS"
+            echo "  $0 --project-name=staging --update-only --no-cache  # Force fresh build without cache"
             exit 0
             ;;
         *)
@@ -124,6 +131,7 @@ echo "   PROJECT_NAME: $PROJECT_NAME"
 echo "   Environment: $ENVIRONMENT" 
 echo "   Location: $LOCATION_SHORT"
 echo "   Update Only: $UPDATE_ONLY"
+echo "   Docker Cache: $(if [[ "$NO_CACHE" == "true" ]]; then echo "Disabled (fresh build)"; else echo "Enabled"; fi)"
 if [[ -n "$BRANCH" ]]; then
     echo "   Branch: $BRANCH"
 fi
@@ -679,35 +687,51 @@ build_and_push_images() {
     
     # Build backend image for AMD64 architecture (Azure AKS compatibility)
     log_info "Building backend image for AMD64 architecture..."
-    # Optimize for new projects - skip cache lookup on first build to avoid timeouts
-    if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" >/dev/null 2>&1; then
-        log_info "Using existing cache for faster build..."
+    
+    if [[ "$NO_CACHE" == "true" ]]; then
+        log_info "Building WITHOUT cache (--no-cache flag enabled)..."
         docker buildx build --platform linux/amd64 \
-            --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
-            --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+            --no-cache \
             -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
     else
-        log_info "First build - no cache available, building fresh..."
-        docker buildx build --platform linux/amd64 \
-            --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
-            -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+        # Optimize for new projects - skip cache lookup on first build to avoid timeouts
+        if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" >/dev/null 2>&1; then
+            log_info "Using existing cache for faster build..."
+            docker buildx build --platform linux/amd64 \
+                --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
+                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+        else
+            log_info "First build - no cache available, building fresh..."
+            docker buildx build --platform linux/amd64 \
+                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+        fi
     fi
     
     # Build frontend image if dist directory exists
     if [[ -d "dist" ]]; then
         log_info "Building frontend image for AMD64 architecture..."
-        # Optimize for new projects - skip cache lookup on first build
-        if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache" >/dev/null 2>&1; then
-            log_info "Using existing frontend cache for faster build..."
+        
+        if [[ "$NO_CACHE" == "true" ]]; then
+            log_info "Building frontend WITHOUT cache (--no-cache flag enabled)..."
             docker buildx build --platform linux/amd64 \
-                --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache" \
-                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache,mode=max" \
+                --no-cache \
                 -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" . --push
         else
-            log_info "First frontend build - no cache available, building fresh..."
-            docker buildx build --platform linux/amd64 \
-                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache,mode=max" \
-                -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" . --push
+            # Optimize for new projects - skip cache lookup on first build
+            if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache" >/dev/null 2>&1; then
+                log_info "Using existing frontend cache for faster build..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache" \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache,mode=max" \
+                    -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" . --push
+            else
+                log_info "First frontend build - no cache available, building fresh..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:cache,mode=max" \
+                    -f frontend-deploy/Dockerfile -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-frontend:${IMAGE_TAG}" . --push
+            fi
         fi
         
         export HAS_FRONTEND=true
@@ -724,11 +748,16 @@ setup_kubernetes_environment() {
     log_info "Setting up Kubernetes environment variables..."
     
     # Fix environment variable substitution issues with EXPLICIT defaults
-    export ALLOWED_HOSTS="*"  # Allow all hosts (fix for pod IPs)
+    export ALLOWED_HOSTS="*"  # ALWAYS allow all hosts per user requirement
     export CORS_ALLOW_ALL_ORIGINS="${CORS_ALLOW_ALL_ORIGINS:-False}"
     export DEBUG="${DEBUG:-True}"  # True for staging, False for production
     export TIME_ZONE="${TIME_ZONE:-Europe/Berlin}"
-    export DB_SSLMODE="${DB_SSLMODE:-disable}"  # disable for dev/staging, require for prod
+    # Database SSL mode - require for Azure PostgreSQL in staging/production
+    if [[ "$ENVIRONMENT" == "development" ]]; then
+        export DB_SSLMODE="${DB_SSLMODE:-disable}"
+    else
+        export DB_SSLMODE="${DB_SSLMODE:-require}"  # Azure PostgreSQL requires SSL
+    fi
     
     # Security settings with proper defaults
     export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
@@ -909,9 +938,74 @@ deploy_kubernetes() {
     
     # Application settings with defaults
     export IMAGE_TAG="${IMAGE_TAG:-latest}"
-    export DEBUG="${DEBUG:-False}"
+    # DEBUG should be True for staging, False for production
+    if [[ "$ENVIRONMENT" == "staging" ]]; then
+        export DEBUG="${DEBUG:-True}"
+    else
+        export DEBUG="${DEBUG:-False}"
+    fi
     export TIME_ZONE="${TIME_ZONE:-UTC}"
     export DB_SSLMODE="${DB_SSLMODE:-require}"
+    
+    # Set Django settings module based on environment
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+        export DJANGO_SETTINGS_MODULE="hotcalls.settings.production"
+    elif [[ "$ENVIRONMENT" == "staging" ]]; then
+        export DJANGO_SETTINGS_MODULE="hotcalls.settings.staging"
+    else
+        export DJANGO_SETTINGS_MODULE="hotcalls.settings.development"
+    fi
+    
+    # Set BASE_URL based on domain parameter
+    if [[ -n "$DOMAIN" ]]; then
+        export BASE_URL="https://${DOMAIN}"
+    else
+        export BASE_URL="http://localhost:8000"
+    fi
+    # ALLOWED_HOSTS is ALWAYS * per user requirement - already set above
+    
+    # Set security settings for staging/production
+    if [[ "$ENVIRONMENT" == "staging" ]] || [[ "$ENVIRONMENT" == "production" ]]; then
+        export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-True}"
+        export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-True}"
+        export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-True}"
+        export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-True}"
+        export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-True}"
+    else
+        export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
+        export SESSION_COOKIE_SECURE="${SESSION_COOKIE_SECURE:-False}"
+        export CSRF_COOKIE_SECURE="${CSRF_COOKIE_SECURE:-False}"
+        export SECURE_BROWSER_XSS_FILTER="${SECURE_BROWSER_XSS_FILTER:-False}"
+        export SECURE_CONTENT_TYPE_NOSNIFF="${SECURE_CONTENT_TYPE_NOSNIFF:-False}"
+    fi
+    
+    # Validate Django settings module matches environment
+    log_info "Validating Django configuration..."
+    log_info "  ENVIRONMENT=$ENVIRONMENT"
+    log_info "  DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
+    log_info "  DB_HOST=$DB_HOST"
+    log_info "  DB_NAME=$DB_NAME"
+    log_info "  DB_USER=$DB_USER"
+    log_info "  DB_PORT=${DB_PORT:-5432}"
+    log_info "  DB_SSLMODE=$DB_SSLMODE"
+    log_info "  BASE_URL=$BASE_URL"
+    log_info "  ALLOWED_HOSTS=$ALLOWED_HOSTS"
+    
+    # Validate critical database settings
+    if [[ "$ENVIRONMENT" != "development" ]]; then
+        if [[ -z "$DB_HOST" || "$DB_HOST" == "localhost" || "$DB_HOST" == "127.0.0.1" ]]; then
+            log_error "CRITICAL: DB_HOST is not properly set for $ENVIRONMENT environment!"
+            log_error "DB_HOST is: '$DB_HOST'"
+            log_error "This should be the Azure PostgreSQL server hostname"
+            exit 1
+        fi
+        
+        if [[ ! "$DJANGO_SETTINGS_MODULE" =~ hotcalls\.settings\.$ENVIRONMENT ]]; then
+            log_error "CRITICAL: DJANGO_SETTINGS_MODULE mismatch!"
+            log_error "ENVIRONMENT=$ENVIRONMENT but DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS_MODULE"
+            exit 1
+        fi
+    fi
     
     # Security settings
     export SECURE_SSL_REDIRECT="${SECURE_SSL_REDIRECT:-False}"
@@ -973,6 +1067,9 @@ deploy_kubernetes() {
     log_info "Deploying backend applications..."
     # Deploy backend applications (depends on Redis and config)
     envsubst < deployment.yaml | kubectl apply -f -
+    
+    # Run Django migrations after backend is deployed
+    run_django_migrations
     
     # Apply ingress last (after services are ready)
     log_info "Creating networking..."
@@ -1058,6 +1155,86 @@ EOF
     # Wait a moment for the service account patch to propagate
     log_info "Waiting for service account configuration to propagate..."
     sleep 5
+}
+
+# Run Django migrations
+run_django_migrations() {
+    log_info "Running Django database migrations..."
+    
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
+    # Wait for backend deployment to have at least one ready pod
+    log_info "Waiting for backend pods to be ready..."
+    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-backend \
+        -n "$NAMESPACE" --timeout=300s || {
+        log_error "Backend deployment not ready for migrations"
+        return 1
+    }
+    
+    # Give the pod a moment to fully initialize
+    sleep 5
+    
+    # Create a migration job
+    log_info "Creating migration job..."
+    cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: django-migrate-$(date +%s)
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: migration
+    environment: ${ENVIRONMENT}
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      containers:
+      - name: migrate
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
+        command: ["python", "manage.py", "migrate", "--noinput"]
+        envFrom:
+        - configMapRef:
+            name: ${PROJECT_PREFIX}-config
+        - secretRef:
+            name: ${PROJECT_PREFIX}-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+EOF
+    
+    # Wait for migration job to complete
+    JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=migration \
+        --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+    
+    if [[ -n "$JOB_NAME" ]]; then
+        log_info "Waiting for migration job $JOB_NAME to complete..."
+        if kubectl wait --for=condition=complete job/$JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+            log_success "Database migrations completed successfully!"
+            
+            # Show migration logs
+            log_info "Migration logs:"
+            kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=50
+        else
+            log_error "Migration job failed or timed out!"
+            kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=100
+            return 1
+        fi
+    else
+        log_error "Could not find migration job!"
+        return 1
+    fi
 }
 
 # Install nginx ingress controller if not present
@@ -1180,6 +1357,60 @@ wait_for_deployment() {
     fi
 }
 
+# Verify database connection after deployment
+verify_database_connection() {
+    log_info "Verifying database connection in deployed pods..."
+    
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
+    # Wait a bit for the pods to stabilize
+    sleep 5
+    
+    # Check database connection from the backend pod
+    log_info "Testing database connection from backend pod..."
+    
+    # Get the first running backend pod
+    BACKEND_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    
+    if [[ -z "$BACKEND_POD" ]]; then
+        log_error "No backend pod found!"
+        return 1
+    fi
+    
+    # Execute Python command to check database settings
+    log_info "Checking Django database configuration..."
+    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- python -c "
+import os
+from django.conf import settings
+print('=== Django Database Configuration ===')
+print(f'ENVIRONMENT: {os.environ.get(\"ENVIRONMENT\")}')
+print(f'DJANGO_SETTINGS_MODULE: {os.environ.get(\"DJANGO_SETTINGS_MODULE\")}')
+print(f'DB_HOST from env: {os.environ.get(\"DB_HOST\")}')
+print(f'DB_NAME from env: {os.environ.get(\"DB_NAME\")}')
+print(f'DB_USER from env: {os.environ.get(\"DB_USER\")}')
+print('--- Django Settings ---')
+db_config = settings.DATABASES['default']
+print(f'Host: {db_config.get(\"HOST\")}')
+print(f'Port: {db_config.get(\"PORT\")}')
+print(f'Database: {db_config.get(\"NAME\")}')
+print(f'User: {db_config.get(\"USER\")}')
+print(f'SSL Mode: {db_config.get(\"OPTIONS\", {}).get(\"sslmode\")}')
+"
+    
+    # Check the health endpoint
+    log_info "Checking health endpoint..."
+    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/ | python -m json.tool
+    
+    # Check readiness (includes database check)
+    log_info "Checking readiness endpoint (includes database connectivity)..."
+    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/readiness/ | python -m json.tool
+    
+    # Check pod logs for any database errors
+    log_info "Checking recent pod logs for database errors..."
+    kubectl logs "$BACKEND_POD" -n "$NAMESPACE" --tail=50 | grep -i -E "(database|postgres|db_host|localhost)" || true
+}
+
 # Show deployment status
 show_status() {
     NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
@@ -1278,6 +1509,7 @@ main() {
         build_and_push_images
         deploy_kubernetes
         wait_for_deployment
+        verify_database_connection
         show_status
     else
         log_info "Full deployment mode: Including infrastructure"
@@ -1296,6 +1528,7 @@ main() {
         build_and_push_images
         deploy_kubernetes
         wait_for_deployment
+        verify_database_connection
         show_status
     fi
     

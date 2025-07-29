@@ -6,14 +6,22 @@ and monitoring in mind.
 """
 
 from .base import *
+import os
 import sys
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
+logger.info(f"Loaded {__name__} settings module")
+
+# Production environment identifier
+ENVIRONMENT = 'production'
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = False
 
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "").split(",")
-if not ALLOWED_HOSTS or ALLOWED_HOSTS == [""]:
-    raise ValueError("ALLOWED_HOSTS must be set in production")
+# ALLOWED_HOSTS - ALWAYS use wildcard per user requirement
+ALLOWED_HOSTS = ["*"]
 
 # Security settings (strict for production)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"
@@ -69,13 +77,8 @@ DATABASES['default']['OPTIONS'].update({
     'sslmode': 'require',  # Require SSL for production database
 })
 
-# Explicitly override database settings to ensure environment variables are read correctly
-DATABASES['default'].update({
-    'HOST': os.environ.get('DB_HOST', 'localhost'),
-    'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-    'USER': os.environ.get('DB_USER', 'hotcalls_user'),
-    'NAME': os.environ.get('DB_NAME', 'hotcalls_db'),
-})
+# Database settings come from base.py which now FAILS FAST if not set
+# No overrides needed - base.py handles environment detection properly
 
 # Azure Application Insights configuration
 AZURE_MONITOR_CONNECTION_STRING = os.environ.get('AZURE_MONITOR_CONNECTION_STRING')

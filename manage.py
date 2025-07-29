@@ -7,7 +7,9 @@ import sys
 def main():
     """Run administrative tasks."""
     # Set default settings module based on environment
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'hotcalls.settings.development')
+    environment = os.environ.get('ENVIRONMENT', 'development')
+    default_settings = f'hotcalls.settings.{environment}'
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', default_settings)
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
