@@ -349,6 +349,16 @@ class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
+    
+    # Stripe integration
+    stripe_customer_id = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,
+        unique=True,
+        help_text="Stripe Customer ID for billing"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -579,13 +589,14 @@ class Calendar(models.Model):
         on_delete=models.CASCADE, 
         related_name='calendars'
     )
-    name = models.CharField(max_length=255, help_text="Display name for the calendar")
+    name = models.CharField(max_length=255, default='', help_text="Display name for the calendar")
     provider = models.CharField(
         max_length=20, 
         choices=[
             ('google', 'Google Calendar'),
             ('outlook', 'Microsoft Outlook'),
-        ]
+        ],
+        default='google'
     )
     active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -1,0 +1,1 @@
+# Payment API module for workspace-based Stripe integration 

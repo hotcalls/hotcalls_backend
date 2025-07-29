@@ -52,6 +52,7 @@ urlpatterns = [
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
     path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
+    path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
 ]
 
 # Serve media files in development with CORS support

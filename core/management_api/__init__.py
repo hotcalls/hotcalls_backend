@@ -28,6 +28,7 @@ def api_root(request, format=None):
                 'calendars': request.build_absolute_uri('/api/calendars/'),
                 'voices': request.build_absolute_uri('/api/voices/'),
                 'subscriptions': request.build_absolute_uri('/api/subscriptions/'),
+                'payments': request.build_absolute_uri('/api/payments/'),
             },
             'documentation': {
                 'swagger': reverse('swagger-ui', request=request, format=format),

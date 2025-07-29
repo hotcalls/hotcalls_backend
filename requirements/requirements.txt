@@ -15,6 +15,9 @@ python-dateutil>=2.8.2
 drf-yasg>=1.21.0          # Swagger/OpenAPI documentation
 openapi-spec-validator>=0.5.0
 
+# Payment processing
+stripe>=10.5.0            # Stripe payment integration
+
 # LiveKit integration for outbound calls
 livekit>=0.11.1           # LiveKit Python SDK for SIP calls
 livekit-api>=0.5.0        # LiveKit API client

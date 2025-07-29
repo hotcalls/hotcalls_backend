@@ -1,30 +1,35 @@
-Django>=5.0
-psycopg2-binary    # PostgreSQL database adapter
-python-dotenv        # For environment variables
-pillow              # For image handling
-djangorestframework>=3.14.0
-drf-spectacular>=0.26.0
-django-filter>=22.1
-django-cors-headers>=4.0.0
-gunicorn           # Production WSGI server for containers
-twilio
-django-stub
-apscheduler
-python-dateutil>=2.8.2
-drf-yasg            # Swagger/OpenAPI documentation
-openapi
+Django==4.2.14
+django-cors-headers==4.2.0
+djangorestframework==3.14.0
+djangorestframework-simplejwt==5.2.2
+drf-spectacular==0.26.4
+psycopg2-binary==2.9.7
+celery[redis]==5.3.4
+redis==5.0.0
+django-celery-beat==2.5.0
+django-filter==23.3
+python-dotenv==1.0.1
+gunicorn==21.2.0
+whitenoise==6.5.0
+Pillow==10.0.0
+boto3==1.34.90
+django-storages==1.14.3
+django-health-check==3.18.1
+faker==19.3.1
 
-# Celery and related packages
-celery>=5.3.1       # Task queue
-django-celery-beat>=2.5.0  # For periodic task scheduling
-redis>=4.5.0        # Redis client for Celery broker (K8s-friendly)
+# Google Cloud - Google Calendar API support
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+google-auth-httplib2==0.2.0
+google-api-python-client==2.125.0
 
-# Google Calendar Integration
-google-auth>=2.17.0
-google-auth-oauthlib>=1.0.0
-google-auth-httplib2>=0.1.0
-google-api-python-client>=2.88.0
-# LiveKit integration for outbound calls
-livekit>=0.11.1     # LiveKit Python SDK for SIP calls
-livekit-api>=0.5.0  # LiveKit API client
+# LiveKit integration
+livekit==0.13.2
+livekit-api==0.6.5
+
+# Azure Communication Services
+azure-communication-phonenumbers==1.1.0
+
+# Stripe integration
+stripe==10.5.0
 
