@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication
+from rest_framework.permissions import AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
@@ -218,6 +219,17 @@ class VoiceViewSet(viewsets.ModelViewSet):
     search_fields = ['voice_external_id', 'provider']
     ordering_fields = ['voice_external_id', 'provider', 'created_at', 'updated_at']
     ordering = ['-created_at']
+    
+    def get_permissions(self):
+        """
+        Make list/retrieve actions public but require authentication for create/update/delete
+        """
+        if self.action in ['list', 'retrieve']:
+            # Public access for browsing voices
+            return [AllowAny()]
+        else:
+            # Protected access for create/update/delete
+            return [VoicePermission()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""

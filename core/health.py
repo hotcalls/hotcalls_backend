@@ -12,6 +12,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db import connections
 from django.core.cache import cache
 from django.conf import settings
+from rest_framework.decorators import permission_classes
+from rest_framework.permissions import AllowAny
 import redis
 import time
 
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 @csrf_exempt
 @require_http_methods(["GET", "HEAD"])
+@permission_classes([AllowAny])
 def health_check(request):
     """
     Basic health check endpoint.
@@ -36,6 +39,7 @@ def health_check(request):
 
 @csrf_exempt
 @require_http_methods(["GET", "HEAD"])
+@permission_classes([AllowAny])
 def readiness_check(request):
     """
     Comprehensive readiness check endpoint.
@@ -106,6 +110,7 @@ def readiness_check(request):
 
 @csrf_exempt
 @require_http_methods(["GET", "HEAD"])
+@permission_classes([AllowAny])
 def startup_check(request):
     """
     Startup check endpoint.
