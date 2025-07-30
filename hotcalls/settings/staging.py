@@ -40,11 +40,34 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ["*"]
 CORS_ALLOW_METHODS = ["*"]
 
-# Static files configuration
-STATIC_URL = '/static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Azure Blob Storage configuration (same as production)
+AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
+AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY')
+AZURE_STATIC_CONTAINER = os.environ.get('AZURE_STATIC_CONTAINER', 'static')
+AZURE_MEDIA_CONTAINER = os.environ.get('AZURE_MEDIA_CONTAINER', 'media')
+AZURE_CUSTOM_DOMAIN = os.environ.get('AZURE_CUSTOM_DOMAIN')
+
+if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
+    # Use Azure Blob Storage for static and media files
+    DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
+    STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
+    
+    if AZURE_CUSTOM_DOMAIN:
+        # Use custom domain (CDN)
+        STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
+        MEDIA_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_MEDIA_CONTAINER}/"
+    else:
+        # Use blob storage endpoint directly
+        STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
+        MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
+else:
+    # Fallback to local storage with whitenoise
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    STATIC_URL = '/static/'
+    MEDIA_URL = '/media/'
+    
+    STATIC_ROOT = BASE_DIR / 'staticfiles'
+    MEDIA_ROOT = BASE_DIR / 'media'
 
 # Database configuration - uses environment variables from K8s secrets
 # No need to override here - base.py already reads from os.environ
