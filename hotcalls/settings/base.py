@@ -207,8 +207,8 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
-        "rest_framework.authentication.SessionAuthentication",
-        "rest_framework.authentication.BasicAuthentication",
+        # SessionAuthentication removed - no CSRF needed for API endpoints
+        # Use TokenAuthentication for all API calls
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
@@ -242,7 +242,7 @@ SPECTACULAR_SETTINGS = {
 2. **Email Verification**: User receives email with verification link
 3. **Verify Email**: Click link or use `/api/auth/verify-email/{token}/`
 4. **Login**: POST to `/api/auth/login/` with email and password
-5. **Access APIs**: Use session authentication for protected endpoints
+5. **Access APIs**: Use token authentication for protected endpoints
 
 ### 📧 Email Verification Requirements
 - **🚫 No login without verification**: Cannot access protected APIs
@@ -262,9 +262,9 @@ SPECTACULAR_SETTINGS = {
 | **🔧 Superuser** | `is_superuser=True` | Admin - auto-verified | ✅ Auto-verified |
 
 ### 🔑 Authentication Methods
-- **Session Authentication**: Login via `/api/auth/login/` then use session cookies
-- **Basic Authentication**: Use `Authorization: Basic <base64(email:password)>` header
-- **⚠️ Email Verification Required**: Both methods require verified email
+- **Token Authentication**: Login via `/api/auth/login/` then use `Authorization: Token <token>`
+- **No CSRF Required**: Token authentication doesn't need CSRF tokens
+- **⚠️ Email Verification Required**: Must verify email before login
 
 ---
 
@@ -311,6 +311,13 @@ SPECTACULAR_SETTINGS = {
 }
 ```
 
+### 400 Bad Request - Invalid Credentials  
+```json
+{
+  "non_field_errors": ["Unable to log in with provided credentials."]
+}
+```
+
 ### 400 Bad Request - Account Issues
 ```json
 {
@@ -320,7 +327,7 @@ SPECTACULAR_SETTINGS = {
 
 ---
 
-## 📚 Getting Started with Email Authentication
+## 📚 Getting Started with Token Authentication
 
 ### 1. Register New Account
 ```bash
@@ -347,10 +354,18 @@ POST /api/auth/login/
   "password": "securepassword123"
 }
 ```
+Response includes auth token:
+```json
+{
+  "token": "your-auth-token-here",
+  "user": {...}
+}
+```
 
 ### 4. Access Protected APIs
-- Use session cookies from login response
-- All existing APIs work the same after verification
+```bash
+Authorization: Token your-auth-token-here
+```
 
 **📧 Remember**: Email verification is mandatory for all users!
     ''',
@@ -360,14 +375,14 @@ POST /api/auth/login/
     'COMPONENT_SPLIT_REQUEST': True,
     'SORT_OPERATIONS': False,
     'TAGS': [
-        {'name': 'Authentication', 'description': '🔐 Email-based authentication and verification - Mandatory email verification for all users'},
-        {'name': 'User Management', 'description': '👤 User accounts and blacklist management - Requires email verification'},
-        {'name': 'Subscription Management', 'description': '📋 Plans, features, and subscription management - Requires email verification'},
-        {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management - Requires email verification'},
-        {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management - Requires email verification'},
-        {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations - Requires email verification'},
-        {'name': 'Call Management', 'description': '📱 Call logs and analytics - Requires email verification'},
-        {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling - Requires email verification'},
+        {'name': 'Authentication', 'description': '🔐 Token-based authentication with mandatory email verification'},
+        {'name': 'User Management', 'description': '👤 User accounts and blacklist management - Requires token auth'},
+        {'name': 'Subscription Management', 'description': '📋 Plans, features, and subscription management'},
+        {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management'},
+        {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management'},
+        {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations'},
+        {'name': 'Call Management', 'description': '📱 Call logs and analytics'},
+        {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling'},
     ],
 }
 
@@ -483,3 +498,6 @@ META_REDIRECT_URI = os.getenv('META_REDIRECT_URI', '')
 META_API_VERSION = os.getenv('META_API_VERSION', 'v18.0')
 
 # LiveKit Configuration
+LIVEKIT_HOST = os.getenv('LIVEKIT_HOST', '')
+LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', '')
+LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', '')

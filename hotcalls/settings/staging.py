@@ -30,12 +30,9 @@ SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").
 SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
 X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 
-# CSRF - COMPLETELY DISABLED FOR STAGING
-# WARNING: This removes ALL CSRF protection - NEVER use in production!
-# This modifies the MIDDLEWARE list from base.py to remove CSRF
-MIDDLEWARE = list(MIDDLEWARE)  # Convert tuple to list if needed
-if 'django.middleware.csrf.CsrfViewMiddleware' in MIDDLEWARE:
-    MIDDLEWARE.remove('django.middleware.csrf.CsrfViewMiddleware')
+# CSRF Configuration for staging - same as production
+csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
 
 # CORS - COMPLETELY OPEN FOR STAGING
 CORS_ALLOW_ALL_ORIGINS = True

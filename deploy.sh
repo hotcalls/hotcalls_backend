@@ -1283,7 +1283,7 @@ install_ingress_controller() {
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: nginx-configuration
+  name: ingress-nginx-controller
   namespace: ingress-nginx
 data:
   proxy-body-size: "1024m"
