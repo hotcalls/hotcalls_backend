@@ -8,8 +8,8 @@ resource "azurerm_storage_account" "main" {
   
   # Security settings
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  
+  allow_nested_items_to_be_public = true
+
   # Network access rules
   public_network_access_enabled = var.public_access_enabled
   
@@ -29,11 +29,11 @@ resource "azurerm_storage_container" "static" {
   container_access_type = "private"
 }
 
-# Container for media files
+# Container for media files (public for CDN access)
 resource "azurerm_storage_container" "media" {
   name                  = "media"
   storage_account_name  = azurerm_storage_account.main.name
-  container_access_type = "private"
+  container_access_type = "blob"
 }
 
 # Container for backups

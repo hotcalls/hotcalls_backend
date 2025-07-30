@@ -623,13 +623,13 @@ get_infrastructure_outputs() {
     export AZURE_ACCOUNT_NAME=$(terraform output -raw storage_account_name)
     export AZURE_STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
     
-    # CDN is always enabled - get CDN configuration
+    # Direct Storage configuration (CDN removed)
     export CDN_ENDPOINT_FQDN=$(terraform output -raw cdn_endpoint_fqdn 2>/dev/null || echo "")
     export CDN_ENDPOINT_URL=$(terraform output -raw cdn_endpoint_url 2>/dev/null || echo "")
     
-    # Set AZURE_CUSTOM_DOMAIN for Django to use CDN
-    export AZURE_CUSTOM_DOMAIN="$CDN_ENDPOINT_FQDN"
-    log_info "CDN enabled with Azure domain: $CDN_ENDPOINT_FQDN"
+    # Set AZURE_CUSTOM_DOMAIN for Django to use direct storage (CDN has issues)
+    export AZURE_CUSTOM_DOMAIN="$AZURE_ACCOUNT_NAME.blob.core.windows.net"
+    log_info "Using direct storage domain: $AZURE_ACCOUNT_NAME.blob.core.windows.net (CDN disabled temporarily)"
     
     # Set optional Azure variables with defaults
     export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
@@ -664,13 +664,13 @@ get_infrastructure_outputs_update_only() {
     export AZURE_ACCOUNT_NAME=$(terraform output -raw storage_account_name)
     export AZURE_STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
     
-    # CDN is always enabled - get CDN configuration
+    # Direct Storage configuration (CDN removed)
     export CDN_ENDPOINT_FQDN=$(terraform output -raw cdn_endpoint_fqdn 2>/dev/null || echo "")
     export CDN_ENDPOINT_URL=$(terraform output -raw cdn_endpoint_url 2>/dev/null || echo "")
     
-    # Set AZURE_CUSTOM_DOMAIN for Django to use CDN
-    export AZURE_CUSTOM_DOMAIN="$CDN_ENDPOINT_FQDN"
-    log_info "CDN enabled with Azure domain: $CDN_ENDPOINT_FQDN"
+    # Set AZURE_CUSTOM_DOMAIN for Django to use direct storage (CDN has issues)
+    export AZURE_CUSTOM_DOMAIN="$AZURE_ACCOUNT_NAME.blob.core.windows.net"
+    log_info "Using direct storage domain: $AZURE_ACCOUNT_NAME.blob.core.windows.net (CDN disabled temporarily)"
     
     # Set optional Azure variables with defaults
     export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
@@ -1327,25 +1327,25 @@ EOF
     kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=300s || true
 }
 
-# Show CDN configuration (ALWAYS ENABLED)
-show_cdn_dns_configuration() {
+# Show Direct Storage configuration (CDN removed)
+show_storage_configuration() {
     echo ""
-    log_success "🚀 CDN CONFIGURATION"
+    log_success "🚀 STORAGE CONFIGURATION"
     echo ""
     
-    log_success "📡 CDN Azure Domain: $CDN_ENDPOINT_URL"
-    log_success "   • Voice Files: $CDN_ENDPOINT_URL/media/voice_samples/"
-    log_success "   • Voice Pictures: $CDN_ENDPOINT_URL/media/voice_pictures/"
+    log_success "📁 Direct Storage Domain: https://$AZURE_CUSTOM_DOMAIN"
+    log_success "   • Voice Files: https://$AZURE_CUSTOM_DOMAIN/media/voice_samples/"
+    log_success "   • Voice Pictures: https://$AZURE_CUSTOM_DOMAIN/media/voice_pictures/"
     echo ""
-    log_info "✅ No DNS configuration needed - Azure CDN domain is ready to use!"
-    log_info "   Your media files are being served via Azure's global CDN."
+    log_info "✅ Direct Azure Storage - Fast and reliable!"
+    log_info "   Your media files are served directly from Azure Storage."
     
     echo ""
-    log_info "🎯 CDN Benefits:"
-    log_info "   • ⚡ Faster global delivery (cached at edge locations)"
-    log_info "   • 💰 Reduced bandwidth costs on your main server"
-    log_info "   • 📈 Better user experience worldwide"
+    log_info "🎯 Direct Storage Benefits:"
+    log_info "   • ⚡ Immediate availability"
     log_info "   • 🔒 HTTPS enabled by default"
+    log_info "   • 💪 Simple and reliable"
+    log_info "   • 🛠️ No caching issues"
 }
 
 # Wait for deployment and get application URL
@@ -1441,8 +1441,8 @@ wait_for_deployment() {
             log_info "   - For most DNS providers: Create A record: $DOMAIN → $EXTERNAL_IP"
         fi
         
-        # Show CDN DNS configuration if CDN is enabled
-        show_cdn_dns_configuration
+        # Show Direct Storage configuration
+        show_storage_configuration
         
         # Update BASE_URL in secrets based on domain configuration
         if [[ -n "$DOMAIN" ]]; then
