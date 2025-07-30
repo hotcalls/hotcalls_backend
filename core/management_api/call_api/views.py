@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Sum, Avg, Count, Q
@@ -7,15 +7,17 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from django.db import transaction
 from django.utils import timezone
 import json
+from rest_framework.decorators import api_view, permission_classes
 
-from core.models import CallLog, Lead, Agent
+from core.models import CallLog, Lead, Agent, CallTask, CallStatus
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer,
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer, OutboundCallSerializer
+    CallLogAppointmentStatsSerializer, OutboundCallSerializer, TestCallSerializer,
+    CallTaskSerializer, CallTaskTriggerSerializer
 )
-from .filters import CallLogFilter
-from .permissions import CallLogPermission, CallLogAnalyticsPermission
+from .filters import CallLogFilter, CallTaskFilter
+from .permissions import CallLogPermission, CallLogAnalyticsPermission, CallTaskPermission
 
 
 @extend_schema_view(
@@ -855,19 +857,12 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 call_log = CallLog.objects.create(
                     lead=lead,  # Can be None if no lead_id provided
                     agent=agent,
-                    from_number="",
+                    from_number="OUTBOUND_CALL",
                     to_number=validated_data['phone'],
                     direction='outbound',
-                    status='initiated',
+                    status='not_reached',  # Use valid status from CALL_STATUS_CHOICES
                     duration=0,
-                    # Store configuration used for this call
-                    meta_data={
-                        'livekit_room': result.get('room_name'),
-                        'livekit_participant_id': result.get('participant_id'),
-                        'used_agent_config': agent_config,
-                        'used_lead_data': lead_data,
-                        'custom_greeting_used': bool(validated_data.get('custom_greeting'))
-                    }
+                    disconnection_reason=f"LiveKit room: {result.get('room_name', '')}"
                 )
                 
                 # Add call log ID to result
@@ -1125,3 +1120,319 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 'max_duration': stats['max_duration'] or 0
             }
         }) 
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📋 List call tasks",
+        description="""
+        Retrieve all call tasks in the system with filtering and search capabilities.
+        
+        **🔐 Permission Requirements**:
+        - **✅ All Authenticated Users**: Can view all call tasks
+        - **🔴 Superuser Only**: Can create, update, delete tasks
+        
+        **🔍 Filtering Options**:
+        - Filter by status (PENDING, STARTING, ACTIVE, SUCCESS, FAILED)
+        - Filter by agent, workspace, user, or lead
+        - Filter by date ranges (next_call, created_at)
+        - Filter by test calls (is_test)
+        - Filter by number of attempts
+        
+        **🔎 Search**:
+        - Search by lead name, agent name, or workspace name
+        """
+    ),
+    create=extend_schema(
+        summary="➕ Create new call task",
+        description="Create a new call task. **Superuser only.**"
+    ),
+    retrieve=extend_schema(
+        summary="📖 Get call task details",
+        description="Retrieve details of a specific call task."
+    ),
+    update=extend_schema(
+        summary="✏️ Update call task",
+        description="Update an existing call task. **Superuser only.**"
+    ),
+    partial_update=extend_schema(
+        summary="✏️ Partially update call task",
+        description="Partially update an existing call task. **Superuser only.**"
+    ),
+    destroy=extend_schema(
+        summary="🗑️ Delete call task",
+        description="Delete a call task. **Superuser only.**"
+    )
+)
+class CallTaskViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing call tasks"""
+    queryset = CallTask.objects.all()
+    serializer_class = CallTaskSerializer
+    permission_classes = [CallTaskPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = CallTaskFilter
+    search_fields = ['lead__name', 'agent__name', 'workspace__name']
+    ordering_fields = ['created_at', 'next_call']
+    ordering = ['-created_at']
+    
+    @extend_schema(
+        summary="🚀 Trigger a call manually",
+        description="""
+        Manually trigger a call for a specific CallTask.
+        
+        **🔐 Permission Requirements**:
+        - **🔴 Superuser Only**: Only superusers can trigger calls manually
+        
+        **📋 Prerequisites**:
+        - CallTask must exist
+        - CallTask status should be PENDING or FAILED
+        
+        **🎯 What happens**:
+        - Initiates the call immediately
+        - Updates CallTask status to STARTING
+        - Call will be processed by the call system
+        
+        **⚠️ Important Notes**:
+        - This bypasses the scheduled time (next_call)
+        - Use with caution as it may interfere with scheduled calls
+        """,
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=CallTaskTriggerSerializer,
+                description="Call triggered successfully",
+                examples=[
+                    OpenApiExample(
+                        'Success Response',
+                        value={
+                            'task_id': '550e8400-e29b-41d4-a716-446655440000',
+                            'status': 'STARTING',
+                            'message': 'Call task triggered successfully'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="Invalid task status or task already in progress"
+            ),
+            403: OpenApiResponse(
+                description="Not authorized - superuser required"
+            ),
+            404: OpenApiResponse(
+                description="CallTask not found"
+            )
+        }
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    def trigger(self, request, pk=None):
+        """Manually trigger a call for a specific CallTask"""
+        try:
+            call_task = self.get_object()
+            
+            # Check if task is in a valid state to be triggered
+            if call_task.status not in [CallStatus.PENDING, CallStatus.FAILED]:
+                return Response(
+                    {
+                        'error': f'Cannot trigger call. Current status is {call_task.get_status_display()}. '
+                                f'Only PENDING or FAILED tasks can be triggered.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update task status to STARTING
+            call_task.status = CallStatus.STARTING
+            call_task.save(update_fields=['status', 'updated_at'])
+            
+            # Initiate the actual call
+            try:
+                from core.utils.livekit_calls import initiate_call_from_task
+                call_result = initiate_call_from_task(call_task)
+                
+                if call_result.get('success'):
+                    # Update status to ACTIVE if call was successful
+                    call_task.status = CallStatus.ACTIVE
+                    call_task.save(update_fields=['status', 'updated_at'])
+                else:
+                    # Update status to FAILED if call failed
+                    call_task.status = CallStatus.FAILED
+                    call_task.save(update_fields=['status', 'updated_at'])
+                    
+            except Exception as e:
+                # If there's an error initiating the call, mark as failed
+                call_task.status = CallStatus.FAILED
+                call_task.save(update_fields=['status', 'updated_at'])
+                call_result = {'success': False, 'error': str(e)}
+            
+            serializer = CallTaskTriggerSerializer({
+                'task_id': call_task.id,
+                'status': call_task.status,
+                'message': 'Call task triggered successfully' if call_result.get('success') else f'Call failed: {call_result.get("error", "Unknown error")}'
+            })
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except CallTask.DoesNotExist:
+            return Response(
+                {'error': 'CallTask not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+# Standalone test call function
+@extend_schema(
+    summary="🧪 Make test call",
+    description="""
+    Make a test call using only Agent ID to verify agent configuration and LiveKit integration.
+    
+    **⚡ SYNCHRONOUS ENDPOINT - NOT ASYNC!**
+    
+    **🔐 Permission Requirements**:
+    - **✅ All Authenticated Users**: Can make test calls with their agents
+    - **✅ Staff/Superuser**: Can use any agent
+    
+    **📋 Required Fields**:
+    - `agent_id`: Agent UUID to make the test call
+    
+    **📞 Test Call Process**:
+    1. Validates agent belongs to user's workspace
+    2. Uses agent's default configuration
+    3. Calls the authenticated user's phone number
+    4. Uses agent's default outbound greeting
+    5. Dispatches agent to LiveKit room
+    6. Initiates SIP call to user's number
+    7. Creates call log entry for tracking
+    
+    **🎯 Use Cases**:
+    - Test agent configuration
+    - Verify LiveKit integration
+    - Check voice and greeting settings
+    - Quick agent functionality test
+    """,
+    request=TestCallSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Test call initiated successfully"
+        ),
+        400: OpenApiResponse(
+            description="❌ Validation error"
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        500: OpenApiResponse(
+            description="❌ Test call initiation failed"
+        )
+    },
+    methods=['POST']
+)
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def make_test_call(request):
+    """
+    Make a test call - SYNCHRONOUS ENDPOINT (NOT ASYNC!)
+    
+    This endpoint triggers a LiveKit test call using only the agent ID.
+    Uses the authenticated user's phone number for the test call.
+    """
+    serializer = TestCallSerializer(data=request.data, context={'request': request})
+    
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Get validated data
+    validated_data = serializer.validated_data
+    
+    # Fixed SIP trunk ID 
+    SIP_TRUNK_ID = "ST_F5KZ4yNHBegK"
+    
+    # Use the authenticated user's phone number for test call
+    user_phone = request.user.phone
+    if not user_phone:
+        return Response(
+            {'error': 'User phone number not found. Please update your profile with a phone number.'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Retrieve agent and check permissions
+    try:
+        agent = Agent.objects.select_related('workspace', 'voice').get(
+            agent_id=validated_data['agent_id']
+        )
+        
+        # Check if user has access to this agent's workspace
+        if not request.user.is_staff and not agent.workspace.users.filter(id=request.user.id).exists():
+            return Response(
+                {'error': 'You do not have access to this agent'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+    except Agent.DoesNotExist:
+        return Response(
+            {'error': 'Agent not found'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Create test lead data using user's information
+    lead_data = {
+        "name": request.user.first_name or "Test",
+        "surname": request.user.last_name or "User", 
+        "email": request.user.email,
+        "phone": user_phone,
+        "lead_source": "test_call",
+        "campaign_id": "test",
+        "meta_data": {"test_call": True, "user_id": str(request.user.id)}
+    }
+    
+    # Create basic agent config
+    agent_config = {
+        'name': agent.name,
+        'voice_id': agent.voice_id,
+        'language': agent.language,
+        'prompt': agent.prompt,
+        'greeting_outbound': agent.greeting_outbound,
+        'description': agent.description
+    }
+    
+    # Import the SYNC function (NOT ASYNC!)
+    try:
+        from core.utils.livekit_calls import make_outbound_call_sync
+    except ImportError:
+        return Response(
+            {'error': 'LiveKit integration not available'}, 
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    
+    # Make the test call using SYNC wrapper
+    result = make_outbound_call_sync(
+        sip_trunk_id=SIP_TRUNK_ID,
+        agent_config=agent_config,
+        lead_data=lead_data,
+        from_number="",  # Not used
+        campaign_id="test",  # Test campaign
+        call_reason="test_call"  # Mark as test call
+    )
+    
+    # Create call log entry if successful
+    if result.get('success'):                
+        with transaction.atomic():
+            call_log = CallLog.objects.create(
+                lead=None,  # No real lead for test calls
+                agent=agent,
+                from_number="TEST_CALL",
+                to_number=user_phone,
+                direction='outbound',
+                status='not_reached',  # Use valid status from CALL_STATUS_CHOICES
+                duration=0,
+                disconnection_reason="Test call initiated"
+            )
+            
+            # Add call log ID to result
+            result['call_log_id'] = str(call_log.id)
+            result['to_number'] = user_phone
+            result['agent_name'] = agent.name
+            result['test_call'] = True
+    
+    # Return the result
+    if result.get('success'):
+        return Response(result, status=status.HTTP_200_OK)
+    else:
+        result['test_call'] = True  # Mark failed calls as test calls too
+        return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 

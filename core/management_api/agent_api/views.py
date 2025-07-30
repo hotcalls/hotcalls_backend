@@ -298,6 +298,22 @@ class AgentViewSet(viewsets.ModelViewSet):
             # Regular users can only see agents in their workspaces
             return Agent.objects.filter(workspace__users=user)
     
+    def create(self, request, *args, **kwargs):
+        """
+        Create a new agent and return the full agent data including agent_id
+        """
+        # Use AgentCreateSerializer for validation and creation
+        serializer = AgentCreateSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        
+        # Create the agent
+        agent = serializer.save()
+        
+        # Use AgentSerializer for response to include agent_id and other read-only fields
+        response_serializer = AgentSerializer(agent, context={'request': request})
+        
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
     @extend_schema(
         summary="📞 Get agent phone numbers",
         description="""

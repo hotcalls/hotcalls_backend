@@ -5,6 +5,15 @@ from django.utils import timezone
 import secrets
 
 
+# New CallStatus TextChoices
+class CallStatus(models.TextChoices):
+    PENDING = 'PEND', 'pending'       # waiting for scheduler
+    STARTING = 'STRT', 'starting'     # scheduler picked it
+    ACTIVE = 'ACTV', 'active'         # call is in progress
+    SUCCESS = 'SUCC', 'success'
+    FAILED = 'FAIL', 'failed'
+
+
 # Enum Choices
 USER_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -426,6 +435,12 @@ class Workspace(models.Model):
         help_text="Current subscription status"
     )
     
+    # Trial tracking
+    has_used_trial = models.BooleanField(
+        default=False,
+        help_text="Whether this workspace has used their trial period"
+    )
+    
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
@@ -433,24 +448,6 @@ class Workspace(models.Model):
         null=True,
         unique=True,
         help_text="Stripe Customer ID for billing"
-    )
-    stripe_subscription_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        help_text="Current Stripe Subscription ID (sub_xxx)"
-    )
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('past_due', 'Past Due'),
-            ('unpaid', 'Unpaid'),
-        ],
-        default='trial',
-        help_text="Current subscription status"
     )
     stripe_subscription_id = models.CharField(
         max_length=255,
@@ -912,3 +909,84 @@ class MetaLeadForm(models.Model):
     
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"
+
+
+class CallTask(models.Model):
+    """Call tasks for managing scheduled and queued calls"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Task status and management
+    status = models.CharField(
+        max_length=20,
+        choices=CallStatus.choices,
+        default=CallStatus.PENDING,
+        help_text="Current status of the call task"
+    )
+    attempts = models.IntegerField(
+        default=0,
+        help_text="Number of retry attempts made"
+    )
+    is_test = models.BooleanField(
+        default=False,
+        help_text="Whether this is a test call"
+    )
+    
+    # One-to-One relationships
+    workspace = models.OneToOneField(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='call_task',
+        help_text="Workspace associated with this call task"
+    )
+    
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='call_task',
+        help_text="User associated with this call task"
+    )
+    
+    lead = models.OneToOneField(
+        Lead,
+        on_delete=models.CASCADE,
+        related_name='call_task',
+        help_text="Lead associated with this call task"
+    )
+    
+    # Agent assignment
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='call_tasks',
+        help_text="Agent assigned to handle this call task"
+    )
+    
+    
+    # Scheduling
+    next_call = models.DateTimeField(
+        help_text="Scheduled time for the next call attempt"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'next_call']),
+            models.Index(fields=['agent', 'status']),
+            models.Index(fields=['next_call']),
+        ]
+    
+    def __str__(self):
+        return f"CallTask {self.id} - {self.workspace.name} - {self.agent.name} ({self.status})"
+    
+    def increment_retries(self):
+        """Increment the retry counter"""
+        self.attempts += 1
+        self.save(update_fields=['attempts'])
+    
+    def can_retry(self, max_retries=3):
+        """Check if the task can be retried"""
+        return self.attempts < max_retries and self.status in [CallStatus.PENDING, CallStatus.FAILED]

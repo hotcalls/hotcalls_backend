@@ -74,7 +74,6 @@ THIRD_PARTY_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
     "django_celery_beat",
-    "drf_yasg",
     "drf_spectacular",
     "django_filters",
     "health_check",
