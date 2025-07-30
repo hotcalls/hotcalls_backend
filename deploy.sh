@@ -631,6 +631,28 @@ get_infrastructure_outputs() {
     export AZURE_CUSTOM_DOMAIN="$AZURE_ACCOUNT_NAME.blob.core.windows.net"
     log_info "Using direct storage domain: $AZURE_ACCOUNT_NAME.blob.core.windows.net (CDN disabled temporarily)"
     
+    # Configure CORS for Azure Storage to allow frontend audio playback
+    log_info "Configuring CORS for Azure Storage..."
+    if [[ -n "$DOMAIN" ]]; then
+        CORS_ORIGINS="https://$DOMAIN"
+    else
+        CORS_ORIGINS="https://app.hotcalls.de"
+    fi
+    
+    # Add CORS configuration for blob storage
+    az storage cors add \
+        --account-name "$AZURE_ACCOUNT_NAME" \
+        --account-key "$AZURE_STORAGE_KEY" \
+        --services b \
+        --methods GET POST PUT OPTIONS \
+        --origins "$CORS_ORIGINS" "http://localhost:3000" "http://localhost:5173" \
+        --allowed-headers "*" \
+        --exposed-headers "*" \
+        --max-age 3600 \
+        2>/dev/null || log_info "CORS rules may already exist"
+    
+    log_info "✅ CORS configured for: $CORS_ORIGINS"
+    
     # Set optional Azure variables with defaults
     export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
     export AZURE_KEY_VAULT_URL="${AZURE_KEY_VAULT_URL:-}"
@@ -671,6 +693,28 @@ get_infrastructure_outputs_update_only() {
     # Set AZURE_CUSTOM_DOMAIN for Django to use direct storage (CDN has issues)
     export AZURE_CUSTOM_DOMAIN="$AZURE_ACCOUNT_NAME.blob.core.windows.net"
     log_info "Using direct storage domain: $AZURE_ACCOUNT_NAME.blob.core.windows.net (CDN disabled temporarily)"
+    
+    # Configure CORS for Azure Storage to allow frontend audio playback
+    log_info "Configuring CORS for Azure Storage..."
+    if [[ -n "$DOMAIN" ]]; then
+        CORS_ORIGINS="https://$DOMAIN"
+    else
+        CORS_ORIGINS="https://app.hotcalls.de"
+    fi
+    
+    # Add CORS configuration for blob storage
+    az storage cors add \
+        --account-name "$AZURE_ACCOUNT_NAME" \
+        --account-key "$AZURE_STORAGE_KEY" \
+        --services b \
+        --methods GET POST PUT OPTIONS \
+        --origins "$CORS_ORIGINS" "http://localhost:3000" "http://localhost:5173" \
+        --allowed-headers "*" \
+        --exposed-headers "*" \
+        --max-age 3600 \
+        2>/dev/null || log_info "CORS rules may already exist"
+    
+    log_info "✅ CORS configured for: $CORS_ORIGINS"
     
     # Set optional Azure variables with defaults
     export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
