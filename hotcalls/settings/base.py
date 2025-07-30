@@ -211,7 +211,7 @@ REST_FRAMEWORK = {
         # Use TokenAuthentication for all API calls
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "rest_framework.permissions.AllowAny",
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -384,6 +384,15 @@ Authorization: Token your-auth-token-here
         {'name': 'Call Management', 'description': '📱 Call logs and analytics'},
         {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling'},
     ],
+    'COMPONENT_SECURITY_SCHEMES': {
+        'TokenAuth': {
+            'type': 'apiKey',
+            'in': 'header',
+            'name': 'Authorization',
+            'description': 'Token-based authentication. Format: `Token <your-token>`'
+        }
+    },
+    'SECURITY': [{'TokenAuth': []}],
 }
 
 # Celery Configuration - Dynamically constructed from Redis env vars

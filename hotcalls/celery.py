@@ -33,5 +33,12 @@ app.conf.broker_connection_timeout = 30  # Connection timeout in seconds
 
 # Configure the periodic tasks
 app.conf.beat_schedule = {
-    
+    # Clean up expired authentication tokens daily at midnight
+    'cleanup-expired-tokens': {
+        'task': 'core.tasks.cleanup_expired_tokens',
+        'schedule': crontab(hour=0, minute=0),  # Run daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'  # Use the same queue the worker is listening to
+        }
+    },
 } 

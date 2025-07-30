@@ -13,6 +13,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 import secrets
 from datetime import timedelta
 from django.utils import timezone
+from rest_framework.authtoken.models import Token
 
 from core.models import User
 from core.utils import send_email_verification, send_password_reset_email
@@ -106,7 +107,7 @@ def register(request):
 
 
 @extend_schema(
-    summary="🔑 Email-Based Login",
+    summary="🔑 Email-Based Login with Token Authentication",
     description="""
     Login with email and password. **Email verification is mandatory**.
     
@@ -121,9 +122,14 @@ def register(request):
     - Invalid credentials provided
     
     **✅ Success Response**:
-    - User session created
+    - Auth token returned for API access
     - User profile data returned
-    - Can access protected endpoints
+    - Use token in Authorization header for all API calls
+    
+    **🔑 Using the Token**:
+    ```
+    Authorization: Token <your-token-here>
+    ```
     
     **📧 If Email Not Verified**:
     - Use `/resend-verification/` to get new verification email
@@ -133,13 +139,13 @@ def register(request):
     request=EmailLoginSerializer,
     responses={
         200: OpenApiResponse(
-            response=UserProfileSerializer,
-            description="✅ Login successful - User authenticated",
+            description="✅ Login successful - Token and user data returned",
             examples=[
                 OpenApiExample(
                     'Login Success',
-                    summary='User successfully logged in',
+                    summary='User successfully logged in with token',
                     value={
+                        'token': '9944b09199c62bcf9418ad846dd0e4bbdfc6ee4b',
                         'message': 'Login successful',
                         'user': {
                             'id': 'user-uuid',
@@ -147,7 +153,11 @@ def register(request):
                             'first_name': 'John',
                             'last_name': 'Doe',
                             'is_email_verified': True
-                        }
+                        },
+                        'workspace_id': 'workspace-uuid',
+                        'has_active_subscription': True,
+                        'needs_payment': False,
+                        'subscription_status': 'active'
                     }
                 )
             ]
@@ -197,6 +207,9 @@ def login_view(request):
         user = serializer.validated_data['user']
         login(request, user)
         
+        # Create or get auth token
+        token, created = Token.objects.get_or_create(user=user)
+        
         # Update last login
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
@@ -228,12 +241,13 @@ def login_view(request):
                         needs_payment = False
                     else:
                         has_active_subscription = False
-                        needs_payment = True
+
                 except:
                     pass  # Use database values if Stripe fails
         
-        # Return user data with subscription info
+        # Return user data with TOKEN
         return Response({
+            'token': token.key,  # AUTH TOKEN FOR API ACCESS
             'user': UserProfileSerializer(user).data,
             'workspace_id': str(workspace.id) if workspace else None,
             'has_active_subscription': has_active_subscription,
@@ -245,15 +259,21 @@ def login_view(request):
 
 
 @extend_schema(
-    summary="🚪 Logout",
+    summary="🚪 Logout", 
     description="""
-    Logout the current user and clear session.
+    Logout the current user and delete their auth token.
     
-    **🔐 Requirements**: Must be authenticated
+    **🔐 Requirements**: Must be authenticated with token
     
     **✅ Effect**: 
     - User session cleared
-    - Must login again to access protected endpoints
+    - Auth token deleted
+    - Must login again to get new token
+    
+    **🔑 Request Header**:
+    ```
+    Authorization: Token <your-token-here>
+    ```
     """,
     responses={
         200: OpenApiResponse(
@@ -261,19 +281,25 @@ def login_view(request):
             examples=[
                 OpenApiExample(
                     'Logout Success',
-                    summary='User logged out',
+                    summary='User logged out and token deleted',
                     value={'message': 'Logout successful'}
                 )
             ]
         ),
-        401: OpenApiResponse(description="🚫 Authentication required")
+        401: OpenApiResponse(description="🚫 Authentication required - Invalid or missing token")
     },
     tags=["Authentication"]
 )
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def logout_view(request):
-    """Logout current user"""
+    """Logout and delete auth token"""
+    # Delete the user's auth token
+    try:
+        request.user.auth_token.delete()
+    except:
+        pass  # Token might not exist
+    
     logout(request)
     return Response({'message': 'Logout successful'}, status=status.HTTP_200_OK)
 
@@ -457,7 +483,12 @@ def resend_verification(request):
     description="""
     Get the profile of the currently authenticated user.
     
-    **🔐 Requirements**: Must be authenticated and email verified
+    **🔐 Requirements**: Must be authenticated with token
+    
+    **🔑 Request Header**:
+    ```
+    Authorization: Token <your-token-here>
+    ```
     
     **📋 Response Data**:
     - User identification and contact info

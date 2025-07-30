@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
@@ -240,6 +241,17 @@ class PlanViewSet(viewsets.ModelViewSet):
     search_fields = ['plan_name']
     ordering_fields = ['plan_name', 'created_at', 'updated_at']
     ordering = ['plan_name']
+    
+    def get_permissions(self):
+        """
+        Make list/retrieve actions public for pricing pages but require authentication for create/update/delete
+        """
+        if self.action in ['list', 'retrieve', 'features']:
+            # Public access for browsing plans and pricing
+            return [AllowAny()]
+        else:
+            # Protected access for create/update/delete
+            return [SubscriptionPermission()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -493,6 +505,17 @@ class FeatureViewSet(viewsets.ModelViewSet):
     ordering_fields = ['feature_name', 'created_at', 'updated_at']
     ordering = ['feature_name']
     
+    def get_permissions(self):
+        """
+        Make list/retrieve actions public for feature browsing but require authentication for create/update/delete
+        """
+        if self.action in ['list', 'retrieve', 'plans']:
+            # Public access for browsing features
+            return [AllowAny()]
+        else:
+            # Protected access for create/update/delete
+            return [SubscriptionPermission()]
+    
     @extend_schema(
         summary="📋 Get feature plans",
         description="""
@@ -609,6 +632,17 @@ class PlanFeatureViewSet(viewsets.ModelViewSet):
     search_fields = ['plan__plan_name', 'feature__feature_name']
     ordering_fields = ['created_at', 'updated_at', 'limit']
     ordering = ['-created_at']
+    
+    def get_permissions(self):
+        """
+        Make list/retrieve actions public for plan-feature browsing but require authentication for create/update/delete
+        """
+        if self.action in ['list', 'retrieve']:
+            # Public access for browsing plan-feature assignments
+            return [AllowAny()]
+        else:
+            # Protected access for create/update/delete
+            return [PlanFeaturePermission()]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""

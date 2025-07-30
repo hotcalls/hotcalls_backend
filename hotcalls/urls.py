@@ -20,10 +20,25 @@ from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from rest_framework.permissions import AllowAny
+from rest_framework.decorators import permission_classes
 from core.health import health_check
 from core.utils import CORSMediaView
 
+# Create public versions of documentation views
+class PublicSpectacularAPIView(SpectacularAPIView):
+    permission_classes = [AllowAny]
+
+class PublicSpectacularSwaggerView(SpectacularSwaggerView):
+    permission_classes = [AllowAny]
+
+class PublicSpectacularRedocView(SpectacularRedocView):
+    permission_classes = [AllowAny]
+
+@csrf_exempt
+@permission_classes([AllowAny])
 def api_root(request):
     """API root endpoint that lists available API endpoints"""
     return JsonResponse({
@@ -56,10 +71,10 @@ urlpatterns = [
     # API Root
     path('api/', api_root, name='api-root'),
     
-    # API Documentation
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    # API Documentation (PUBLIC)
+    path('api/schema/', PublicSpectacularAPIView.as_view(), name='schema'),
+    path('api/docs/', PublicSpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    path('api/redoc/', PublicSpectacularRedocView.as_view(url_name='schema'), name='redoc'),
     
     # Authentication API - NEW: Email-based authentication with verification
     path('api/auth/', include('core.management_api.auth_api.urls')),

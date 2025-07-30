@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from core.models import Workspace
 from .serializers import (
@@ -431,7 +431,7 @@ def retrieve_stripe_customer(request):
     tags=["Payment Management"]
 )
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([AllowAny])
 def list_stripe_products(request):
     """List all Stripe products and their prices"""
     import stripe
