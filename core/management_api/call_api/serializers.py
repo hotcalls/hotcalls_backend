@@ -308,7 +308,7 @@ class TestCallSerializer(serializers.Serializer):
             
             # Check if user has access to this agent
             if request and request.user:
-                if not request.user.is_staff:
+                if not request.user.is_superuser:
                     if request.user not in agent.workspace.users.all():
                         raise serializers.ValidationError(
                             "You can only use agents from your own workspace"
@@ -323,15 +323,14 @@ class CallTaskSerializer(serializers.ModelSerializer):
     """Serializer for CallTask model"""
     agent_name = serializers.CharField(source='agent.name', read_only=True)
     workspace_name = serializers.CharField(source='workspace.name', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
     lead_name = serializers.CharField(source='lead.name', read_only=True)
     
     class Meta:
         model = CallTask
         fields = [
-            'id', 'status', 'attempts', 'is_test', 'next_call',
+            'id', 'status', 'attempts', 'phone', 'next_call',
             'agent', 'agent_name', 'workspace', 'workspace_name',
-            'user', 'user_email', 'lead', 'lead_name',
+            'lead', 'lead_name',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']

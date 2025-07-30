@@ -102,6 +102,13 @@ class CallTaskFilter(django_filters.FilterSet):
         help_text="Filter by multiple statuses"
     )
     
+    # Phone number filter
+    phone = django_filters.CharFilter(
+        field_name='phone',
+        lookup_expr='icontains',
+        help_text="Filter by phone number (partial match)"
+    )
+    
     # Date range filters
     next_call__gte = django_filters.DateTimeFilter(
         field_name='next_call',
@@ -125,12 +132,6 @@ class CallTaskFilter(django_filters.FilterSet):
         help_text="Filter tasks created before this date/time"
     )
     
-    # Boolean filters
-    is_test = django_filters.BooleanFilter(
-        field_name='is_test',
-        help_text="Filter test calls"
-    )
-    
     # Relationship filters
     agent = django_filters.UUIDFilter(
         field_name='agent__id',
@@ -140,11 +141,6 @@ class CallTaskFilter(django_filters.FilterSet):
     workspace = django_filters.UUIDFilter(
         field_name='workspace__id',
         help_text="Filter by workspace ID"
-    )
-    
-    user = django_filters.UUIDFilter(
-        field_name='user__id',
-        help_text="Filter by user ID"
     )
     
     lead = django_filters.UUIDFilter(
@@ -168,7 +164,7 @@ class CallTaskFilter(django_filters.FilterSet):
     class Meta:
         model = CallTask
         fields = [
-            'status', 'status__in', 'is_test', 'agent', 'workspace', 'user', 'lead',
+            'status', 'status__in', 'phone', 'agent', 'workspace', 'lead',
             'next_call__gte', 'next_call__lte', 'created_at__gte', 'created_at__lte',
             'attempts__gte', 'attempts__lte'
         ] 

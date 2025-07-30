@@ -7,11 +7,10 @@ import secrets
 
 # New CallStatus TextChoices
 class CallStatus(models.TextChoices):
-    PENDING = 'PEND', 'pending'       # waiting for scheduler
-    STARTING = 'STRT', 'starting'     # scheduler picked it
-    ACTIVE = 'ACTV', 'active'         # call is in progress
-    SUCCESS = 'SUCC', 'success'
-    FAILED = 'FAIL', 'failed'
+    SCHEDULED = 'scheduled', 'scheduled'         # will be called
+    IN_PROGRESS = 'in_progress', 'in_progress'   # call in progress
+    RETRY = 'retry', 'retry'                     # was called but failed
+    WAITING = 'waiting', 'waiting'               # limit hit
 
 
 # Enum Choices
@@ -919,38 +918,33 @@ class CallTask(models.Model):
     status = models.CharField(
         max_length=20,
         choices=CallStatus.choices,
-        default=CallStatus.PENDING,
+        default=CallStatus.SCHEDULED,
         help_text="Current status of the call task"
     )
     attempts = models.IntegerField(
         default=0,
         help_text="Number of retry attempts made"
     )
-    is_test = models.BooleanField(
-        default=False,
-        help_text="Whether this is a test call"
+    phone = models.CharField(
+        max_length=20,
+        help_text="Phone number to call"
     )
     
-    # One-to-One relationships
-    workspace = models.OneToOneField(
+    # Relationships
+    workspace = models.ForeignKey(
         Workspace,
         on_delete=models.CASCADE,
-        related_name='call_task',
+        related_name='call_tasks',
         help_text="Workspace associated with this call task"
-    )
-    
-    user = models.OneToOneField(
-        User,
-        on_delete=models.CASCADE,
-        related_name='call_task',
-        help_text="User associated with this call task"
     )
     
     lead = models.OneToOneField(
         Lead,
         on_delete=models.CASCADE,
         related_name='call_task',
-        help_text="Lead associated with this call task"
+        null=True,
+        blank=True,
+        help_text="Lead associated with this call task (null for test calls)"
     )
     
     # Agent assignment
@@ -989,4 +983,4 @@ class CallTask(models.Model):
     
     def can_retry(self, max_retries=3):
         """Check if the task can be retried"""
-        return self.attempts < max_retries and self.status in [CallStatus.PENDING, CallStatus.FAILED]
+        return self.attempts < max_retries and self.status in [CallStatus.SCHEDULED, CallStatus.RETRY]

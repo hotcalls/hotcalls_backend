@@ -195,50 +195,67 @@ def initiate_call_from_task(call_task):
         agent = call_task.agent
         agent_config = {
             'name': agent.name,
-            'voice_id': agent.voice_id,
+            'voice_id': agent.voice.voice_external_id if agent.voice else None,
             'language': agent.language,
             'prompt': agent.prompt,
             'greeting_outbound': agent.greeting_outbound,
             'greeting_inbound': agent.greeting_inbound,
-            'description': agent.description,
-            'voice_tone': agent.voice_tone,
-            'agent_config': agent.agent_config,
-            'timezone': agent.timezone,
-            'post_call_analysis': agent.post_call_analysis,
-            'live_transcription': agent.live_transcription,
-            'voice_transcription': agent.voice_transcription,
-            'lead_qualification': agent.lead_qualification,
-            'phone_number': agent.phone_number,
+            'character': agent.character,
+            'config_id': agent.config_id,
         }
         
-        # Get lead data
-        lead = call_task.lead
-        lead_data = {
-            'id': str(lead.id),
-            'name': lead.name,
-            'surname': lead.surname,
-            'email': lead.email,
-            'phone': lead.phone,
-            'company': lead.company,
-            'address': lead.address,
-            'city': lead.city,
-            'state': lead.state,
-            'zip_code': lead.zip_code,
-            'country': lead.country,
-            'notes': lead.notes,
-            'metadata': lead.metadata,
-        }
+        # Get lead data or create test data
+        if call_task.lead:
+            # Real call with lead
+            lead = call_task.lead
+            lead_data = {
+                'id': str(lead.id),
+                'name': lead.name,
+                'surname': lead.surname,
+                'email': lead.email,
+                'phone': lead.phone,
+                'company': lead.company,
+                'address': lead.address,
+                'city': lead.city,
+                'state': lead.state,
+                'zip_code': lead.zip_code,
+                'country': lead.country,
+                'notes': lead.notes,
+                'metadata': lead.metadata,
+            }
+            call_reason = None
+        else:
+            # Test call without lead
+            lead_data = {
+                'id': str(call_task.id),
+                'name': 'Test',
+                'surname': 'Call',
+                'email': 'test@example.com',
+                'phone': call_task.phone,
+                'company': 'Test Company',
+                'address': '',
+                'city': '',
+                'state': '',
+                'zip_code': '',
+                'country': '',
+                'notes': 'Test call',
+                'metadata': {'test_call': True, 'call_task_id': str(call_task.id)},
+            }
+            call_reason = "Test call - triggered manually"
         
         # Get workspace for SIP trunk and campaign info
         workspace = call_task.workspace
-        sip_trunk_id = workspace.sip_trunk_id if hasattr(workspace, 'sip_trunk_id') else os.getenv('DEFAULT_SIP_TRUNK_ID')
-        from_number = agent.phone_number or workspace.phone_number if hasattr(workspace, 'phone_number') else os.getenv('DEFAULT_FROM_NUMBER')
+        sip_trunk_id = workspace.sip_trunk_id if hasattr(workspace, 'sip_trunk_id') else os.getenv('TRUNK_ID')
+        
+        # Get first phone number from agent's phone_numbers or use workspace/default
+        agent_phone = None
+        if agent.phone_numbers.exists():
+            agent_phone = agent.phone_numbers.first().phonenumber
+        
+        from_number = agent_phone or (workspace.phone_number if hasattr(workspace, 'phone_number') else os.getenv('DEFAULT_FROM_NUMBER'))
         
         # Use workspace id as campaign_id
         campaign_id = str(workspace.id)
-        
-        # Call reason for test calls
-        call_reason = "Test call - triggered manually" if call_task.is_test else None
         
         # Make the call
         result = make_outbound_call_sync(
