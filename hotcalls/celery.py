@@ -33,10 +33,11 @@ app.conf.broker_connection_timeout = 30  # Connection timeout in seconds
 
 # Configure the periodic tasks
 app.conf.beat_schedule = {
-    # Clean up expired authentication tokens daily at 2 AM
+    # Clean up expired authentication tokens every 1 minute
     'cleanup-expired-tokens': {
         'task': 'core.tasks.cleanup_expired_tokens',
-        'schedule': crontab(hour=2, minute=0),  # Run daily at 2:00 AM
+        # 'schedule': crontab(hour=2, minute=0),  # Run daily at 2:00 AM
+        'schedule': 60.0,  # Run every 60 seconds (1 minute)
         'options': {
             'queue': 'default',
             'routing_key': 'cleanup'
