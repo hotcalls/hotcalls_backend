@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 from django.utils import timezone
+import datetime
 import secrets
 
 
@@ -54,6 +55,29 @@ META_INTEGRATION_STATUS_CHOICES = [
     ('error', 'Error'),
     ('disconnected', 'Disconnected'),
 ]
+
+class FeatureUnit(models.TextChoices):
+    """Feature unit types for subscription tracking"""
+    MINUTE = 'minute', 'Minute'
+    GENERAL_UNIT = 'general_unit', 'General Unit' 
+    ACCESS = 'access', 'Access'
+    REQUEST = 'request', 'Request'
+    GIGABYTE = 'gb', 'Gigabyte'
+
+class HTTPMethod(models.TextChoices):
+    """HTTP method choices for EndpointFeature"""
+    GET = 'GET', 'GET'
+    POST = 'POST', 'POST'
+    PUT = 'PUT', 'PUT'
+    PATCH = 'PATCH', 'PATCH'
+    DELETE = 'DELETE', 'DELETE'
+    HEAD = 'HEAD', 'HEAD'
+    OPTIONS = 'OPTIONS', 'OPTIONS'
+    ANY = '*', 'Any Method'
+
+# Legacy constants for backwards compatibility
+FEATURE_UNIT_CHOICES = FeatureUnit.choices
+HTTP_METHOD_CHOICES = HTTPMethod.choices
 
 
 
@@ -110,7 +134,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=100,
         blank=True,
         null=True,
-        help_text="Token for email verification"
+        editable=False,
+        help_text="Token for email verification (encrypted at rest)"
     )
     email_verification_sent_at = models.DateTimeField(
         blank=True,
@@ -123,7 +148,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         max_length=100,
         blank=True,
         null=True,
-        help_text="Token for password reset"
+        editable=False,
+        help_text="Token for password reset (encrypted at rest)"
     )
     password_reset_sent_at = models.DateTimeField(
         blank=True,
@@ -246,7 +272,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         
         # Check if token is expired (24 hours)
         if self.password_reset_sent_at:
-            expiry_time = self.password_reset_sent_at + timezone.timedelta(hours=24)
+            expiry_time = self.password_reset_sent_at + datetime.timedelta(hours=24)
             if timezone.now() > expiry_time:
                 return False
         
@@ -375,6 +401,13 @@ class Feature(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     feature_name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, help_text="Feature description")
+    unit = models.CharField(
+        max_length=20,
+        choices=FeatureUnit.choices,
+        blank=True, 
+        null=True,
+        help_text="Unit type for this feature"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -382,12 +415,53 @@ class Feature(models.Model):
         return self.feature_name
 
 
+class EndpointFeature(models.Model):
+    """
+    Maps an API route (by Django route name or regex) to the Feature that governs it.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    feature = models.ForeignKey(
+        Feature, 
+        on_delete=models.CASCADE, 
+        related_name='endpoint_features',
+        help_text="Feature that governs this endpoint"
+    )
+    route_name = models.CharField(
+        max_length=200, 
+        db_index=True,
+        help_text="Django route name or regex pattern for the endpoint"
+    )
+    http_method = models.CharField(
+        max_length=10,
+        choices=HTTPMethod.choices,
+        default=HTTPMethod.ANY,
+        help_text="HTTP method (GET, POST, etc.) or '*' for any method"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("route_name", "http_method")
+        indexes = [
+            models.Index(fields=['route_name']),
+            models.Index(fields=['route_name', 'http_method']),
+        ]
+
+    def __str__(self):
+        method_str = f" ({self.http_method})" if self.http_method else ""
+        return f"{self.route_name}{method_str} → {self.feature.feature_name}"
+
+
 class PlanFeature(models.Model):
     """Mapping table between Plan and Feature with limit"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     plan = models.ForeignKey(Plan, on_delete=models.CASCADE)
     feature = models.ForeignKey(Feature, on_delete=models.CASCADE)
-    limit = models.IntegerField(help_text="Feature limit for this plan")
+    limit = models.DecimalField(
+        max_digits=15, 
+        decimal_places=3, 
+        help_text="Feature limit for this plan"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -404,53 +478,13 @@ class Workspace(models.Model):
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
     
-    # Subscription
-    current_plan = models.ForeignKey(
-        'Plan',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='workspaces',
-        help_text="Current subscription plan"
-    )
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('past_due', 'Past Due'),
-            ('unpaid', 'Unpaid'),
-        ],
-        default='trial',
-        help_text="Current subscription status"
-    )
-    
+
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
         blank=True, 
         null=True,
-        unique=True,
         help_text="Stripe Customer ID for billing"
-    )
-    stripe_subscription_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        help_text="Current Stripe Subscription ID (sub_xxx)"
-    )
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('past_due', 'Past Due'),
-            ('unpaid', 'Unpaid'),
-        ],
-        default='trial',
-        help_text="Current subscription status"
     )
     stripe_subscription_id = models.CharField(
         max_length=255,
@@ -462,8 +496,135 @@ class Workspace(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    @property
+    def current_plan(self):
+        """Get current active plan"""
+        try:
+            return self.workspacesubscription_set.get(is_active=True).plan
+        except WorkspaceSubscription.DoesNotExist:
+            return None
+    
+    @property 
+    def current_subscription(self):
+        """Get current active subscription"""
+        try:
+            return self.workspacesubscription_set.get(is_active=True)
+        except WorkspaceSubscription.DoesNotExist:
+            return None
+    
+    class Meta:
+        constraints = [
+            # Ensure unique stripe_customer_id when not NULL
+            models.UniqueConstraint(
+                fields=['stripe_customer_id'], 
+                condition=models.Q(stripe_customer_id__isnull=False),
+                name='unique_stripe_customer_id'
+            ),
+            # Ensure unique stripe_subscription_id when not NULL
+            models.UniqueConstraint(
+                fields=['stripe_subscription_id'],
+                condition=models.Q(stripe_subscription_id__isnull=False), 
+                name='unique_stripe_subscription_id'
+            ),
+        ]
+    
     def __str__(self):
         return self.workspace_name
+
+
+class WorkspaceSubscription(models.Model):
+    """
+    Makes the relationship between a Workspace and a Plan explicit,
+    and captures periods so you can keep historical data.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT)
+    started_at = models.DateTimeField()
+    ends_at = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        # One active subscription at a time
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace"],
+                condition=models.Q(is_active=True),
+                name="unique_active_subscription_per_workspace"
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.plan.plan_name} ({'Active' if self.is_active else 'Inactive'})"
+
+
+class WorkspaceUsage(models.Model):
+    """
+    One record per workspace **per billing period**.
+    Historical rows are never mutated – new row each period.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
+    subscription = models.ForeignKey(
+        WorkspaceSubscription,
+        on_delete=models.PROTECT,
+        help_text="Subscription that was active for this usage period",
+    )
+    period_start = models.DateTimeField()
+    period_end = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("workspace", "period_start", "period_end")
+
+    def __str__(self):
+        return f"{self.workspace} | {self.period_start:%Y-%m-%d} → {self.period_end:%Y-%m-%d}"
+
+
+class FeatureUsage(models.Model):
+    """
+    Counter per feature inside a WorkspaceUsage container.
+    used_amount is:
+      • minutes   for unit='minute'
+      • integer   for unit='general_unit' or 'access' (0 or 1)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    usage_record = models.ForeignKey(
+        WorkspaceUsage, related_name="feature_usages",
+        on_delete=models.CASCADE
+    )
+    feature = models.ForeignKey(Feature, on_delete=models.CASCADE)
+    used_amount = models.DecimalField(max_digits=15, decimal_places=3, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("usage_record", "feature")
+
+    def __str__(self):
+        return f"{self.feature.feature_name} - {self.used_amount}"
+
+    @property
+    def limit(self):
+        """
+        Fetch the limit from PlanFeature (None = unlimited)
+        """
+        plan = self.usage_record.subscription.plan
+        try:
+            return plan.planfeature_set.get(feature=self.feature).limit
+        except PlanFeature.DoesNotExist:
+            return None
+
+    @property
+    def remaining(self):
+        """
+        Calculate remaining usage based on limit
+        """
+        lim = self.limit
+        return None if lim is None else max(lim - self.used_amount, 0)
 
 
 class Agent(models.Model):
@@ -498,10 +659,10 @@ class Agent(models.Model):
     # UPDATED: Voice as relationship to Voice model
     voice = models.ForeignKey(
         Voice,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         null=True,
         blank=True,
-        related_name='mapping_voice_agents',
+        related_name='agents',
         help_text="Voice configuration for this agent"
     )
     
@@ -593,7 +754,7 @@ class Lead(models.Model):
         Workspace,
         on_delete=models.CASCADE,
         related_name='leads',
-        null=True,  # Allow existing leads to have null workspace during migration
+        null=True,  # Will be made non-nullable after backfill migration
         blank=True,
         help_text="Workspace this lead belongs to"
     )
@@ -672,7 +833,7 @@ class CallLog(models.Model):
     appointment_datetime = models.DateTimeField(
         null=True,
         blank=True,
-        help_text="Scheduled appointment datetime when status is 'terminvereinbart'"
+        help_text="Scheduled appointment datetime when status is 'appointment_scheduled'"
     )
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -699,8 +860,8 @@ class GoogleCalendarConnection(models.Model):
     
     # Google OAuth fields
     account_email = models.EmailField(help_text="Google account email")
-    refresh_token = models.TextField(help_text="OAuth refresh token")
-    access_token = models.TextField(help_text="OAuth access token")
+    refresh_token = models.TextField(editable=False, help_text="OAuth refresh token (encrypted at rest)")
+    access_token = models.TextField(editable=False, help_text="OAuth access token (encrypted at rest)")
     token_expires_at = models.DateTimeField(help_text="When access token expires")
     scopes = models.JSONField(
         default=list,
@@ -775,8 +936,8 @@ class GoogleCalendar(models.Model):
     primary = models.BooleanField(default=False)
     time_zone = models.CharField(max_length=50)
     
-    refresh_token = models.CharField(max_length=255, help_text="Google Calendar API refresh token")
-    access_token = models.CharField(max_length=255, help_text="Google Calendar API access token")
+    refresh_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API refresh token (encrypted at rest)")
+    access_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API access token (encrypted at rest)")
     token_expires_at = models.DateTimeField(help_text="When access token expires")
     scopes = models.JSONField(
         default=list,
@@ -837,6 +998,7 @@ class MetaIntegration(models.Model):
         help_text="Facebook/Instagram Page ID"
     )
     access_token = models.TextField(
+        editable=False,
         help_text="Meta API access token (encrypted at rest)"
     )
     access_token_expires_at = models.DateTimeField(
@@ -844,7 +1006,8 @@ class MetaIntegration(models.Model):
     )
     verification_token = models.CharField(
         max_length=255,
-        help_text="Webhook verification token for Meta"
+        editable=False,
+        help_text="Webhook verification token for Meta (encrypted at rest)"
     )
     scopes = models.JSONField(
         default=list,

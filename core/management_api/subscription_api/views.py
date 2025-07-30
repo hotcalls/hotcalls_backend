@@ -5,13 +5,13 @@ from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
-from core.models import Plan, Feature, PlanFeature
+from core.models import Plan, Feature, PlanFeature, EndpointFeature
 from .serializers import (
     PlanSerializer, PlanCreateSerializer, FeatureSerializer,
     PlanFeatureSerializer, PlanFeatureCreateSerializer,
-    FeatureAvailabilitySerializer
+    FeatureAvailabilitySerializer, EndpointFeatureSerializer
 )
-from .filters import PlanFilter, FeatureFilter, PlanFeatureFilter
+from .filters import PlanFilter, FeatureFilter, PlanFeatureFilter, EndpointFeatureFilter
 from .permissions import SubscriptionPermission, PlanFeaturePermission
 
 
@@ -501,7 +501,7 @@ class FeatureViewSet(viewsets.ModelViewSet):
     permission_classes = [SubscriptionPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = FeatureFilter
-    search_fields = ['feature_name', 'description']
+    search_fields = ['feature_name', 'description', 'unit']
     ordering_fields = ['feature_name', 'created_at', 'updated_at']
     ordering = ['feature_name']
     
@@ -648,4 +648,121 @@ class PlanFeatureViewSet(viewsets.ModelViewSet):
         """Return appropriate serializer based on action"""
         if self.action == 'create':
             return PlanFeatureCreateSerializer
-        return PlanFeatureSerializer 
+        return PlanFeatureSerializer
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="🔗 List endpoint-feature mappings",
+        description="""
+        Retrieve all endpoint-feature mappings showing which API routes are governed by which features.
+        
+        **🔐 Permission Requirements**: All authenticated users can view mappings
+        
+        **🎯 Use Cases**:
+        - API route monitoring
+        - Feature-based access control
+        - Endpoint monetization management
+        """,
+        responses={
+            200: OpenApiResponse(response=EndpointFeatureSerializer(many=True), description="✅ Mappings retrieved"),
+            401: OpenApiResponse(description="🚫 Authentication required")
+        },
+        tags=["Subscription Management"]
+    ),
+    create=extend_schema(
+        summary="➕ Create endpoint-feature mapping",
+        description="""
+        Map an API route to a feature for access control and monetization.
+        
+        **🔐 Permission Requirements**: Staff access required
+        
+        **📝 Route Mapping**:
+        - Map Django route names or regex patterns
+        - Optional HTTP method specification
+        - Link to existing features
+        """,
+        request=EndpointFeatureSerializer,
+        responses={
+            201: OpenApiResponse(response=EndpointFeatureSerializer, description="✅ Mapping created successfully"),
+            400: OpenApiResponse(description="❌ Validation error"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied - Staff access required")
+        },
+        tags=["Subscription Management"]
+    ),
+    retrieve=extend_schema(
+        summary="🔍 Get endpoint mapping details",
+        description="""Get detailed information about a specific endpoint-feature mapping.""",
+        responses={
+            200: OpenApiResponse(response=EndpointFeatureSerializer, description="✅ Mapping details retrieved"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            404: OpenApiResponse(description="🚫 Mapping not found")
+        },
+        tags=["Subscription Management"]
+    ),
+    update=extend_schema(
+        summary="✏️ Update endpoint mapping",
+        description="""Update endpoint-feature mapping (Staff only).""",
+        request=EndpointFeatureSerializer,
+        responses={
+            200: OpenApiResponse(response=EndpointFeatureSerializer, description="✅ Mapping updated successfully"),
+            400: OpenApiResponse(description="❌ Validation error"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied"),
+            404: OpenApiResponse(description="🚫 Mapping not found")
+        },
+        tags=["Subscription Management"]
+    ),
+    partial_update=extend_schema(
+        summary="✏️ Partially update endpoint mapping",
+        description="""Update specific fields of an endpoint-feature mapping (Staff only).""",
+        request=EndpointFeatureSerializer,
+        responses={
+            200: OpenApiResponse(response=EndpointFeatureSerializer, description="✅ Mapping updated successfully"),
+            400: OpenApiResponse(description="❌ Validation error"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied"),
+            404: OpenApiResponse(description="🚫 Mapping not found")
+        },
+        tags=["Subscription Management"]
+    ),
+    destroy=extend_schema(
+        summary="🗑️ Delete endpoint mapping",
+        description="""Remove endpoint-feature mapping (Staff only).""",
+        responses={
+            204: OpenApiResponse(description="✅ Mapping deleted successfully"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied"),
+            404: OpenApiResponse(description="🚫 Mapping not found")
+        },
+        tags=["Subscription Management"]
+    ),
+)
+class EndpointFeatureViewSet(viewsets.ModelViewSet):
+    """
+    🔗 **Endpoint-Feature Mapping Management**
+    
+    Manages the relationship between API endpoints and features:
+    - **👤 All Users**: Can view endpoint mappings
+    - **👔 Staff**: Can create/modify/delete mappings
+    """
+    queryset = EndpointFeature.objects.all()
+    serializer_class = EndpointFeatureSerializer
+    permission_classes = [SubscriptionPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = EndpointFeatureFilter
+    search_fields = ['route_name', 'feature__feature_name']
+    ordering_fields = ['route_name', 'created_at', 'updated_at']
+    ordering = ['route_name']
+    
+    def get_permissions(self):
+        """
+        Make list/retrieve actions public for endpoint browsing but require authentication for create/update/delete
+        """
+        if self.action in ['list', 'retrieve']:
+            # Public access for browsing endpoint mappings
+            return [AllowAny()]
+        else:
+            # Protected access for create/update/delete
+            return [SubscriptionPermission()] 

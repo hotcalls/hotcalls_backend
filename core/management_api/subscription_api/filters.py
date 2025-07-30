@@ -1,6 +1,6 @@
 import django_filters
 from django.db import models
-from core.models import Plan, Feature, PlanFeature
+from core.models import Plan, Feature, PlanFeature, EndpointFeature, FeatureUnit, HTTPMethod
 
 
 class PlanFilter(django_filters.FilterSet):
@@ -53,6 +53,7 @@ class FeatureFilter(django_filters.FilterSet):
     search = django_filters.CharFilter(method='filter_search', label='Search')
     feature_name = django_filters.CharFilter(lookup_expr='icontains')
     description = django_filters.CharFilter(lookup_expr='icontains')
+    unit = django_filters.ChoiceFilter(choices=FeatureUnit.choices)
     
     # Date filters
     created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
@@ -66,7 +67,7 @@ class FeatureFilter(django_filters.FilterSet):
     
     class Meta:
         model = Feature
-        fields = ['feature_name', 'description']
+        fields = ['feature_name', 'description', 'unit']
     
     def filter_search(self, queryset, name, value):
         """Global search across feature name and description"""
@@ -84,6 +85,33 @@ class FeatureFilter(django_filters.FilterSet):
         if value:
             return queryset.filter(mapping_plan_features__isnull=True)
         return queryset
+
+
+class EndpointFeatureFilter(django_filters.FilterSet):
+    """Filter for EndpointFeature model"""
+    
+    # Text search filters
+    search = django_filters.CharFilter(method='filter_search', label='Search')
+    feature_name = django_filters.CharFilter(field_name='feature__feature_name', lookup_expr='icontains')
+    route_name = django_filters.CharFilter(lookup_expr='icontains')
+    http_method = django_filters.ChoiceFilter(choices=HTTPMethod.choices)
+    
+    # Date filters
+    created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
+    created_before = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='lte')
+    updated_after = django_filters.DateTimeFilter(field_name='updated_at', lookup_expr='gte')
+    updated_before = django_filters.DateTimeFilter(field_name='updated_at', lookup_expr='lte')
+    
+    class Meta:
+        model = EndpointFeature
+        fields = ['feature', 'route_name', 'http_method']
+    
+    def filter_search(self, queryset, name, value):
+        """Global search across route name and feature name"""
+        return queryset.filter(
+            models.Q(route_name__icontains=value) |
+            models.Q(feature__feature_name__icontains=value)
+        )
 
 
 class PlanFeatureFilter(django_filters.FilterSet):

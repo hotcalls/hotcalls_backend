@@ -1,12 +1,13 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PlanViewSet, FeatureViewSet, PlanFeatureViewSet
+from .views import PlanViewSet, FeatureViewSet, PlanFeatureViewSet, EndpointFeatureViewSet
 
 # Create router and register viewsets
 router = DefaultRouter()
 router.register(r'plans', PlanViewSet, basename='plan')
 router.register(r'features', FeatureViewSet, basename='feature')
 router.register(r'plan-features', PlanFeatureViewSet, basename='planfeature')
+router.register(r'endpoint-features', EndpointFeatureViewSet, basename='endpointfeature')
 
 urlpatterns = [
     path('', include(router.urls)),

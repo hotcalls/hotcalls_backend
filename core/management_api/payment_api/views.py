@@ -569,135 +569,6 @@ def create_checkout_session(request):
         )
 
 
-@extend_schema(
-    summary="📊 Get workspace subscription status",
-    description="""
-    Get the current subscription status for a workspace.
-    
-    **🔐 Permission Requirements**:
-    - User must be authenticated
-    - User must be a member of the workspace
-    
-    **📊 Returns**:
-    - Current subscription details
-    - Plan information
-    - Next billing date
-    - Subscription status
-    """,
-    responses={
-        200: OpenApiResponse(
-            description="✅ Subscription details retrieved",
-            examples=[
-                OpenApiExample(
-                    'Active Subscription',
-                    value={
-                        'has_subscription': True,
-                        'subscription': {
-                            'id': 'sub_xxx',
-                            'status': 'active',
-                            'current_period_end': 1234567890,
-                            'cancel_at_period_end': False,
-                            'plan': {
-                                'id': 'price_xxx',
-                                'product': 'prod_xxx',
-                                'amount': 4900,
-                                'currency': 'eur',
-                                'interval': 'month'
-                            }
-                        }
-                    }
-                ),
-                OpenApiExample(
-                    'No Subscription',
-                    value={
-                        'has_subscription': False,
-                        'subscription': None
-                    }
-                )
-            ]
-        ),
-        401: OpenApiResponse(description="🚫 Authentication required"),
-        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
-        404: OpenApiResponse(description="🚫 Workspace not found")
-    },
-    tags=["Payment Management"]
-)
-@api_view(['GET'])
-@permission_classes([IsWorkspaceMember])
-def get_subscription_status(request, workspace_id):
-    """Get current subscription status for workspace"""
-    try:
-        workspace = Workspace.objects.get(id=workspace_id)
-        
-        if not workspace.stripe_customer_id:
-            return Response({
-                'has_subscription': False,
-                'subscription': None
-            })
-        
-        # Get active subscriptions
-        subscriptions = stripe.Subscription.list(
-            customer=workspace.stripe_customer_id,
-            status='active',
-            limit=1
-        )
-        
-        if subscriptions['data']:
-            subscription = subscriptions['data'][0]
-            
-            # Update workspace subscription status
-            workspace.stripe_subscription_id = subscription.id
-            workspace.subscription_status = 'active'
-            workspace.save()
-            
-            return Response({
-                'has_subscription': True,
-                'subscription': {
-                    'id': subscription.id,
-                    'status': subscription.status,
-                    'current_period_end': subscription.current_period_end,
-                    'cancel_at_period_end': subscription.cancel_at_period_end,
-                    'plan': {
-                        'id': subscription['items']['data'][0]['price']['id'],
-                        'product': subscription['items']['data'][0]['price']['product'],
-                        'amount': subscription['items']['data'][0]['price']['unit_amount'],
-                        'currency': subscription['items']['data'][0]['price']['currency'],
-                        'interval': subscription['items']['data'][0]['price']['recurring']['interval']
-                    }
-                }
-            })
-        else:
-            # Check for other statuses
-            all_subs = stripe.Subscription.list(
-                customer=workspace.stripe_customer_id,
-                limit=1
-            )
-            
-            if all_subs['data']:
-                sub = all_subs['data'][0]
-                workspace.stripe_subscription_id = sub.id
-                workspace.subscription_status = sub.status
-                workspace.save()
-            else:
-                workspace.subscription_status = 'none'
-                workspace.save()
-            
-            return Response({
-                'has_subscription': False,
-                'subscription': None
-            })
-            
-    except Workspace.DoesNotExist:
-        return Response(
-            {"error": "Workspace not found"}, 
-            status=status.HTTP_404_NOT_FOUND
-        )
-    except stripe.error.StripeError as e:
-        return Response(
-            {"error": f"Stripe error: {str(e)}"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
 
 @extend_schema(
     summary="🚫 Cancel subscription",
@@ -752,7 +623,6 @@ def cancel_subscription(request, workspace_id):
             cancel_at_period_end=True
         )
         
-        workspace.subscription_status = 'cancelled'
         workspace.save()
         
         return Response({
@@ -937,7 +807,6 @@ def stripe_webhook(request):
             try:
                 workspace = Workspace.objects.get(id=workspace_id)
                 workspace.stripe_subscription_id = subscription_id
-                workspace.subscription_status = 'active'
                 
                 # Get subscription details to find the plan
                 subscription = stripe.Subscription.retrieve(subscription_id)
@@ -968,14 +837,12 @@ def stripe_webhook(request):
     elif event_type == 'customer.subscription.updated':
         subscription = event_data
         customer_id = subscription['customer']
-        subscription_status = subscription['status']
         
-        # Update workspace subscription status
+        # Update workspace subscription info
         try:
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
-            workspace.subscription_status = subscription_status
             workspace.save()
-            print(f"Updated workspace subscription status to {subscription_status}")
+            print(f"Updated workspace for customer {customer_id}")
         except Workspace.DoesNotExist:
             print(f"No workspace found for customer {customer_id}")
     
@@ -983,10 +850,9 @@ def stripe_webhook(request):
         subscription = event_data
         customer_id = subscription['customer']
         
-        # Mark subscription as cancelled
+        # Clear subscription info
         try:
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
-            workspace.subscription_status = 'cancelled'
             workspace.stripe_subscription_id = None
             workspace.save()
             print(f"Subscription cancelled for workspace {workspace.id}")
@@ -1008,8 +874,8 @@ def stripe_webhook(request):
     
     **Returns**:
     - `has_active_subscription`: Boolean indicating if subscription is active
-    - `subscription_status`: Current status (trial, active, cancelled, past_due, unpaid)
     - `subscription_end_date`: When the subscription ends (if active)
+    - `stripe_subscription_id`: Current Stripe subscription ID
     """,
     responses={
         200: OpenApiResponse(
@@ -1019,7 +885,6 @@ def stripe_webhook(request):
                     'Active Subscription',
                     value={
                         'has_active_subscription': True,
-                        'subscription_status': 'active',
                         'subscription_end_date': '2024-12-31T23:59:59Z',
                         'stripe_subscription_id': 'sub_123abc'
                     }
@@ -1028,7 +893,6 @@ def stripe_webhook(request):
                     'No Active Subscription',
                     value={
                         'has_active_subscription': False,
-                        'subscription_status': 'trial',
                         'subscription_end_date': None,
                         'stripe_subscription_id': None
                     }
@@ -1053,25 +917,23 @@ def check_workspace_subscription(request, workspace_id):
                 status=status.HTTP_403_FORBIDDEN
             )
         
-        # Check subscription status
-        has_active = workspace.subscription_status in ['active', 'trial']
+        # Check subscription status from Stripe
+        has_active = False
+        subscription_end_date = None
         
-        response_data = {
-            'has_active_subscription': has_active,
-            'subscription_status': workspace.subscription_status,
-            'subscription_end_date': None,
-            'stripe_subscription_id': workspace.stripe_subscription_id
-        }
-        
-        # If there's a Stripe subscription, get more details
         if workspace.stripe_subscription_id:
             try:
                 subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
-                response_data['subscription_end_date'] = subscription.current_period_end
-                response_data['subscription_status'] = subscription.status
-                response_data['has_active_subscription'] = subscription.status == 'active'
+                has_active = subscription.status == 'active'
+                subscription_end_date = subscription.current_period_end
             except stripe.error.StripeError:
-                pass  # Use database values if Stripe fails
+                pass  # Default to inactive if Stripe fails
+        
+        response_data = {
+            'has_active_subscription': has_active,
+            'subscription_end_date': subscription_end_date,
+            'stripe_subscription_id': workspace.stripe_subscription_id
+        }
         
         return Response(response_data, status=status.HTTP_200_OK)
         

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Plan, Feature, PlanFeature
+from core.models import Plan, Feature, PlanFeature, EndpointFeature
 
 
 class FeatureSerializer(serializers.ModelSerializer):
@@ -9,7 +9,19 @@ class FeatureSerializer(serializers.ModelSerializer):
     class Meta:
         model = Feature
         fields = [
-            'id', 'feature_name', 'description', 'created_at', 'updated_at'
+            'id', 'feature_name', 'description', 'unit', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class EndpointFeatureSerializer(serializers.ModelSerializer):
+    """Serializer for EndpointFeature model"""
+    feature_name = serializers.CharField(source='feature.feature_name', read_only=True)
+    
+    class Meta:
+        model = EndpointFeature
+        fields = [
+            'id', 'feature', 'feature_name', 'route_name', 'http_method', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -18,13 +30,14 @@ class PlanFeatureSerializer(serializers.ModelSerializer):
     """Serializer for PlanFeature model"""
     feature_name = serializers.CharField(source='feature.feature_name', read_only=True)
     feature_description = serializers.CharField(source='feature.description', read_only=True)
+    feature_unit = serializers.CharField(source='feature.unit', read_only=True)
     plan_name = serializers.CharField(source='plan.plan_name', read_only=True)
     
     class Meta:
         model = PlanFeature
         fields = [
             'id', 'plan', 'plan_name', 'feature', 'feature_name', 
-            'feature_description', 'limit', 'created_at', 'updated_at'
+            'feature_description', 'feature_unit', 'limit', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 

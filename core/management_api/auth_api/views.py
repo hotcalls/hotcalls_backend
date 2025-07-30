@@ -157,7 +157,7 @@ def register(request):
                         'workspace_id': 'workspace-uuid',
                         'has_active_subscription': True,
                         'needs_payment': False,
-                        'subscription_status': 'active'
+                        'needs_payment': False
                     }
                 )
             ]
@@ -217,33 +217,26 @@ def login_view(request):
         # Get the first workspace
         workspace = user.mapping_user_workspaces.first()
         
-        # Check if workspace has active subscription
+        # Check if workspace has active subscription from Stripe
         has_active_subscription = False
-        needs_payment = False
+        needs_payment = True
         
-        if workspace:
-            # Check subscription status
-            if workspace.subscription_status in ['active', 'trial']:
-                has_active_subscription = True
-            else:
-                needs_payment = True
+        if workspace and workspace.stripe_subscription_id:
+            try:
+                import stripe
+                from django.conf import settings
+                stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
                 
-            # If there's a Stripe subscription, verify with Stripe
-            if workspace.stripe_subscription_id:
-                try:
-                    import stripe
-                    from django.conf import settings
-                    stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
-                    
-                    stripe_subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
-                    if stripe_subscription.status == 'active':
-                        has_active_subscription = True
-                        needs_payment = False
-                    else:
-                        has_active_subscription = False
+                stripe_subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                if stripe_subscription.status == 'active':
+                    has_active_subscription = True
+                    needs_payment = False
+                else:
+                    has_active_subscription = False
+                    needs_payment = True
 
-                except:
-                    pass  # Use database values if Stripe fails
+            except:
+                pass  # Default to needs payment if Stripe fails
         
         # Return user data with TOKEN
         return Response({
@@ -252,7 +245,7 @@ def login_view(request):
             'workspace_id': str(workspace.id) if workspace else None,
             'has_active_subscription': has_active_subscription,
             'needs_payment': needs_payment,
-            'subscription_status': workspace.subscription_status if workspace else None,
+
             'message': 'Login successful' if has_active_subscription else 'Payment required'
         }, status=status.HTTP_200_OK)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
