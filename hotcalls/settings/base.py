@@ -384,6 +384,15 @@ Authorization: Token your-auth-token-here
         {'name': 'Call Management', 'description': '📱 Call logs and analytics'},
         {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling'},
     ],
+    'COMPONENT_SECURITY_SCHEMES': {
+        'TokenAuth': {
+            'type': 'apiKey',
+            'in': 'header',
+            'name': 'Authorization',
+            'description': 'Token-based authentication. Format: `Token <your-token>`'
+        }
+    },
+    'SECURITY': [{'TokenAuth': []}],
 }
 
 # Celery Configuration - Dynamically constructed from Redis env vars
