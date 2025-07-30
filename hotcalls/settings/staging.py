@@ -52,6 +52,16 @@ if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
     DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
     STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
     
+    # Django 4.2+ STORAGES setting (for compatibility)
+    STORAGES = {
+        "default": {
+            "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "hotcalls.storage_backends.AzureStaticStorage",
+        },
+    }
+    
     if AZURE_CUSTOM_DOMAIN:
         # Use custom domain (CDN)
         STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
