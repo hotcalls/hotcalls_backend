@@ -10,6 +10,7 @@ import json
 import os
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
+from django.conf import settings
 
 from core.models import CallLog, Lead, Agent, CallTask, CallStatus
 from .serializers import (
@@ -1273,6 +1274,26 @@ class CallTaskViewSet(viewsets.ModelViewSet):
                                 f'Only SCHEDULED or RETRY tasks can be triggered.'
                     },
                     status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # **NEW: Concurrency Control Check**
+            # Calculate maximum allowed concurrent calls
+            max_concurrent_calls = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+            
+            # Count current IN_PROGRESS call tasks
+            current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
+            
+            # Check if we can trigger another call (must be strictly smaller)
+            if current_in_progress >= max_concurrent_calls:
+                return Response(
+                    {
+                        'error': f'Cannot trigger call due to concurrency limit. '
+                                f'Current in-progress calls: {current_in_progress}, '
+                                f'Maximum allowed: {max_concurrent_calls} '
+                                f'(agents: {settings.NUMBER_OF_LIVEKIT_AGENTS}, '
+                                f'concurrency per agent: {settings.CONCURRENCY_PER_LIVEKIT_AGENT})'
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
                 )
             
             # Update task status to IN_PROGRESS

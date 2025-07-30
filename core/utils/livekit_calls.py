@@ -90,17 +90,29 @@ async def make_outbound_call(
         # Step 1: Dispatch the agent to the room first
         agent_name = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
         print(f"Dispatching {agent_name} to room for call to {lead_data['phone']}...")
+        
+        # DEBUG: Print metadata to see what's being sent
+        print(f"🔍 DEBUG: Metadata being sent to agent_dispatch:")
+        print(f"   - agent_config: {metadata.get('agent_config', 'MISSING')}")
+        print(f"   - voice_external_id in agent_config: {metadata.get('agent_config', {}).get('voice_external_id', 'MISSING')}")
+        print(f"   - Full metadata keys: {list(metadata.keys())}")
+        
         dispatch = await livekit_api.agent_dispatch.create_dispatch(
             api.CreateAgentDispatchRequest(
                 agent_name=agent_name,
                 room=room_name,
-                metadata=json.dumps(metadata)
+                metadata=json.dumps(metadata)  # ✅ AGENT_DISPATCH_METADATA
             )
         )
         print(f"Agent dispatched: {dispatch.id}")
         
         # Step 2: Create the SIP participant (make the call)
         print(f"Creating outbound call to {lead_data['phone']}...")
+        print(f"🔍 DEBUG: Sending metadata to SIP participant_metadata:")
+        print(f"   - customer_name: {metadata.get('customer_name', 'MISSING')}")
+        print(f"   - voice_external_id: {metadata.get('agent_config', {}).get('voice_external_id', 'MISSING')}")
+        print(f"   - custom_greeting: {metadata.get('custom_greeting', 'MISSING')}")
+        print(f"   - Same metadata as agent_dispatch: {json.dumps(metadata, indent=2)[:200]}...")
         
         # Generate participant identity and name
         if customer_name:
@@ -117,6 +129,7 @@ async def make_outbound_call(
             room_name=room_name,
             participant_identity=participant_identity,
             participant_name=participant_name,
+            participant_metadata=json.dumps(metadata),  # ✅ METADATA AN SIP PARTICIPANT!
             # Optional: Add from_number handling if needed
         )
         
@@ -196,7 +209,7 @@ def initiate_call_from_task(call_task):
         agent = call_task.agent
         agent_config = {
             'name': agent.name,
-            'voice_id': agent.voice.voice_external_id if agent.voice else None,
+            'voice_external_id': agent.voice.voice_external_id if agent.voice else None,
             'language': agent.language,
             'prompt': agent.prompt,
             'greeting_outbound': agent.greeting_outbound,
