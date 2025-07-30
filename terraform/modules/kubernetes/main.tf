@@ -16,6 +16,34 @@ resource "helm_release" "nginx_ingress" {
     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-health-probe-request-path"
     value = "/healthz"
   }
+  
+  # Configure nginx to handle large file uploads (1GB max)
+  set {
+    name  = "controller.config.proxy-body-size"
+    value = "1024m"
+  }
+  
+  # Increase client body buffer size for better performance with large uploads
+  set {
+    name  = "controller.config.client-body-buffer-size"
+    value = "100m"
+  }
+  
+  # Increase timeouts for large file uploads
+  set {
+    name  = "controller.config.proxy-connect-timeout"
+    value = "600"
+  }
+  
+  set {
+    name  = "controller.config.proxy-send-timeout"
+    value = "600"
+  }
+  
+  set {
+    name  = "controller.config.proxy-read-timeout"
+    value = "600"
+  }
 }
 
 # Kubernetes Namespace

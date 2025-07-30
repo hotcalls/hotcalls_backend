@@ -1276,6 +1276,29 @@ install_ingress_controller() {
     else
         log_info "Nginx ingress controller already installed"
     fi
+    
+    # Apply custom configuration for large file uploads
+    log_info "Configuring nginx ingress controller for large file uploads..."
+    cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-configuration
+  namespace: ingress-nginx
+data:
+  proxy-body-size: "1024m"
+  client-body-buffer-size: "100m"
+  proxy-connect-timeout: "600"
+  proxy-send-timeout: "600"
+  proxy-read-timeout: "600"
+EOF
+    
+    # Restart the controller to pick up the new configuration
+    log_info "Restarting nginx ingress controller to apply configuration..."
+    kubectl rollout restart deployment/ingress-nginx-controller -n ingress-nginx || true
+    
+    # Wait for the rollout to complete
+    kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=300s || true
 }
 
 # Wait for deployment and get application URL
