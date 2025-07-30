@@ -54,6 +54,22 @@ output "storage_account_primary_access_key" {
   sensitive   = true
 }
 
+# CDN Outputs (ALWAYS ENABLED)
+output "cdn_enabled" {
+  description = "Whether CDN is enabled"
+  value       = true
+}
+
+output "cdn_endpoint_fqdn" {
+  description = "FQDN of the Azure CDN endpoint"
+  value       = module.storage.cdn_endpoint_fqdn
+}
+
+output "cdn_endpoint_url" {
+  description = "Full CDN URL"
+  value       = module.storage.cdn_endpoint_url
+}
+
 # Load balancer IP (will be available after K8s deployment)
 output "application_url_info" {
   description = "Information about accessing the application"

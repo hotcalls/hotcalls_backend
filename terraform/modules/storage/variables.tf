@@ -47,4 +47,6 @@ variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
   default     = {}
-} 
+}
+
+# CDN is always enabled with standard configuration 

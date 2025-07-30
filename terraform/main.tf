@@ -128,6 +128,8 @@ module "storage" {
   private_endpoint_enabled   = false
   private_endpoint_subnet_id = ""
   
+  # CDN is always enabled - no configuration needed
+  
   tags = local.common_tags
   
   depends_on = [module.network]

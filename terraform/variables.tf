@@ -187,11 +187,7 @@ variable "custom_domain" {
   default     = null
 }
 
-variable "enable_cdn" {
-  description = "Enable CDN for static content"
-  type        = bool
-  default     = true
-}
+
 
 # Monitoring variables
 variable "enable_application_insights" {
@@ -372,4 +368,6 @@ variable "container_image_tag" {
   description = "Docker image tag for deployments"
   type        = string
   default     = "latest"
-} 
+}
+
+# CDN is always enabled with standard configuration 

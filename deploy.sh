@@ -623,6 +623,19 @@ get_infrastructure_outputs() {
     export AZURE_ACCOUNT_NAME=$(terraform output -raw storage_account_name)
     export AZURE_STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
     
+    # CDN is always enabled - get CDN configuration
+    export CDN_ENDPOINT_FQDN=$(terraform output -raw cdn_endpoint_fqdn 2>/dev/null || echo "")
+    export CDN_ENDPOINT_URL=$(terraform output -raw cdn_endpoint_url 2>/dev/null || echo "")
+    
+    # Set AZURE_CUSTOM_DOMAIN for Django to use CDN
+    export AZURE_CUSTOM_DOMAIN="$CDN_ENDPOINT_FQDN"
+    log_info "CDN enabled with Azure domain: $CDN_ENDPOINT_FQDN"
+    
+    # Set optional Azure variables with defaults
+    export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
+    export AZURE_KEY_VAULT_URL="${AZURE_KEY_VAULT_URL:-}"
+    export AZURE_MONITOR_CONNECTION_STRING="${AZURE_MONITOR_CONNECTION_STRING:-}"
+    
     log_success "Infrastructure outputs retrieved!"
     
     cd ..
@@ -650,6 +663,19 @@ get_infrastructure_outputs_update_only() {
     export DB_HOST=$(terraform output -raw postgres_fqdn)
     export AZURE_ACCOUNT_NAME=$(terraform output -raw storage_account_name)
     export AZURE_STORAGE_KEY=$(terraform output -raw storage_account_primary_access_key)
+    
+    # CDN is always enabled - get CDN configuration
+    export CDN_ENDPOINT_FQDN=$(terraform output -raw cdn_endpoint_fqdn 2>/dev/null || echo "")
+    export CDN_ENDPOINT_URL=$(terraform output -raw cdn_endpoint_url 2>/dev/null || echo "")
+    
+    # Set AZURE_CUSTOM_DOMAIN for Django to use CDN
+    export AZURE_CUSTOM_DOMAIN="$CDN_ENDPOINT_FQDN"
+    log_info "CDN enabled with Azure domain: $CDN_ENDPOINT_FQDN"
+    
+    # Set optional Azure variables with defaults
+    export AZURE_CLIENT_ID="${AZURE_CLIENT_ID:-}"
+    export AZURE_KEY_VAULT_URL="${AZURE_KEY_VAULT_URL:-}"
+    export AZURE_MONITOR_CONNECTION_STRING="${AZURE_MONITOR_CONNECTION_STRING:-}"
     
     log_success "Infrastructure outputs retrieved!"
     
@@ -1301,6 +1327,27 @@ EOF
     kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx --timeout=300s || true
 }
 
+# Show CDN configuration (ALWAYS ENABLED)
+show_cdn_dns_configuration() {
+    echo ""
+    log_success "🚀 CDN CONFIGURATION"
+    echo ""
+    
+    log_success "📡 CDN Azure Domain: $CDN_ENDPOINT_URL"
+    log_success "   • Voice Files: $CDN_ENDPOINT_URL/media/voice_samples/"
+    log_success "   • Voice Pictures: $CDN_ENDPOINT_URL/media/voice_pictures/"
+    echo ""
+    log_info "✅ No DNS configuration needed - Azure CDN domain is ready to use!"
+    log_info "   Your media files are being served via Azure's global CDN."
+    
+    echo ""
+    log_info "🎯 CDN Benefits:"
+    log_info "   • ⚡ Faster global delivery (cached at edge locations)"
+    log_info "   • 💰 Reduced bandwidth costs on your main server"
+    log_info "   • 📈 Better user experience worldwide"
+    log_info "   • 🔒 HTTPS enabled by default"
+}
+
 # Wait for deployment and get application URL
 wait_for_deployment() {
     log_info "Waiting for deployment to be ready..."
@@ -1393,6 +1440,9 @@ wait_for_deployment() {
             log_info "   DNS update command example: "
             log_info "   - For most DNS providers: Create A record: $DOMAIN → $EXTERNAL_IP"
         fi
+        
+        # Show CDN DNS configuration if CDN is enabled
+        show_cdn_dns_configuration
         
         # Update BASE_URL in secrets based on domain configuration
         if [[ -n "$DOMAIN" ]]; then

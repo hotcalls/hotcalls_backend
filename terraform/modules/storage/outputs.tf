@@ -38,4 +38,35 @@ output "media_container_name" {
 output "backups_container_name" {
   description = "Name of the backups container"
   value       = azurerm_storage_container.backups.name
+}
+
+# CDN Outputs (ALWAYS AVAILABLE)
+output "cdn_profile_id" {
+  description = "ID of the CDN profile"
+  value       = azurerm_cdn_profile.main.id
+}
+
+output "cdn_profile_name" {
+  description = "Name of the CDN profile"
+  value       = azurerm_cdn_profile.main.name
+}
+
+output "cdn_endpoint_id" {
+  description = "ID of the CDN endpoint"
+  value       = azurerm_cdn_endpoint.storage.id
+}
+
+output "cdn_endpoint_fqdn" {
+  description = "FQDN of the CDN endpoint (Azure provided domain)"
+  value       = azurerm_cdn_endpoint.storage.fqdn
+}
+
+output "cdn_endpoint_host_name" {
+  description = "Host name of the CDN endpoint"
+  value       = azurerm_cdn_endpoint.storage.fqdn
+}
+
+output "cdn_endpoint_url" {
+  description = "Full CDN endpoint URL"
+  value       = "https://${azurerm_cdn_endpoint.storage.fqdn}"
 } 
