@@ -12,6 +12,37 @@ logger = logging.getLogger(__name__)
 
 
 @shared_task(bind=True)
+def hello_world_test(self):
+    """
+    Simple test task to verify celery workers are processing tasks.
+    
+    🧪 Test Task:
+    - Logs a hello world message
+    - Returns timestamp and worker info
+    - Useful for debugging celery setup
+    """
+    try:
+        worker_name = self.request.hostname
+        timestamp = timezone.now().isoformat()
+        
+        logger.info(f"🌍 Hello World from Celery worker: {worker_name} at {timestamp}")
+        
+        return {
+            'message': 'Hello World from Celery!',
+            'worker': worker_name,
+            'timestamp': timestamp,
+            'task_id': self.request.id
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Hello world task failed: {str(e)}")
+        return {
+            'error': str(e),
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task(bind=True)
 def cleanup_expired_tokens(self):
     """
     Clean up authentication tokens older than 24 hours.
