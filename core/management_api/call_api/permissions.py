@@ -1,4 +1,5 @@
 from rest_framework import permissions
+import os
 
 
 class CallLogPermission(permissions.BasePermission):
@@ -8,10 +9,18 @@ class CallLogPermission(permissions.BasePermission):
     - All authenticated users can make outbound calls
     - Only staff can create/modify call logs (except outbound calls)
     - Only superusers can delete call logs
+    - LiveKit can create call logs using X-LiveKit-CallLog-Secret header
     """
     
     def has_permission(self, request, view):
-        # All authenticated users need access
+        # Check for LiveKit secret header first
+        if self._is_valid_livekit_request(request):
+            # LiveKit can create call logs but not read/update/delete
+            if request.method == 'POST' and view.action == 'create':
+                return True
+            return False
+        
+        # All authenticated users need access for normal Django auth
         if not (request.user and request.user.is_authenticated):
             return False
             
@@ -27,6 +36,10 @@ class CallLogPermission(permissions.BasePermission):
         return request.user.is_staff
     
     def has_object_permission(self, request, view, obj):
+        # LiveKit requests don't get object-level permissions
+        if self._is_valid_livekit_request(request):
+            return False
+            
         # Read permissions for authenticated users
         if request.method in permissions.SAFE_METHODS:
             return request.user and request.user.is_authenticated
@@ -40,6 +53,12 @@ class CallLogPermission(permissions.BasePermission):
             return request.user.is_superuser
         
         return False
+    
+    def _is_valid_livekit_request(self, request):
+        """Check if request has valid LiveKit secret header"""
+        webhook_secret = request.META.get('HTTP_X_LIVEKIT_CALLLOG_SECRET')
+        expected_secret = os.getenv('CALL_LOG_SECRET', 'asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!')
+        return webhook_secret == expected_secret
 
 
 class CallLogAnalyticsPermission(permissions.BasePermission):
