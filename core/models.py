@@ -976,10 +976,15 @@ class CallTask(models.Model):
     def __str__(self):
         return f"CallTask {self.id} - {self.workspace.name} - {self.agent.name} ({self.status})"
     
-    def increment_retries(self):
-        """Increment the retry counter"""
-        self.attempts += 1
-        self.save(update_fields=['attempts'])
+    def increment_retries(self, max_retries=10):
+        """Increment the retry counter with safety limit"""
+        if self.attempts < max_retries:
+            self.attempts += 1
+            self.save(update_fields=['attempts'])
+        else:
+            # Prevent integer overflow - stop retrying
+            self.status = CallStatus.WAITING
+            self.save(update_fields=['status'])
     
     def can_retry(self, max_retries=3):
         """Check if the task can be retried"""
