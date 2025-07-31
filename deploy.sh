@@ -534,6 +534,35 @@ deploy_infrastructure() {
     export TF_VAR_app_db_password="$DB_PASSWORD"
     export TF_VAR_app_secret_key="$SECRET_KEY"
     export TF_VAR_app_redis_password="$REDIS_PASSWORD"
+    
+    # Export variables for Kubernetes envsubst (not just Terraform)
+    export REDIS_PASSWORD
+    export SECRET_KEY
+    export DB_NAME
+    export DB_USER  
+    export DB_PASSWORD
+    export DB_HOST
+    export EMAIL_BACKEND
+    export EMAIL_HOST
+    export EMAIL_PORT
+    export EMAIL_USE_TLS
+    export EMAIL_USE_SSL
+    export EMAIL_HOST_USER
+    export EMAIL_HOST_PASSWORD
+    export DEFAULT_FROM_EMAIL
+    export SERVER_EMAIL
+    export BASE_URL
+    export LIVEKIT_URL
+    export LIVEKIT_API_KEY
+    export LIVEKIT_API_SECRET
+    export STRIPE_SECRET_KEY
+    export STRIPE_PUBLISHABLE_KEY
+    export STRIPE_WEBHOOK_SECRET
+    export META_APP_ID
+    export META_APP_SECRET
+    export META_REDIRECT_URI
+    export META_API_VERSION
+    
     export TF_VAR_app_email_host="$EMAIL_HOST"
     export TF_VAR_app_email_port="$EMAIL_PORT"
     export TF_VAR_app_email_use_tls="$EMAIL_USE_TLS"
