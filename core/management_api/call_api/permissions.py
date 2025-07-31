@@ -5,54 +5,17 @@ import os
 class CallLogPermission(permissions.BasePermission):
     """
     Custom permission for CallLog operations
-    - All authenticated users can view call logs
-    - All authenticated users can make outbound calls
-    - Only staff can create/modify call logs (except outbound calls)
-    - Only superusers can delete call logs
-    - LiveKit can create call logs using X-LiveKit-CallLog-Secret header
+    - ONLY LiveKit secret header authentication (X-LiveKit-CallLog-Secret)
+    - No Django session/token authentication
     """
     
     def has_permission(self, request, view):
-        # Check for LiveKit secret header first
-        if self._is_valid_livekit_request(request):
-            # LiveKit can create call logs but not read/update/delete
-            if request.method == 'POST' and view.action == 'create':
-                return True
-            return False
-        
-        # All authenticated users need access for normal Django auth
-        if not (request.user and request.user.is_authenticated):
-            return False
-            
-        # Read operations for all authenticated users
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        
-        # Special case: make_outbound_call action is allowed for all authenticated users
-        if view.action == 'make_outbound_call':
-            return True
-        
-        # Other write operations require staff privileges
-        return request.user.is_staff
+        # ONLY check for LiveKit secret header - no Django auth
+        return self._is_valid_livekit_request(request)
     
     def has_object_permission(self, request, view, obj):
-        # LiveKit requests don't get object-level permissions
-        if self._is_valid_livekit_request(request):
-            return False
-            
-        # Read permissions for authenticated users
-        if request.method in permissions.SAFE_METHODS:
-            return request.user and request.user.is_authenticated
-        
-        # Write permissions for staff
-        if request.method in ['PUT', 'PATCH']:
-            return request.user.is_staff
-        
-        # Delete permissions only for superusers
-        if request.method == 'DELETE':
-            return request.user.is_superuser
-        
-        return False
+        # ONLY check for LiveKit secret header - no Django auth
+        return self._is_valid_livekit_request(request)
     
     def _is_valid_livekit_request(self, request):
         """Check if request has valid LiveKit secret header"""
