@@ -421,24 +421,6 @@ class Workspace(models.Model):
         related_name='workspaces',
         help_text="Current subscription plan"
     )
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('past_due', 'Past Due'),
-            ('unpaid', 'Unpaid'),
-        ],
-        default='trial',
-        help_text="Current subscription status"
-    )
-    
-    # Trial tracking
-    has_used_trial = models.BooleanField(
-        default=False,
-        help_text="Whether this workspace has used their trial period"
-    )
     
     # Stripe integration
     stripe_customer_id = models.CharField(
