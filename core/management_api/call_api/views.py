@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Sum, Avg, Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
-from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
 from django.db import transaction
 from django.utils import timezone
 import json
@@ -82,31 +82,40 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
     create=extend_schema(
         summary="➕ Create call log",
         description="""
-        Create a new call log entry (Staff only).
+        Create a new call log entry using LiveKit secret authentication.
         
-        **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot create call logs
-        - **✅ Staff Members**: Can create call log entries
-        - **✅ Superusers**: Can create call log entries
+        **🔐 Authentication Required**:
+        - **Header:** `X-LiveKit-CallLog-Secret: asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!`
+        - **No Django Token needed** - only the secret header
         
-        **📱 System-Generated Data**:
-        - Typically created automatically by call systems
-        - Manual entry for data correction or import
-        - Integration with telephony systems
+        **📱 System Integration**:
+        - Designed for external call systems
+        - Automatic call log creation from LiveKit
+        - No user authentication required
         
         **📝 Required Information**:
-        - `lead`: Associated lead ID
-        - `agent`: Agent who made/received the call
+        - `lead`: Associated lead ID (UUID)
+        - `agent`: Agent who made/received the call (UUID)
         - `from_number`, `to_number`: Phone numbers involved
         - `duration`: Call duration in seconds
         - `direction`: Call direction (inbound/outbound)
         - `status`: Call outcome (optional)
-        - `appointment_datetime`: When appointment scheduled (if status is terminvereinbart)
+        - `appointment_datetime`: When appointment scheduled (if status is appointment_scheduled)
         
         **✅ Business Logic**:
-        - When status is 'terminvereinbart', appointment_datetime is required
-        - When status is not 'terminvereinbart', appointment_datetime must be empty
+        - When status is 'appointment_scheduled', appointment_datetime is required
+        - When status is not 'appointment_scheduled', appointment_datetime must be empty
         """,
+        parameters=[
+            OpenApiParameter(
+                name='X-LiveKit-CallLog-Secret',
+                location=OpenApiParameter.HEADER,
+                description='LiveKit secret for authentication',
+                required=True,
+                type=str,
+                default='asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!'
+            )
+        ],
         request=CallLogSerializer,
         responses={
             201: OpenApiResponse(
@@ -1126,48 +1135,4 @@ class CallLogViewSet(viewsets.ModelViewSet):
             }
         })
 
-    @extend_schema(
-        summary="📡 LiveKit call log webhook",
-        description="Receive call log data from LiveKit webhook with X-LiveKit-CallLog-Secret authentication",
-        request={'type': 'object', 'description': 'LiveKit call log data'},
-        responses={
-            200: OpenApiResponse(description="✅ Webhook processed successfully"),
-            401: OpenApiResponse(description="🚫 Invalid webhook secret")
-        },
-        auth=None
-    )
-    @action(detail=False, methods=['post'], permission_classes=[])
-    def livekit_webhook(self, request):
-        """Handle LiveKit call log webhook with secret validation"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        # Validate X-LiveKit-CallLog-Secret header
-        webhook_secret = request.META.get('HTTP_X_LIVEKIT_CALLLOG_SECRET')
-        expected_secret = "asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!"
-        
-        if webhook_secret != expected_secret:
-            logger.warning(f"Invalid LiveKit webhook secret")
-            return Response(
-                {'error': 'Invalid webhook secret'}, 
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
-        try:
-            webhook_data = request.data
-            logger.info(f"Received LiveKit webhook: {webhook_data}")
-            
-            # TODO: Process webhook data and create CallLog
-            # For now, just log the data
-            
-            return Response({
-                'message': 'Webhook processed successfully',
-                'received_fields': list(webhook_data.keys()) if webhook_data else []
-            })
-            
-        except Exception as e:
-            logger.error(f"LiveKit webhook error: {str(e)}")
-            return Response(
-                {'error': 'Failed to process webhook'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            ) 
+ 

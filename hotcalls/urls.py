@@ -50,7 +50,7 @@ def api_root(request):
             "agents": "/api/agents/",
             "leads": "/api/leads/",
             "calls": "/api/calls/",
-            "calendars": "/api/calendars/",
+    
             "voices": "/api/voices/",
             "subscriptions": "/api/subscriptions/",
             "payments": "/api/payments/",
@@ -86,7 +86,7 @@ urlpatterns = [
     path('api/agents/', include(('core.management_api.agent_api.urls', 'agent_api'), namespace='agent_api')),
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
-    path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
+
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
     path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
     # Meta Integration Management API

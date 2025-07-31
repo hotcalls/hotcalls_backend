@@ -228,20 +228,4 @@ class AgentConfigSerializer(serializers.ModelSerializer):
     
     def get_phone_numbers(self, obj):
         """Return phone numbers as strings instead of objects"""
-        return [pn.phonenumber for pn in obj.phone_numbers.all()]
-
-
-class LiveKitAgentTokenSerializer(serializers.Serializer):
-    """Serializer for LiveKit agent token response"""
-    token = serializers.CharField(
-        read_only=True,
-        help_text="Generated LiveKit agent token (only returned once)"
-    )
-    expiry_date = serializers.DateTimeField(
-        read_only=True,
-        help_text="Token expiry date"
-    )
-    created_at = serializers.DateTimeField(
-        read_only=True,
-        help_text="When the token was created"
-    ) 
+        return [pn.phonenumber for pn in obj.phone_numbers.all()] 
