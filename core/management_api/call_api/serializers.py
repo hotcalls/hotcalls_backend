@@ -1,6 +1,9 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import CallLog, Lead, Agent
+from core.models import CallLog, Lead, Agent, CallTask
+from django.utils import timezone
+from django.core.exceptions import ValidationError
+from datetime import datetime
 
 
 class CallLogSerializer(serializers.ModelSerializer):
@@ -289,4 +292,55 @@ class CallLogAppointmentStatsSerializer(serializers.Serializer):
     appointments_this_week = serializers.IntegerField(read_only=True)
     appointments_this_month = serializers.IntegerField(read_only=True)
     upcoming_appointments = serializers.IntegerField(read_only=True)
-    past_appointments = serializers.IntegerField(read_only=True) 
+    past_appointments = serializers.IntegerField(read_only=True)
+
+
+class TestCallSerializer(serializers.Serializer):
+    """Serializer for making test calls with only Agent ID"""
+    
+    agent_id = serializers.UUIDField(
+        required=True,
+        help_text="Agent UUID to make the test call (required)"
+    )
+    
+    def validate_agent_id(self, value):
+        """Validate agent exists and belongs to user's workspace"""
+        try:
+            agent = Agent.objects.get(agent_id=value)
+            request = self.context.get('request')
+            
+            # Check if user has access to this agent
+            if request and request.user:
+                if not request.user.is_superuser:
+                    if request.user not in agent.workspace.users.all():
+                        raise serializers.ValidationError(
+                            "You can only use agents from your own workspace"
+                        )
+            
+            return value
+        except Agent.DoesNotExist:
+            raise serializers.ValidationError("Agent not found") 
+
+
+class CallTaskSerializer(serializers.ModelSerializer):
+    """Serializer for CallTask model"""
+    agent_name = serializers.CharField(source='agent.name', read_only=True)
+    workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
+    lead_name = serializers.CharField(source='lead.name', read_only=True)
+    
+    class Meta:
+        model = CallTask
+        fields = [
+            'id', 'status', 'attempts', 'phone', 'next_call',
+            'agent', 'agent_name', 'workspace', 'workspace_name',
+            'lead', 'lead_name',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class CallTaskTriggerSerializer(serializers.Serializer):
+    """Serializer for triggering a call task"""
+    task_id = serializers.UUIDField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    message = serializers.CharField(read_only=True) 

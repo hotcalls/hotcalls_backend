@@ -86,4 +86,30 @@ class CallLogAnalyticsPermission(permissions.BasePermission):
     """
     
     def has_permission(self, request, view):
-        return request.user and request.user.is_authenticated 
+        return request.user and request.user.is_authenticated
+
+
+class CallTaskPermission(permissions.BasePermission):
+    """
+    Permission class for CallTask viewset
+    
+    - Superusers: Full access (CRUD + trigger)
+    - Staff: Read access only  
+    - Regular users: Read access only
+    """
+    
+    def has_permission(self, request, view):
+        # Everyone authenticated can read
+        if request.method in permissions.SAFE_METHODS:
+            return request.user.is_authenticated
+        
+        # Only superusers can create, update, delete
+        return request.user.is_superuser
+    
+    def has_object_permission(self, request, view, obj):
+        # Everyone authenticated can read
+        if request.method in permissions.SAFE_METHODS:
+            return request.user.is_authenticated
+        
+        # Only superusers can modify
+        return request.user.is_superuser 

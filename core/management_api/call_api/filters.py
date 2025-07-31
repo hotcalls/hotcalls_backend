@@ -1,6 +1,6 @@
 import django_filters
 from django.db import models
-from core.models import CallLog
+from core.models import CallLog, CallTask, CallStatus
 
 
 class CallLogFilter(django_filters.FilterSet):
@@ -80,4 +80,70 @@ class CallLogFilter(django_filters.FilterSet):
             return queryset.filter(appointment_datetime__isnull=False)
         else:
             # Calls without appointments
-            return queryset.filter(appointment_datetime__isnull=True) 
+            return queryset.filter(appointment_datetime__isnull=True)
+
+
+class CallTaskFilter(django_filters.FilterSet):
+    """Filter for CallTask model"""
+    
+    # Status exact match
+    status = django_filters.ChoiceFilter(
+        field_name='status',
+        choices=CallStatus.choices,
+        help_text="Filter by exact status"
+    )
+    
+    # Multiple status filter
+    status__in = django_filters.MultipleChoiceFilter(
+        field_name='status',
+        choices=CallStatus.choices,
+        help_text="Filter by multiple statuses"
+    )
+    
+    # Phone number filter
+    phone = django_filters.CharFilter(
+        field_name='phone',
+        lookup_expr='icontains',
+        help_text="Filter by phone number (partial match)"
+    )
+    
+    # Date range filters
+    next_call__gte = django_filters.DateTimeFilter(
+        field_name='next_call',
+        lookup_expr='gte',
+        help_text="Filter calls scheduled after this date/time"
+    )
+    next_call__lte = django_filters.DateTimeFilter(
+        field_name='next_call',
+        lookup_expr='lte',
+        help_text="Filter calls scheduled before this date/time"
+    )
+    
+    created_at__gte = django_filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='gte',
+        help_text="Filter tasks created after this date/time"
+    )
+    created_at__lte = django_filters.DateTimeFilter(
+        field_name='created_at',
+        lookup_expr='lte',
+        help_text="Filter tasks created before this date/time"
+    )
+    
+    # Relationship filters
+    agent = django_filters.UUIDFilter(
+        field_name='agent__agent_id',
+        help_text="Filter by agent ID"
+    )
+    workspace = django_filters.UUIDFilter(
+        field_name='workspace__id',
+        help_text="Filter by workspace ID"
+    )
+    lead = django_filters.UUIDFilter(
+        field_name='lead__id',
+        help_text="Filter by lead ID"
+    )
+    
+    class Meta:
+        model = CallTask
+        fields = ['status', 'phone', 'agent', 'workspace', 'lead'] 
