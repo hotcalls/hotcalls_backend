@@ -105,17 +105,7 @@ except ImportError:
 # Cache configuration (use Redis for development to match production)
 CACHES = {
     'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': REDIS_URL,
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 10,
-                'retry_on_timeout': True,
-            },
-        },
-        'KEY_PREFIX': 'hotcalls_dev',
-        'TIMEOUT': 300,  # 5 minutes default timeout
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     }
 }
 

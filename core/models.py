@@ -434,6 +434,12 @@ class Workspace(models.Model):
         help_text="Current subscription status"
     )
     
+    # Trial tracking
+    has_used_trial = models.BooleanField(
+        default=False,
+        help_text="Whether this workspace has used their trial period"
+    )
+    
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
