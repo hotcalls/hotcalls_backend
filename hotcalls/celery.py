@@ -41,13 +41,13 @@ app.conf.beat_schedule = {
             'queue': 'celery'  # Use the same queue the worker is listening to
         }
     },
-    # Schedule agent calls every second
+    # Schedule agent calls every 5 seconds
     'schedule-agent-calls': {
         'task': 'core.tasks.schedule_agent_call',
-        'schedule': 2.5,  # Run every 1 second
+        'schedule': 5.0,  # Run every 5 seconds
         'options': {
             'queue': 'celery',
-            'expires': 5,  # Task expires after 5 seconds to prevent overlap
+            'expires': 2.5,  # Task expires after 2.5 seconds (aggressive backpressure)
         }
     },
     # Clean up stuck call tasks every minute
@@ -56,7 +56,7 @@ app.conf.beat_schedule = {
         'schedule': 60.0,  # Run every 1 minute (60 seconds)
         'options': {
             'queue': 'celery',
-            'expires': 30,  # Task expires after 30 seconds to prevent overlap
+            'expires': 120,  # Task expires after 2 minutes (2x schedule interval)
         }
     },
 } 
