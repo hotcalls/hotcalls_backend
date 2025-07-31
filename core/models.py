@@ -9,8 +9,9 @@ import secrets
 # New CallStatus TextChoices
 class CallStatus(models.TextChoices):
     SCHEDULED = 'scheduled', 'scheduled'         # will be called
+    CALL_TRIGGERED = 'call_triggered', 'call_triggered'  # trigger_call task spawned
     IN_PROGRESS = 'in_progress', 'in_progress'   # call in progress
-    RETRY = 'retry', 'retry'                     # was called but failed
+    RETRY = 'retry', 'retry'                     # was called but failed 
     WAITING = 'waiting', 'waiting'               # limit hit
 
 

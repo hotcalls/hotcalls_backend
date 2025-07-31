@@ -1309,42 +1309,47 @@ class CallTaskViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
     def trigger(self, request, pk=None):
         """Manually trigger a call for a specific CallTask"""
+        from django.db import transaction
+        
         try:
-            call_task = self.get_object()
-            
-            # Check if task is in a valid state to be triggered
-            if call_task.status not in [CallStatus.SCHEDULED, CallStatus.RETRY]:
-                return Response(
-                    {
-                        'error': f'Cannot trigger call. Current status is {call_task.get_status_display()}. '
-                                f'Only SCHEDULED or RETRY tasks can be triggered.'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # **NEW: Concurrency Control Check**
-            # Calculate maximum allowed concurrent calls
-            max_concurrent_calls = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
-            
-            # Count current IN_PROGRESS call tasks
-            current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
-            
-            # Check if we can trigger another call (must be strictly smaller)
-            if current_in_progress >= max_concurrent_calls:
-                return Response(
-                    {
-                        'error': f'Cannot trigger call due to concurrency limit. '
-                                f'Current in-progress calls: {current_in_progress}, '
-                                f'Maximum allowed: {max_concurrent_calls} '
-                                f'(agents: {settings.NUMBER_OF_LIVEKIT_AGENTS}, '
-                                f'concurrency per agent: {settings.CONCURRENCY_PER_LIVEKIT_AGENT})'
-                    },
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
-                )
-            
-            # Update task status to IN_PROGRESS
-            call_task.status = CallStatus.IN_PROGRESS
-            call_task.save(update_fields=['status', 'updated_at'])
+            # 🔒 ATOMIC TRANSACTION: Lock task and validate atomically
+            with transaction.atomic():
+                # Get task with row lock to prevent race conditions
+                call_task = CallTask.objects.select_for_update().get(pk=pk)
+                
+                # Check if task is in a valid state to be triggered
+                if call_task.status not in [CallStatus.SCHEDULED, CallStatus.RETRY]:
+                    return Response(
+                        {
+                            'error': f'Cannot trigger call. Current status is {call_task.get_status_display()}. '
+                                    f'Only SCHEDULED or RETRY tasks can be triggered.'
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # **ATOMIC: Concurrency Control Check**
+                # Calculate maximum allowed concurrent calls
+                max_concurrent_calls = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+                
+                # Count current IN_PROGRESS call tasks atomically
+                current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
+                
+                # Check if we can trigger another call (must be strictly smaller)
+                if current_in_progress >= max_concurrent_calls:
+                    return Response(
+                        {
+                            'error': f'Cannot trigger call due to concurrency limit. '
+                                    f'Current in-progress calls: {current_in_progress}, '
+                                    f'Maximum allowed: {max_concurrent_calls} '
+                                    f'(agents: {settings.NUMBER_OF_LIVEKIT_AGENTS}, '
+                                    f'concurrency per agent: {settings.CONCURRENCY_PER_LIVEKIT_AGENT})'
+                        },
+                        status=status.HTTP_429_TOO_MANY_REQUESTS
+                    )
+                
+                # ATOMICALLY update task status to IN_PROGRESS
+                call_task.status = CallStatus.IN_PROGRESS
+                call_task.save(update_fields=['status', 'updated_at'])
             
             # Initiate the actual call
             try:

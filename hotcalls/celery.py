@@ -44,10 +44,19 @@ app.conf.beat_schedule = {
     # Schedule agent calls every second
     'schedule-agent-calls': {
         'task': 'core.tasks.schedule_agent_call',
-        'schedule': 1.0,  # Run every 1 second
+        'schedule': 2.5,  # Run every 1 second
         'options': {
             'queue': 'celery',
             'expires': 5,  # Task expires after 5 seconds to prevent overlap
+        }
+    },
+    # Clean up stuck call tasks every minute
+    'cleanup-stuck-call-tasks': {
+        'task': 'core.tasks.cleanup_stuck_call_tasks',
+        'schedule': 60.0,  # Run every 1 minute (60 seconds)
+        'options': {
+            'queue': 'celery',
+            'expires': 30,  # Task expires after 30 seconds to prevent overlap
         }
     },
 } 

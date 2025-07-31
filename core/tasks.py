@@ -132,50 +132,75 @@ def trigger_call(self, call_task_id):
                 'call_task_id': call_task_id
             }
         
-        # CRITICAL SAFETY CHECKS before proceeding with call
+        # 🔒 ATOMIC CRITICAL SAFETY CHECKS - Lock task and validate atomically
+        from django.db import transaction
         
-        # 1. Check concurrency limit (other trigger_call tasks might have started)
-        current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
-        concurrency_limit = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
-        
-        if current_in_progress >= concurrency_limit:
-            # Concurrency limit reached - set to WAITING
-            call_task.status = CallStatus.WAITING
-            call_task.save(update_fields=['status', 'updated_at'])
-            
-            logger.warning(f"⏸️ Concurrency limit reached ({current_in_progress}/{concurrency_limit}). Task {call_task_id} set to WAITING")
+        try:
+            with transaction.atomic():
+                # Re-fetch task with row lock to get fresh data and prevent race conditions
+                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                
+                # FAST FAIL: If task is not CALL_TRIGGERED, another process got it first
+                if call_task.status != CallStatus.CALL_TRIGGERED:
+                    logger.warning(f"⚠️ Task {call_task_id} status is {call_task.status}, not CALL_TRIGGERED. Another process got it first.")
+                    return {
+                        'success': False,
+                        'call_task_id': call_task_id,
+                        'reason': 'task_status_changed',
+                        'current_status': call_task.status,
+                        'message': f'Task status is {call_task.status}, expected CALL_TRIGGERED'
+                    }
+                
+                # 1. Check concurrency limit atomically
+                current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
+                concurrency_limit = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+                
+                if current_in_progress >= concurrency_limit:
+                    # Concurrency limit reached - set to WAITING atomically
+                    call_task.status = CallStatus.WAITING
+                    call_task.save(update_fields=['status', 'updated_at'])
+                    
+                    logger.warning(f"⏸️ Concurrency limit reached ({current_in_progress}/{concurrency_limit}). Task {call_task_id} set to WAITING")
+                    return {
+                        'success': False,
+                        'call_task_id': call_task_id,
+                        'reason': 'concurrency_limit_reached',
+                        'current_in_progress': current_in_progress,
+                        'concurrency_limit': concurrency_limit,
+                        'message': 'Concurrency limit reached, task set to WAITING'
+                    }
+                
+                # 2. Check if another task is already calling this phone number atomically
+                phone_in_progress = CallTask.objects.filter(
+                    phone=call_task.phone,
+                    status=CallStatus.IN_PROGRESS
+                ).exclude(id=call_task.id).exists()
+                
+                if phone_in_progress:
+                    # Another task is already calling this phone - set to WAITING atomically
+                    call_task.status = CallStatus.WAITING
+                    call_task.save(update_fields=['status', 'updated_at'])
+                    
+                    logger.warning(f"📞 Phone {call_task.phone} already being called. Task {call_task_id} set to WAITING")
+                    return {
+                        'success': False,
+                        'call_task_id': call_task_id,
+                        'reason': 'phone_already_in_progress',
+                        'phone': call_task.phone,
+                        'message': 'Phone number already being called, task set to WAITING'
+                    }
+                
+                # All safety checks passed - ATOMICALLY proceed with call
+                call_task.status = CallStatus.IN_PROGRESS
+                call_task.save(update_fields=['status', 'updated_at'])
+                
+        except CallTask.DoesNotExist:
+            logger.error(f"❌ CallTask {call_task_id} not found (deleted during processing)")
             return {
                 'success': False,
-                'call_task_id': call_task_id,
-                'reason': 'concurrency_limit_reached',
-                'current_in_progress': current_in_progress,
-                'concurrency_limit': concurrency_limit,
-                'message': 'Concurrency limit reached, task set to WAITING'
+                'error': 'CallTask not found',
+                'call_task_id': call_task_id
             }
-        
-        # 2. Check if another task is already calling this phone number
-        phone_in_progress = CallTask.objects.filter(
-            phone=call_task.phone,
-            status=CallStatus.IN_PROGRESS
-        ).exclude(id=call_task.id).exists()
-        
-        if phone_in_progress:
-            # Another task is already calling this phone - set to WAITING
-            call_task.status = CallStatus.WAITING
-            call_task.save(update_fields=['status', 'updated_at'])
-            
-            logger.warning(f"📞 Phone {call_task.phone} already being called. Task {call_task_id} set to WAITING")
-            return {
-                'success': False,
-                'call_task_id': call_task_id,
-                'reason': 'phone_already_in_progress',
-                'phone': call_task.phone,
-                'message': 'Phone number already being called, task set to WAITING'
-            }
-        
-        # All safety checks passed - proceed with call
-        call_task.status = CallStatus.IN_PROGRESS
-        call_task.save(update_fields=['status', 'updated_at'])
         
         logger.info(f"📞 Starting call for task {call_task_id} to {call_task.phone} (passed safety checks)")
         
@@ -286,11 +311,12 @@ def schedule_agent_call(self):
                 'message': 'No available slots for new calls'
             }
         
-        # Filter tasks ready for calling (excluding IN_PROGRESS)
-        ready_tasks = CallTask.objects.filter(
+        # Filter tasks ready for calling (excluding IN_PROGRESS and CALL_TRIGGERED)
+        # 🔒 SKIP LOCKED: Prevent multiple schedulers from picking same tasks
+        ready_tasks = CallTask.objects.select_for_update(skip_locked=True).filter(
             next_call__lt=now
         ).exclude(
-            status=CallStatus.IN_PROGRESS
+            status__in=[CallStatus.IN_PROGRESS, CallStatus.CALL_TRIGGERED]
         ).annotate(
             # Priority ordering: WAITING=1, SCHEDULED=2, RETRY=3
             priority=Case(
@@ -305,18 +331,38 @@ def schedule_agent_call(self):
         scheduled_count = 0
         scheduled_task_ids = []
         
-        # Spawn trigger_call tasks for available slots
+        # Spawn trigger_call tasks for available slots - ATOMIC TRANSACTION
+        from django.db import transaction
+        
         for task in ready_tasks:
             try:
-                # Spawn async trigger_call task
+                # 🔒 ATOMIC TRANSACTION: Lock row, check status, update status
+                with transaction.atomic():
+                    # Re-fetch with row lock to prevent race conditions
+                    locked_task = CallTask.objects.select_for_update().get(id=task.id)
+                    
+                    # Double-check status hasn't changed (prevent race condition)
+                    if locked_task.status in [CallStatus.IN_PROGRESS, CallStatus.CALL_TRIGGERED]:
+                        logger.warning(f"⚠️ Task {task.id} status changed to {locked_task.status}, skipping")
+                        continue
+                    
+                    # ATOMICALLY update status
+                    locked_task.status = CallStatus.CALL_TRIGGERED
+                    locked_task.save(update_fields=['status', 'updated_at'])
+                
+                # AFTER transaction commits, spawn async task with ID only
                 trigger_call.delay(str(task.id))
                 scheduled_count += 1
                 scheduled_task_ids.append(str(task.id))
                 
-                logger.info(f"📞 Scheduled call task {task.id} for {task.phone}")
+                logger.info(f"📞 Scheduled call task {task.id} for {task.phone} (status: CALL_TRIGGERED)")
                 
+            except CallTask.DoesNotExist:
+                logger.warning(f"⚠️ Task {task.id} was deleted, skipping")
+                continue
             except Exception as e:
                 logger.error(f"❌ Failed to schedule call task {task.id}: {str(e)}")
+                continue
         
         logger.info(f"✅ Scheduled {scheduled_count} call tasks out of {num_to_schedule} available slots")
         
@@ -335,5 +381,98 @@ def schedule_agent_call(self):
         return {
             'success': False,
             'error': str(e),
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task(bind=True)
+def cleanup_stuck_call_tasks(self):
+    """
+    Cleanup task to remove stuck CallTasks that prevent system recovery.
+    
+    🧹 RUNS EVERY MINUTE
+    
+    Safety cleanup rules:
+    1. Delete CALL_TRIGGERED tasks older than 10 minutes (spawned but never executed)
+    2. Delete IN_PROGRESS tasks older than 30 minutes (likely stuck/failed calls)
+    
+    This prevents accumulated stuck tasks from breaking the call system.
+    
+    Returns:
+        dict: Cleanup result with counts of deleted tasks
+    """
+    from core.models import CallTask, CallStatus
+    
+    try:
+        now = timezone.now()
+        
+        # Calculate cleanup thresholds
+        call_triggered_threshold = now - timedelta(minutes=10)
+        in_progress_threshold = now - timedelta(minutes=30)
+        
+        # Find CALL_TRIGGERED tasks older than 10 minutes
+        # 🔒 LOCK FOR UPDATE: Prevent race conditions during cleanup
+        stuck_triggered_tasks = CallTask.objects.select_for_update().filter(
+            status=CallStatus.CALL_TRIGGERED,
+            updated_at__lt=call_triggered_threshold
+        )
+        triggered_count = stuck_triggered_tasks.count()
+        
+        # Find IN_PROGRESS tasks older than 30 minutes  
+        # 🔒 LOCK FOR UPDATE: Prevent race conditions during cleanup
+        stuck_progress_tasks = CallTask.objects.select_for_update().filter(
+            status=CallStatus.IN_PROGRESS,
+            updated_at__lt=in_progress_threshold
+        )
+        progress_count = stuck_progress_tasks.count()
+        
+        total_to_delete = triggered_count + progress_count
+        
+        if total_to_delete == 0:
+            return {
+                'success': True,
+                'deleted_triggered': 0,
+                'deleted_progress': 0,
+                'total_deleted': 0,
+                'message': 'No stuck tasks found - cleanup complete',
+                'timestamp': now.isoformat()
+            }
+        
+        logger.warning(f"🧹 Cleanup: Found {triggered_count} stuck CALL_TRIGGERED + {progress_count} stuck IN_PROGRESS tasks")
+        
+        # Log details of tasks being deleted (for debugging)
+        if triggered_count > 0:
+            triggered_ids = list(stuck_triggered_tasks.values_list('id', flat=True))
+            logger.warning(f"🗑️ Deleting CALL_TRIGGERED tasks (>10min): {triggered_ids}")
+            
+        if progress_count > 0:
+            progress_ids = list(stuck_progress_tasks.values_list('id', flat=True))  
+            logger.warning(f"🗑️ Deleting IN_PROGRESS tasks (>30min): {progress_ids}")
+        
+        # HARD DELETE stuck tasks
+        stuck_triggered_tasks.delete()
+        stuck_progress_tasks.delete()
+        
+        logger.info(f"✅ Cleanup complete: Deleted {total_to_delete} stuck call tasks ({triggered_count} CALL_TRIGGERED + {progress_count} IN_PROGRESS)")
+        
+        return {
+            'success': True,
+            'deleted_triggered': triggered_count,
+            'deleted_progress': progress_count,
+            'total_deleted': total_to_delete,
+            'message': f'Successfully deleted {total_to_delete} stuck tasks',
+            'timestamp': now.isoformat(),
+            'call_triggered_threshold': call_triggered_threshold.isoformat(),
+            'in_progress_threshold': in_progress_threshold.isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Cleanup stuck call tasks failed: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'deleted_triggered': 0,
+            'deleted_progress': 0,
+            'total_deleted': 0,
             'timestamp': timezone.now().isoformat()
         }
