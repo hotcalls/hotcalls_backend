@@ -23,63 +23,49 @@ def current_billing_window(subscription) -> Tuple[datetime.datetime, datetime.da
     Returns:
         Tuple of (period_start, period_end) as timezone-aware datetimes
     """
-    now = timezone.now()
+    import calendar
     
-    # Start from subscription start date
+    now = timezone.now()
     start_date = subscription.started_at
     
     # Calculate months since subscription start
     months_diff = (now.year - start_date.year) * 12 + (now.month - start_date.month)
     
-    # Calculate current period start
+    # If we haven't reached the billing day this month, go back one month
+    if now.day < start_date.day:
+        months_diff -= 1
+    
+    # Calculate current period start year and month
+    period_year = start_date.year + (start_date.month - 1 + months_diff) // 12
+    period_month = ((start_date.month - 1 + months_diff) % 12) + 1
+    
+    # Handle day overflow (e.g., Jan 31 -> Feb 28/29)
+    max_day_in_month = calendar.monthrange(period_year, period_month)[1]
+    period_day = min(start_date.day, max_day_in_month)
+    
     period_start = start_date.replace(
-        year=start_date.year + months_diff // 12,
-        month=((start_date.month - 1 + months_diff) % 12) + 1,
-        day=start_date.day,
-        hour=start_date.hour,
-        minute=start_date.minute,
-        second=start_date.second,
-        microsecond=start_date.microsecond
+        year=period_year,
+        month=period_month,
+        day=period_day
     )
     
-    # Handle month overflow for day (e.g., Jan 31 -> Feb 28)
-    try:
-        period_start = period_start.replace(day=start_date.day)
-    except ValueError:
-        # Day doesn't exist in target month, use last day of month
-        if period_start.month == 12:
-            next_month = period_start.replace(year=period_start.year + 1, month=1, day=1)
-        else:
-            next_month = period_start.replace(month=period_start.month + 1, day=1)
-        period_start = next_month - datetime.timedelta(days=1)
-        period_start = period_start.replace(
-            hour=start_date.hour,
-            minute=start_date.minute, 
-            second=start_date.second,
-            microsecond=start_date.microsecond
-        )
-    
-    # Calculate period end (start of next period)
-    if period_start.month == 12:
-        period_end = period_start.replace(year=period_start.year + 1, month=1)
+    # Calculate next period start (which becomes period end)
+    if period_month == 12:
+        next_period_year = period_year + 1
+        next_period_month = 1
     else:
-        period_end = period_start.replace(month=period_start.month + 1)
+        next_period_year = period_year
+        next_period_month = period_month + 1
     
-    # Handle day overflow again
-    try:
-        period_end = period_end.replace(day=start_date.day)
-    except ValueError:
-        if period_end.month == 12:
-            next_month = period_end.replace(year=period_end.year + 1, month=1, day=1)
-        else:
-            next_month = period_end.replace(month=period_end.month + 1, day=1)
-        period_end = next_month - datetime.timedelta(days=1)
-        period_end = period_end.replace(
-            hour=start_date.hour,
-            minute=start_date.minute,
-            second=start_date.second,
-            microsecond=start_date.microsecond
-        )
+    # Handle day overflow for next period
+    max_day_in_next_month = calendar.monthrange(next_period_year, next_period_month)[1]
+    next_period_day = min(start_date.day, max_day_in_next_month)
+    
+    period_end = start_date.replace(
+        year=next_period_year,
+        month=next_period_month,
+        day=next_period_day
+    )
     
     return period_start, period_end
 
@@ -159,6 +145,11 @@ def enforce_and_record(
             amount=5
         )
     """
+    # Convert to Decimal and validate
+    amount = Decimal(str(amount))
+    if amount <= 0:
+        raise ValueError(f"Usage amount must be positive, got {amount}")
+    
     from core.models import EndpointFeature, FeatureUsage
     
     # Look up route mapping in EndpointFeature
@@ -186,7 +177,7 @@ def enforce_and_record(
         
         # Get limit from plan
         limit = feature_usage.limit
-        new_value = feature_usage.used_amount + Decimal(str(amount))
+        new_value = feature_usage.used_amount + amount
         
         # Check quota
         if limit is not None and new_value > limit:
@@ -195,7 +186,7 @@ def enforce_and_record(
             )
         
         # Record usage atomically
-        feature_usage.used_amount = models.F("used_amount") + Decimal(str(amount))
+        feature_usage.used_amount = models.F("used_amount") + amount
         feature_usage.save(update_fields=["used_amount"])
 
 
