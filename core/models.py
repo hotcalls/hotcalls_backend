@@ -454,24 +454,6 @@ class Workspace(models.Model):
         null=True,
         help_text="Current Stripe Subscription ID (sub_xxx)"
     )
-    subscription_status = models.CharField(
-        max_length=20,
-        choices=[
-            ('trial', 'Trial'),
-            ('active', 'Active'),
-            ('cancelled', 'Cancelled'),
-            ('past_due', 'Past Due'),
-            ('unpaid', 'Unpaid'),
-        ],
-        default='trial',
-        help_text="Current subscription status"
-    )
-    stripe_subscription_id = models.CharField(
-        max_length=255,
-        blank=True,
-        null=True,
-        help_text="Current Stripe Subscription ID (sub_xxx)"
-    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -16,12 +16,14 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     """Serializer for Workspace model"""
     users = WorkspaceUserSerializer(many=True, read_only=True)
     user_count = serializers.SerializerMethodField()
+    is_subscription_active = serializers.SerializerMethodField()
     
     class Meta:
         model = Workspace
         fields = [
             'id', 'workspace_name', 'created_at', 'updated_at', 
-            'users', 'user_count'
+            'users', 'user_count', 'subscription_status', 'has_used_trial',
+            'is_subscription_active'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -29,6 +31,11 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     def get_user_count(self, obj) -> int:
         """Get the number of users in this workspace"""
         return obj.users.count()
+    
+    @extend_schema_field(serializers.BooleanField)
+    def get_is_subscription_active(self, obj) -> bool:
+        """Determine if the subscription is currently active"""
+        return obj.subscription_status == 'active'
 
 
 class WorkspaceCreateSerializer(serializers.ModelSerializer):
