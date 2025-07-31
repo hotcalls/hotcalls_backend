@@ -6,6 +6,14 @@ import datetime
 import secrets
 
 
+# New CallStatus TextChoices
+class CallStatus(models.TextChoices):
+    SCHEDULED = 'scheduled', 'scheduled'         # will be called
+    IN_PROGRESS = 'in_progress', 'in_progress'   # call in progress
+    RETRY = 'retry', 'retry'                     # was called but failed
+    WAITING = 'waiting', 'waiting'               # limit hit
+
+
 # Enum Choices
 USER_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -479,6 +487,34 @@ class Workspace(models.Model):
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
     
 
+    # Subscription
+    current_plan = models.ForeignKey(
+        'Plan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='workspaces',
+        help_text="Current subscription plan"
+    )
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('trial', 'Trial'),
+            ('active', 'Active'),
+            ('cancelled', 'Cancelled'),
+            ('past_due', 'Past Due'),
+            ('unpaid', 'Unpaid'),
+        ],
+        default='trial',
+        help_text="Current subscription status"
+    )
+    
+    # Trial tracking
+    has_used_trial = models.BooleanField(
+        default=False,
+        help_text="Whether this workspace has used their trial period"
+    )
+    
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
@@ -1075,3 +1111,84 @@ class MetaLeadForm(models.Model):
     
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"
+
+
+class CallTask(models.Model):
+    """Call tasks for managing scheduled and queued calls"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Task status and management
+    status = models.CharField(
+        max_length=20,
+        choices=CallStatus.choices,
+        default=CallStatus.SCHEDULED,
+        help_text="Current status of the call task"
+    )
+    attempts = models.IntegerField(
+        default=0,
+        help_text="Number of retry attempts made"
+    )
+    phone = models.CharField(
+        max_length=20,
+        help_text="Phone number to call"
+    )
+    
+    # Relationships
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='call_tasks',
+        help_text="Workspace associated with this call task"
+    )
+    
+    lead = models.OneToOneField(
+        Lead,
+        on_delete=models.CASCADE,
+        related_name='call_task',
+        null=True,
+        blank=True,
+        help_text="Lead associated with this call task (null for test calls)"
+    )
+    
+    # Agent assignment
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='call_tasks',
+        help_text="Agent assigned to handle this call task"
+    )
+    
+    
+    # Scheduling
+    next_call = models.DateTimeField(
+        help_text="Scheduled time for the next call attempt"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'next_call']),
+            models.Index(fields=['agent', 'status']),
+            models.Index(fields=['next_call']),
+        ]
+    
+    def __str__(self):
+        return f"CallTask {self.id} - {self.workspace.name} - {self.agent.name} ({self.status})"
+    
+    def increment_retries(self, max_retries=10):
+        """Increment the retry counter with safety limit"""
+        if self.attempts < max_retries:
+            self.attempts += 1
+            self.save(update_fields=['attempts'])
+        else:
+            # Prevent integer overflow - stop retrying
+            self.status = CallStatus.WAITING
+            self.save(update_fields=['status'])
+    
+    def can_retry(self, max_retries=3):
+        """Check if the task can be retried"""
+        return self.attempts < max_retries and self.status in [CallStatus.SCHEDULED, CallStatus.RETRY]

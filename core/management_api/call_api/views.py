@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.db.models import Sum, Avg, Count, Q
@@ -7,15 +7,20 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from django.db import transaction
 from django.utils import timezone
 import json
+import os
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
+from django.conf import settings
 
-from core.models import CallLog, Lead, Agent
+from core.models import CallLog, Lead, Agent, CallTask, CallStatus
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer,
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer, OutboundCallSerializer
+    CallLogAppointmentStatsSerializer, OutboundCallSerializer, TestCallSerializer,
+    CallTaskSerializer, CallTaskTriggerSerializer
 )
-from .filters import CallLogFilter
-from .permissions import CallLogPermission, CallLogAnalyticsPermission
+from .filters import CallLogFilter, CallTaskFilter
+from .permissions import CallLogPermission, CallLogAnalyticsPermission, CallTaskPermission
 
 
 @extend_schema_view(
@@ -786,8 +791,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Get validated data
         validated_data = serializer.validated_data
         
-        # Fixed SIP trunk ID
-        SIP_TRUNK_ID = "ST_F5KZ4yNHBegK"
+        # Get SIP trunk ID from environment
+        SIP_TRUNK_ID = os.getenv('TRUNK_ID', 'ST_HXXPUzZhwSej')
         
         # Retrieve agent
         try:
@@ -855,19 +860,12 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 call_log = CallLog.objects.create(
                     lead=lead,  # Can be None if no lead_id provided
                     agent=agent,
-                    from_number="",
+                    from_number="OUTBOUND_CALL",
                     to_number=validated_data['phone'],
                     direction='outbound',
-                    status='initiated',
+                    status='not_reached',  # Use valid status from CALL_STATUS_CHOICES
                     duration=0,
-                    # Store configuration used for this call
-                    meta_data={
-                        'livekit_room': result.get('room_name'),
-                        'livekit_participant_id': result.get('participant_id'),
-                        'used_agent_config': agent_config,
-                        'used_lead_data': lead_data,
-                        'custom_greeting_used': bool(validated_data.get('custom_greeting'))
-                    }
+                    disconnection_reason=f"LiveKit room: {result.get('room_name', '')}"
                 )
                 
                 # Add call log ID to result
@@ -1125,3 +1123,302 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 'max_duration': stats['max_duration'] or 0
             }
         }) 
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📋 List call tasks",
+        description="""
+        Retrieve call tasks from your workspaces with filtering and search capabilities.
+        
+        **🔐 Permission Requirements**:
+        - **✅ All Authenticated Users**: Can view call tasks from their workspaces
+        - **🔴 Superuser**: Can view all call tasks from all workspaces
+        
+        **🔍 Filtering Options**:
+        - Filter by status (scheduled, in_progress, retry, waiting)
+        - Filter by agent, workspace, user, or lead
+        - Filter by phone number
+        - Filter by date ranges (next_call, created_at)
+        - Filter by number of attempts
+        
+        **🔎 Search**:
+        - Search by lead name, agent name, or workspace name
+        """
+    ),
+    create=extend_schema(
+        summary="➕ Create new call task",
+        description="Create a new call task for your workspace. **All authenticated users can create.**"
+    ),
+    retrieve=extend_schema(
+        summary="📖 Get call task details",
+        description="Retrieve details of a specific call task from your workspace."
+    ),
+    update=extend_schema(
+        summary="✏️ Update call task",
+        description="Update an existing call task. **Superuser only.**"
+    ),
+    partial_update=extend_schema(
+        summary="✏️ Partially update call task",
+        description="Partially update an existing call task. **Superuser only.**"
+    ),
+    destroy=extend_schema(
+        summary="🗑️ Delete call task",
+        description="Delete a call task. **Superuser only.**"
+    )
+)
+class CallTaskViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing call tasks"""
+    serializer_class = CallTaskSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_class = CallTaskFilter
+    search_fields = ['lead__name', 'agent__name', 'workspace__name', 'phone']
+    ordering_fields = ['created_at', 'next_call', 'status']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """Filter queryset based on user permissions"""
+        user = self.request.user
+        
+        if user.is_superuser:
+            # Superusers can see all call tasks
+            return CallTask.objects.all()
+        else:
+            # Regular users can only see call tasks from their workspaces
+            user_workspaces = user.mapping_user_workspaces.all()
+            return CallTask.objects.filter(workspace__in=user_workspaces)
+    
+    def get_permissions(self):
+        """Assign permissions based on the action"""
+        if self.action in ['create', 'list', 'retrieve']:
+            # All authenticated users can create, list and view call tasks
+            permission_classes = [permissions.IsAuthenticated]
+        else:
+            # Only superusers can update, delete and trigger
+            permission_classes = [permissions.IsAdminUser]
+        
+        return [permission() for permission in permission_classes]
+    
+    def perform_create(self, serializer):
+        """Ensure user can only create call tasks for their workspaces"""
+        user = self.request.user
+        workspace = serializer.validated_data.get('workspace')
+        
+        # Validate workspace access for non-superusers
+        if not user.is_superuser and workspace not in user.mapping_user_workspaces.all():
+            raise PermissionDenied("You can only create call tasks for your workspaces")
+        
+        # Set next_call to immediate (now) for all new call tasks
+        serializer.save(next_call=timezone.now())
+    
+    @extend_schema(
+        summary="🚀 Trigger a call manually",
+        description="""
+        Manually trigger a call for a specific CallTask.
+        
+        **🔐 Permission Requirements**:
+        - **🔴 Superuser Only**: Only superusers can trigger calls manually
+        
+        **📋 Prerequisites**:
+        - CallTask must exist
+        - CallTask status should be PENDING or FAILED
+        
+        **🎯 What happens**:
+        - Initiates the call immediately
+        - Updates CallTask status to STARTING
+        - Call will be processed by the call system
+        
+        **⚠️ Important Notes**:
+        - This bypasses the scheduled time (next_call)
+        - Use with caution as it may interfere with scheduled calls
+        """,
+        request=None,
+        responses={
+            200: OpenApiResponse(
+                response=CallTaskTriggerSerializer,
+                description="Call triggered successfully",
+                examples=[
+                    OpenApiExample(
+                        'Success Response',
+                        value={
+                            'task_id': '550e8400-e29b-41d4-a716-446655440000',
+                            'status': 'STARTING',
+                            'message': 'Call task triggered successfully'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="Invalid task status or task already in progress"
+            ),
+            403: OpenApiResponse(
+                description="Not authorized - superuser required"
+            ),
+            404: OpenApiResponse(
+                description="CallTask not found"
+            )
+        }
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
+    def trigger(self, request, pk=None):
+        """Manually trigger a call for a specific CallTask"""
+        try:
+            call_task = self.get_object()
+            
+            # Check if task is in a valid state to be triggered
+            if call_task.status not in [CallStatus.SCHEDULED, CallStatus.RETRY]:
+                return Response(
+                    {
+                        'error': f'Cannot trigger call. Current status is {call_task.get_status_display()}. '
+                                f'Only SCHEDULED or RETRY tasks can be triggered.'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # **NEW: Concurrency Control Check**
+            # Calculate maximum allowed concurrent calls
+            max_concurrent_calls = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+            
+            # Count current IN_PROGRESS call tasks
+            current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
+            
+            # Check if we can trigger another call (must be strictly smaller)
+            if current_in_progress >= max_concurrent_calls:
+                return Response(
+                    {
+                        'error': f'Cannot trigger call due to concurrency limit. '
+                                f'Current in-progress calls: {current_in_progress}, '
+                                f'Maximum allowed: {max_concurrent_calls} '
+                                f'(agents: {settings.NUMBER_OF_LIVEKIT_AGENTS}, '
+                                f'concurrency per agent: {settings.CONCURRENCY_PER_LIVEKIT_AGENT})'
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+            
+            # Update task status to IN_PROGRESS
+            call_task.status = CallStatus.IN_PROGRESS
+            call_task.save(update_fields=['status', 'updated_at'])
+            
+            # Initiate the actual call
+            try:
+                from core.utils.livekit_calls import initiate_call_from_task
+                call_result = initiate_call_from_task(call_task)
+                
+                if call_result.get('success'):
+                    # Keep status as IN_PROGRESS if call was successful
+                    # call_task.status = CallStatus.IN_PROGRESS  # already set
+                    pass
+                else:
+                    # Update status to RETRY if call failed
+                    call_task.status = CallStatus.RETRY
+                    call_task.increment_retries()
+                    call_task.save(update_fields=['status', 'attempts', 'updated_at'])
+                    
+            except Exception as e:
+                # If there's an error initiating the call, mark for retry
+                call_task.status = CallStatus.RETRY
+                call_task.increment_retries()
+                call_task.save(update_fields=['status', 'attempts', 'updated_at'])
+                call_result = {'success': False, 'error': str(e)}
+            
+            serializer = CallTaskTriggerSerializer({
+                'task_id': call_task.id,
+                'status': call_task.status,
+                'message': 'Call task triggered successfully' if call_result.get('success') else f'Call failed: {call_result.get("error", "Unknown error")}'
+            })
+            
+            return Response(serializer.data, status=status.HTTP_200_OK)
+            
+        except CallTask.DoesNotExist:
+            return Response(
+                {'error': 'CallTask not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+# Standalone test call function
+@extend_schema(
+    summary="🧪 Make test call",
+    description="""
+    Create a test call task - ONLY creates CallTask entry!
+    
+    The actual call will be handled by Celery tasks.
+    Requires agent_id and authentication token.
+    """,
+    request=TestCallSerializer,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Test call task created successfully"
+        ),
+        400: OpenApiResponse(
+            description="❌ Validation error"
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        500: OpenApiResponse(
+            description="❌ Test call initiation failed"
+        )
+    },
+    methods=['POST']
+)
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def make_test_call(request):
+    """
+    Create a test call task - ONLY creates CallTask entry!
+    
+    The actual call will be handled by Celery tasks.
+    Requires agent_id and authentication token.
+    """
+    serializer = TestCallSerializer(data=request.data, context={'request': request})
+    
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Get validated data
+    validated_data = serializer.validated_data
+    user = request.user
+    
+    # Use the authenticated user's phone number for test call
+    user_phone = user.phone
+    if not user_phone:
+        return Response(
+            {'error': 'User phone number not found. Please update your profile with a phone number.'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Retrieve agent and check permissions
+    try:
+        agent = Agent.objects.select_related('workspace', 'voice').get(
+            agent_id=validated_data['agent_id']
+        )
+        
+        # Check if user has access to this agent's workspace
+        if not user.is_superuser and agent.workspace not in user.mapping_user_workspaces.all():
+            return Response(
+                {'error': 'You do not have access to this agent'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+    except Agent.DoesNotExist:
+        return Response(
+            {'error': 'Agent not found'}, 
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    
+    # Create CallTask entry - that's it!
+    call_task = CallTask.objects.create(
+        status=CallStatus.SCHEDULED,
+        attempts=0,
+        phone=user_phone,
+        workspace=agent.workspace,
+        lead=None,  # null=True for test calls
+        agent=agent,
+        next_call=timezone.now()  # immediate execution
+    )
+    
+    # Return success response
+    return Response({
+        'success': True,
+        'call_task_id': str(call_task.id)
+    }, status=status.HTTP_201_CREATED) 
