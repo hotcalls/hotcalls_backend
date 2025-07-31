@@ -50,27 +50,27 @@ logger = logging.getLogger(__name__)
             ),
             401: OpenApiResponse(description="🚫 Authentication required - Please login to access calendars")
         },
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     retrieve=extend_schema(
         summary="Get calendar details",
         description="Retrieve detailed information about a specific calendar with provider details",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     update=extend_schema(
         summary="Update calendar",
         description="Update calendar information (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     partial_update=extend_schema(
         summary="Partially update calendar",
         description="Update specific fields of a calendar (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     destroy=extend_schema(
         summary="Delete calendar",
         description="Delete a calendar (superuser only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
 )
 class CalendarViewSet(viewsets.ModelViewSet):
@@ -346,7 +346,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Get calendar configurations",
         description="Get all configurations for a specific calendar",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     )
     @action(detail=True, methods=['get'])
     def configurations(self, request, pk=None):
@@ -359,7 +359,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="🧪 Test calendar connection",
         description="Test the connection to the calendar service",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     )
     @action(detail=True, methods=['post'])
     def test_connection(self, request, pk=None):
@@ -392,7 +392,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
         summary="🗓️ Create calendar event",
         description="Create an event in the calendar",
         request=EventCreateSerializer,
-        tags=["Calendar Management"]
+        tags=["User Management"]
     )
     @action(detail=True, methods=['post'], url_path='create-event')
     def create_event(self, request, pk=None):
@@ -455,32 +455,32 @@ class CalendarViewSet(viewsets.ModelViewSet):
     list=extend_schema(
         summary="List calendar configurations",
         description="Retrieve a list of all calendar configurations with filtering capabilities",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     create=extend_schema(
         summary="Create a new calendar configuration",
         description="Create a new calendar configuration (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     retrieve=extend_schema(
         summary="Get configuration details",
         description="Retrieve detailed information about a specific calendar configuration",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     update=extend_schema(
         summary="Update configuration",
         description="Update all fields of a calendar configuration (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     partial_update=extend_schema(
         summary="Partially update configuration",
         description="Update specific fields of a calendar configuration (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
     destroy=extend_schema(
         summary="Delete configuration",
         description="Delete a calendar configuration (staff only)",
-        tags=["Calendar Management"]
+        tags=["User Management"]
     ),
 )
 class CalendarConfigurationViewSet(viewsets.ModelViewSet):
@@ -521,7 +521,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         description="Check available time slots for a specific date using real Google Calendar data",
         request=CalendarAvailabilityRequestSerializer,
         responses={200: OpenApiResponse(response=CalendarAvailabilityResponseSerializer)},
-        tags=["Calendar Management"]
+        tags=["User Management"]
     )
     @action(detail=True, methods=['post'])
     def check_availability(self, request, pk=None):

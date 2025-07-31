@@ -77,7 +77,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             ),
             401: OpenApiResponse(description="🚫 Authentication required - Please login to access call logs")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
     create=extend_schema(
         summary="➕ Create call log",
@@ -85,8 +85,8 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
         Create a new call log entry using LiveKit secret authentication.
         
         **🔐 Authentication Required**:
-        - **Header:** `X-LiveKit-CallLog-Secret: asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!`
-        - **No Django Token needed** - only the secret header
+        - **Header:** `X-LiveKit-Token: <your-generated-token>`
+        - **No Django Token needed** - only the LiveKit agent token header
         
         **📱 System Integration**:
         - Designed for external call systems
@@ -108,12 +108,11 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
         """,
         parameters=[
             OpenApiParameter(
-                name='X-LiveKit-CallLog-Secret',
+                name='X-LiveKit-Token',
                 location=OpenApiParameter.HEADER,
-                description='LiveKit secret for authentication',
+                description='LiveKit agent token for authentication (generated via /api/livekit/tokens/generate_token/)',
                 required=True,
-                type=str,
-                default='asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!'
+                type=str
             )
         ],
         request=CallLogSerializer,
@@ -126,7 +125,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required for call log creation")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
     retrieve=extend_schema(
         summary="🔍 Get call log details",
@@ -147,7 +146,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             401: OpenApiResponse(description="🚫 Authentication required"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
     update=extend_schema(
         summary="✏️ Update call log",
@@ -179,7 +178,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
     partial_update=extend_schema(
         summary="✏️ Partially update call log",
@@ -196,7 +195,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             403: OpenApiResponse(description="🚫 Permission denied"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
     destroy=extend_schema(
         summary="🗑️ Delete call log",
@@ -233,7 +232,7 @@ from .permissions import CallLogPermission, CallLogAnalyticsPermission
             ),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     ),
 )
 class CallLogViewSet(viewsets.ModelViewSet):
@@ -318,7 +317,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def analytics(self, request):
@@ -394,7 +393,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def status_analytics(self, request):
@@ -437,7 +436,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def agent_performance(self, request):
@@ -735,7 +734,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 ]
             )
         },
-        tags=["Call Management"],
+        tags=["Agent Management"],
         examples=[
             OpenApiExample(
                 'Minimal Request',
@@ -911,7 +910,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def appointment_stats(self, request):
@@ -983,7 +982,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def daily_stats(self, request):
@@ -1083,7 +1082,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Call Management"]
+        tags=["Agent Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def duration_distribution(self, request):

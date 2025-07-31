@@ -50,11 +50,11 @@ def api_root(request):
             "agents": "/api/agents/",
             "leads": "/api/leads/",
             "calls": "/api/calls/",
-    
             "voices": "/api/voices/",
             "subscriptions": "/api/subscriptions/",
             "payments": "/api/payments/",
             "meta": "/api/meta/",
+            "livekit": "/api/livekit/",
             "docs": "/api/docs/",
             "schema": "/api/schema/"
         }
@@ -87,13 +87,16 @@ urlpatterns = [
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
 
-    path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
-    path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
+    # path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
+    # path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
     # Meta Integration Management API
-    path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
+    # path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
+    
+    # LiveKit Token Management API (Superuser only)
+    path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
     
     # Meta Webhooks (for Meta to call)
-    path('api/integrations/meta/', include('core.management_api.meta_api.webhook_urls')),
+    # path('api/integrations/meta/', include('core.management_api.meta_api.webhook_urls')),
 ]
 
 # Serve media files in development with CORS support

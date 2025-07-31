@@ -381,8 +381,6 @@ Authorization: Token your-auth-token-here
         {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management'},
         {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management'},
         {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations'},
-        {'name': 'Call Management', 'description': '📱 Call logs and analytics'},
-        {'name': 'Calendar Management', 'description': '📅 Calendar integration and scheduling'},
     ],
     'COMPONENT_SECURITY_SCHEMES': {
         'TokenAuth': {

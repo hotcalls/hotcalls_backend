@@ -1,5 +1,7 @@
 from rest_framework import permissions
 import os
+from django.utils import timezone
+from core.models import LiveKitAgent
 
 
 class CallLogPermission(permissions.BasePermission):
@@ -9,7 +11,7 @@ class CallLogPermission(permissions.BasePermission):
     - All authenticated users can make outbound calls (Django auth)
     - Only staff can create/modify call logs (Django auth)
     - Only superusers can delete call logs (Django auth)
-    - LiveKit can also create call logs using X-LiveKit-CallLog-Secret header
+    - LiveKit can also create call logs using X-LiveKit-Token header with valid agent tokens
     """
     
     def has_permission(self, request, view):
@@ -55,10 +57,26 @@ class CallLogPermission(permissions.BasePermission):
         return False
     
     def _is_valid_livekit_request(self, request):
-        """Check if request has valid LiveKit secret header"""
-        webhook_secret = request.META.get('HTTP_X_LIVEKIT_CALLLOG_SECRET')
-        expected_secret = os.getenv('CALL_LOG_SECRET', 'asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!')
-        return webhook_secret == expected_secret
+        """Check if request has valid LiveKit token header"""
+        livekit_token = request.META.get('HTTP_X_LIVEKIT_TOKEN')
+        
+        if not livekit_token:
+            return False
+        
+        try:
+            # Find agent with this token
+            agent = LiveKitAgent.objects.get(token=livekit_token)
+            
+            # Check if token is still valid (not expired)
+            if not agent.is_valid():
+                return False
+            
+            # Store agent info in request for potential use
+            request.livekit_agent = agent
+            return True
+            
+        except LiveKitAgent.DoesNotExist:
+            return False
 
 
 class CallLogAnalyticsPermission(permissions.BasePermission):
