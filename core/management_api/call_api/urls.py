@@ -8,4 +8,6 @@ router.register(r'call-logs', CallLogViewSet, basename='calllog')
 
 urlpatterns = [
     path('', include(router.urls)),
+    # LiveKit webhook endpoint (separate from REST API)
+    path('webhooks/livekit/', CallLogViewSet.as_view({'post': 'livekit_webhook'}), name='livekit-webhook'),
 ] 

@@ -1124,4 +1124,50 @@ class CallLogViewSet(viewsets.ModelViewSet):
                 'min_duration': stats['min_duration'] or 0,
                 'max_duration': stats['max_duration'] or 0
             }
-        }) 
+        })
+
+    @extend_schema(
+        summary="📡 LiveKit call log webhook",
+        description="Receive call log data from LiveKit webhook with X-LiveKit-CallLog-Secret authentication",
+        request={'type': 'object', 'description': 'LiveKit call log data'},
+        responses={
+            200: OpenApiResponse(description="✅ Webhook processed successfully"),
+            401: OpenApiResponse(description="🚫 Invalid webhook secret")
+        },
+        auth=None
+    )
+    @action(detail=False, methods=['post'], permission_classes=[])
+    def livekit_webhook(self, request):
+        """Handle LiveKit call log webhook with secret validation"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Validate X-LiveKit-CallLog-Secret header
+        webhook_secret = request.META.get('HTTP_X_LIVEKIT_CALLLOG_SECRET')
+        expected_secret = "asfdafdasfJFDLJasdfljalfdhHDFDJHF32!!!"
+        
+        if webhook_secret != expected_secret:
+            logger.warning(f"Invalid LiveKit webhook secret")
+            return Response(
+                {'error': 'Invalid webhook secret'}, 
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        try:
+            webhook_data = request.data
+            logger.info(f"Received LiveKit webhook: {webhook_data}")
+            
+            # TODO: Process webhook data and create CallLog
+            # For now, just log the data
+            
+            return Response({
+                'message': 'Webhook processed successfully',
+                'received_fields': list(webhook_data.keys()) if webhook_data else []
+            })
+            
+        except Exception as e:
+            logger.error(f"LiveKit webhook error: {str(e)}")
+            return Response(
+                {'error': 'Failed to process webhook'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            ) 
