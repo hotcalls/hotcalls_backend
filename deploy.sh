@@ -555,6 +555,8 @@ deploy_infrastructure() {
     export LIVEKIT_URL
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
+    export TRUNK_ID
+    export SIP_PROVIDER
     export STRIPE_SECRET_KEY
     export STRIPE_PUBLISHABLE_KEY
     export STRIPE_WEBHOOK_SECRET
