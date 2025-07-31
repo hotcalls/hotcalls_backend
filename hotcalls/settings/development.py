@@ -130,4 +130,9 @@ SHELL_PLUS_PRINT_SQL = True
 # Rest framework settings for development
 REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] += [
     'rest_framework.renderers.BrowsableAPIRenderer',
-] 
+]
+
+# LiveKit Concurrency Control for Development
+# Lower concurrency for local development
+NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
+CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '90')) 

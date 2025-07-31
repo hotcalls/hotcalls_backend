@@ -141,4 +141,9 @@ LOGGING = {
 # No need to override unless staging uses different email settings
 
 # Celery configuration remains the same (from base.py)
-# Uses Redis from environment variables 
+# Uses Redis from environment variables
+
+# LiveKit Concurrency Control for Staging
+# Medium concurrency for staging environment
+NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '2'))
+CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '90')) 

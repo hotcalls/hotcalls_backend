@@ -1189,6 +1189,4 @@ class CallTask(models.Model):
             self.status = CallStatus.WAITING
             self.save(update_fields=['status'])
     
-    def can_retry(self, max_retries=3):
-        """Check if the task can be retried"""
-        return self.attempts < max_retries and self.status in [CallStatus.SCHEDULED, CallStatus.RETRY]
+    
