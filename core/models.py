@@ -3,6 +3,17 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 import uuid
 from django.utils import timezone
 import secrets
+import base64
+from cryptography.fernet import Fernet
+from django.conf import settings
+
+
+# New CallStatus TextChoices
+class CallStatus(models.TextChoices):
+    SCHEDULED = 'scheduled', 'scheduled'         # will be called
+    IN_PROGRESS = 'in_progress', 'in_progress'   # call in progress
+    RETRY = 'retry', 'retry'                     # was called but failed
+    WAITING = 'waiting', 'waiting'               # limit hit
 
 
 # Enum Choices
@@ -912,3 +923,137 @@ class MetaLeadForm(models.Model):
     
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"
+
+
+class CallTask(models.Model):
+    """Call tasks for managing scheduled and queued calls"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Task status and management
+    status = models.CharField(
+        max_length=20,
+        choices=CallStatus.choices,
+        default=CallStatus.SCHEDULED,
+        help_text="Current status of the call task"
+    )
+    attempts = models.IntegerField(
+        default=0,
+        help_text="Number of retry attempts made"
+    )
+    phone = models.CharField(
+        max_length=20,
+        help_text="Phone number to call"
+    )
+    
+    # Relationships
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='call_tasks',
+        help_text="Workspace associated with this call task"
+    )
+    
+    lead = models.OneToOneField(
+        Lead,
+        on_delete=models.CASCADE,
+        related_name='call_task',
+        null=True,
+        blank=True,
+        help_text="Lead associated with this call task (null for test calls)"
+    )
+    
+    # Agent assignment
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='call_tasks',
+        help_text="Agent assigned to handle this call task"
+    )
+    
+    
+    # Scheduling
+    next_call = models.DateTimeField(
+        help_text="Scheduled time for the next call attempt"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'next_call']),
+            models.Index(fields=['agent', 'status']),
+            models.Index(fields=['next_call']),
+        ]
+    
+    def __str__(self):
+        return f"CallTask {self.id} - {self.workspace.name} - {self.agent.name} ({self.status})"
+    
+    def increment_retries(self, max_retries=10):
+        """Increment the retry counter with safety limit"""
+        if self.attempts < max_retries:
+            self.attempts += 1
+            self.save(update_fields=['attempts'])
+        else:
+            # Prevent integer overflow - stop retrying
+            self.status = CallStatus.WAITING
+            self.save(update_fields=['status'])
+    
+    def can_retry(self, max_retries=3):
+        """Check if the task can be retried"""
+        return self.attempts < max_retries and self.status in [CallStatus.SCHEDULED, CallStatus.RETRY]
+
+
+class LiveKitAgentToken(models.Model):
+    """LiveKit agent authentication token - ONE token globally"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    token = models.TextField(
+        help_text="Encrypted LiveKit agent token"
+    )
+    expiry_date = models.DateTimeField(
+        default=lambda: timezone.datetime(2100, 1, 1, tzinfo=timezone.utc),
+        help_text="Token expiry date"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['expiry_date']),
+        ]
+    
+    def __str__(self):
+        return f"LiveKit Global Token"
+    
+    def set_token(self, plain_token):
+        """Encrypt and store the token"""
+        # Simple encryption using Django's SECRET_KEY
+        key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode().ljust(32)[:32])
+        fernet = Fernet(key)
+        encrypted_token = fernet.encrypt(plain_token.encode())
+        self.token = base64.urlsafe_b64encode(encrypted_token).decode()
+    
+    def get_token(self):
+        """Decrypt and return the token"""
+        key = base64.urlsafe_b64encode(settings.SECRET_KEY[:32].encode().ljust(32)[:32])
+        fernet = Fernet(key)
+        encrypted_token = base64.urlsafe_b64decode(self.token.encode())
+        return fernet.decrypt(encrypted_token).decode()
+    
+    @classmethod
+    def generate_global_token(cls):
+        """Generate ONE global token, deleting any existing token"""
+        # Hard delete any existing token (there should only be one globally)
+        cls.objects.all().delete()
+        
+        # Generate new token
+        plain_token = secrets.token_urlsafe(32)
+        
+        # Create new token record
+        token_record = cls()
+        token_record.set_token(plain_token)
+        token_record.save()
+        
+        return plain_token

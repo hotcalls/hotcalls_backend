@@ -1,13 +1,13 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
-from core.models import Agent, PhoneNumber
+from core.models import Agent, PhoneNumber, LiveKitAgentToken
 from .serializers import (
     AgentSerializer, AgentCreateSerializer, AgentUpdateSerializer, PhoneNumberSerializer,
-    AgentPhoneAssignmentSerializer, AgentConfigSerializer
+    AgentPhoneAssignmentSerializer, AgentConfigSerializer, LiveKitAgentTokenSerializer
 )
 from .filters import AgentFilter, PhoneNumberFilter
 from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManagementPermission
@@ -510,6 +510,95 @@ class AgentViewSet(viewsets.ModelViewSet):
         agent = self.get_object()
         serializer = AgentConfigSerializer(agent)
         return Response(serializer.data)
+    
+    @extend_schema(
+        summary="🔐 Generate LiveKit agent token",
+        description="""
+        Generate or regenerate the ONE global LiveKit agent authentication token.
+        
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot generate tokens
+        - **❌ Staff Members**: Cannot generate tokens
+        - **✅ SUPERUSERS ONLY**: Can generate the global token
+        
+        **⚠️ IMPORTANT SECURITY NOTES**:
+        - **ONE token globally**: Only one token can exist in the entire system
+        - **Token returned once**: The unencrypted token is only returned in this response
+        - **Regeneration deletes old token**: Creating a new token permanently deletes the previous one
+        - **No retrieval**: Tokens cannot be viewed after generation
+        
+        **🔄 Token Lifecycle**:
+        - Generate initial global token for LiveKit authentication
+        - Regenerate token if compromised or expired
+        - Token expires on 01.01.2100 by default
+        - Old tokens are hard deleted (cannot be recovered)
+        
+        **🎯 Use Cases**:
+        - Initial system setup with LiveKit
+        - Token rotation for security
+        - Recovery from compromised tokens
+        """,
+        request=None,
+        responses={
+            201: OpenApiResponse(
+                response=LiveKitAgentTokenSerializer,
+                description="✅ Global LiveKit agent token generated successfully",
+                examples=[
+                    OpenApiExample(
+                        'Global Token Generated',
+                        summary='New global LiveKit agent token created',
+                        value={
+                            'token': 'lk_global_abc123def456...',
+                            'expiry_date': '2100-01-01T00:00:00Z',
+                            'created_at': '2024-01-15T10:30:00Z'
+                        }
+                    )
+                ]
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(
+                description="🚫 Permission denied - SUPERUSER ACCESS REQUIRED",
+                examples=[
+                    OpenApiExample(
+                        'Access Denied',
+                        summary='Non-superuser attempted to generate token',
+                        value={'detail': 'You do not have permission to perform this action.'}
+                    )
+                ]
+            ),
+            404: OpenApiResponse(description="🚫 Agent not found")
+        },
+        tags=["Agent Management"]
+    )
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def generate_livekit_agent_token(self, request, pk=None):
+        """Generate or regenerate the ONE global LiveKit agent token"""
+        # ONLY SUPERUSERS can generate tokens
+        if not request.user.is_superuser:
+            return Response(
+                {'detail': 'You do not have permission to perform this action.'}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # We still get the agent object but only for URL structure
+        agent = self.get_object()
+        
+        # Generate new global token (this will delete any existing token)
+        plain_token = LiveKitAgentToken.generate_global_token()
+        
+        # Get the created token record for serialization
+        token_record = LiveKitAgentToken.objects.first()
+        
+        response_data = {
+            'token': plain_token,
+            'expiry_date': token_record.expiry_date,
+            'created_at': token_record.created_at
+        }
+        
+        serializer = LiveKitAgentTokenSerializer(data=response_data)
+        serializer.is_valid()  # This will always be valid since we control the data
+        
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
 @extend_schema_view(
