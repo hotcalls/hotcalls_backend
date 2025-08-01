@@ -45,6 +45,8 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
+      # Stripe webhook signing secret (local development)
+      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
     ports:
       - "8000:8000"
     volumes:
@@ -72,6 +74,7 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
+      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
     volumes:
       - .:/app
     depends_on:
@@ -93,6 +96,7 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
+      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
     volumes:
       - .:/app
     depends_on:

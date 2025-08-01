@@ -436,6 +436,23 @@ class Workspace(models.Model):
         null=True,
         help_text="Current Stripe Subscription ID (sub_xxx)"
     )
+
+    # NEW: Track current subscription status (mirrors Stripe)
+    SUBSCRIPTION_STATUS_CHOICES = [
+        ('none', 'None'),
+        ('trial', 'Trial'),
+        ('active', 'Active'),
+        ('past_due', 'Past Due'),
+        ('unpaid', 'Unpaid'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    subscription_status = models.CharField(
+        max_length=20,
+        choices=SUBSCRIPTION_STATUS_CHOICES,
+        default='none',
+        help_text="Current subscription status (mirrors Stripe status)"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
