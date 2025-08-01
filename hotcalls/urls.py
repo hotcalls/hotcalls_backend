@@ -82,7 +82,8 @@ urlpatterns = [
     
     # Management APIs - All require email verification
     path('api/users/', include(('core.management_api.user_api.urls', 'user_api'), namespace='user_api')),
-    path('api/subscriptions/', include(('core.management_api.subscription_api.urls', 'subscription_api'), namespace='subscription_api')),
+    path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
+    path('api/plans/', include(('core.management_api.plan_api.urls', 'plan_api'), namespace='plan_api')),
     path('api/workspaces/', include(('core.management_api.workspace_api.urls', 'workspace_api'), namespace='workspace_api')),
     path('api/agents/', include(('core.management_api.agent_api.urls', 'agent_api'), namespace='agent_api')),
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
@@ -90,7 +91,7 @@ urlpatterns = [
     # path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
 
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
-    # path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
+    # Subscription management is handled by payment_api above
     
     # Meta Integration Management API
     # path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),

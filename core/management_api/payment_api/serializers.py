@@ -104,9 +104,8 @@ class CreateCheckoutSessionSerializer(serializers.Serializer):
             if request and not workspace.users.filter(id=request.user.id).exists():
                 raise serializers.ValidationError("You don't have access to this workspace")
             
-            # Check if workspace already has a Stripe customer
-            if not workspace.stripe_customer_id:
-                raise serializers.ValidationError("Workspace needs a Stripe customer first")
+            # Stripe creates customer automatically during checkout
+            # Customer will be linked to workspace after successful payment
                 
             return value
         except Workspace.DoesNotExist:

@@ -535,22 +535,27 @@ def create_checkout_session(request):
     try:
         workspace = Workspace.objects.get(id=workspace_id)
         
-        # Create checkout session
-        session = stripe.checkout.Session.create(
-            customer=workspace.stripe_customer_id,
-            payment_method_types=['card'],
-            line_items=[{
+        # Create checkout session - customer will be created automatically if needed
+        session_params = {
+            'payment_method_types': ['card'],
+            'line_items': [{
                 'price': price_id,
                 'quantity': 1,
             }],
-            mode='subscription',
-            success_url=success_url + '?session_id={CHECKOUT_SESSION_ID}',
-            cancel_url=cancel_url,
-            metadata={
+            'mode': 'subscription',
+            'success_url': success_url + '?session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url': cancel_url,
+            'metadata': {
                 'workspace_id': str(workspace.id),
                 'workspace_name': workspace.workspace_name
             }
-        )
+        }
+        
+        # If workspace already has a customer, use it
+        if workspace.stripe_customer_id:
+            session_params['customer'] = workspace.stripe_customer_id
+        
+        session = stripe.checkout.Session.create(**session_params)
         
         return Response({
             'checkout_url': session.url,
