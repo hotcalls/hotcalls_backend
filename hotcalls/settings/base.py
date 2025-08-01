@@ -74,7 +74,6 @@ THIRD_PARTY_APPS = [
     "rest_framework.authtoken",
     "corsheaders",
     "django_celery_beat",
-    "drf_yasg",
     "drf_spectacular",
     "django_filters",
     "health_check",
@@ -96,6 +95,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "core.middleware.PlanQuotaMiddleware",  # Quota enforcement after authentication
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -505,6 +505,13 @@ META_REDIRECT_URI = os.getenv('META_REDIRECT_URI', '')
 META_API_VERSION = os.getenv('META_API_VERSION', 'v18.0')
 
 # LiveKit Configuration
-LIVEKIT_HOST = os.getenv('LIVEKIT_HOST', '')
+LIVEKIT_URL = os.getenv('LIVEKIT_URL', '')
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', '')
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', '')
+LIVEKIT_AGENT_NAME = os.getenv('LIVEKIT_AGENT_NAME', 'hotcalls_agent')
+TRUNK_ID = os.getenv('TRUNK_ID', '')
+SIP_PROVIDER = os.getenv('SIP_PROVIDER', 'jambonz')
+
+# LiveKit Concurrency Control
+NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
+CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))

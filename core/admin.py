@@ -2,7 +2,8 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
-    GoogleCalendarConnection, GoogleCalendar
+    GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
+    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration
 )
 from django.utils import timezone
 
@@ -26,7 +27,7 @@ class CustomUserAdmin(BaseUserAdmin):
             'fields': ('first_name', 'last_name', 'phone')
         }),
         ('Email Verification', {
-            'fields': ('is_email_verified', 'email_verification_token', 'email_verification_sent_at'),
+            'fields': ('is_email_verified', 'email_verification_sent_at'),
             'classes': ('collapse',)
         }),
         ('Permissions', {
@@ -54,7 +55,7 @@ class CustomUserAdmin(BaseUserAdmin):
         }),
     )
     
-    # Read-only fields
+    # Read-only fields (encrypted token fields are hidden via editable=False)
     readonly_fields = ('date_joined', 'last_login', 'email_verification_sent_at')
     
     # Filter horizontal for many-to-many fields
@@ -73,8 +74,8 @@ class VoiceAdmin(admin.ModelAdmin):
 
 @admin.register(Feature)
 class FeatureAdmin(admin.ModelAdmin):
-    list_display = ('feature_name', 'description', 'created_at')
-    list_filter = ('created_at',)
+    list_display = ('feature_name', 'unit', 'description', 'created_at')
+    list_filter = ('unit', 'created_at')
     search_fields = ('feature_name', 'description')
     ordering = ('feature_name',)
 
@@ -85,6 +86,28 @@ class PlanFeatureAdmin(admin.ModelAdmin):
     list_filter = ('plan', 'feature', 'created_at')
     search_fields = ('plan__plan_name', 'feature__feature_name')
     ordering = ('plan', 'feature')
+
+
+@admin.register(EndpointFeature)
+class EndpointFeatureAdmin(admin.ModelAdmin):
+    list_display = ('route_name', 'http_method', 'feature', 'created_at')
+    list_filter = ('http_method', 'feature', 'feature__unit', 'created_at')
+    search_fields = ('route_name', 'feature__feature_name')
+    ordering = ('route_name', 'http_method')
+    
+    fieldsets = (
+        ('Endpoint Info', {
+            'fields': ('route_name', 'http_method')
+        }),
+        ('Feature Mapping', {
+            'fields': ('feature',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    readonly_fields = ('created_at', 'updated_at')
 
 
 # Inline classes need to be defined first
@@ -113,6 +136,20 @@ class CalendarConfigurationInline(admin.TabularInline):
     fields = ('duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
 
 
+class WorkspaceSubscriptionInline(admin.TabularInline):
+    model = WorkspaceSubscription
+    extra = 0
+    fields = ('plan', 'started_at', 'ends_at', 'is_active')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+class FeatureUsageInline(admin.TabularInline):
+    model = FeatureUsage
+    extra = 0
+    fields = ('feature', 'used_amount')
+    readonly_fields = ('created_at', 'updated_at')
+
+
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
     list_display = ('plan_name', 'get_features_count', 'created_at', 'updated_at')
@@ -127,11 +164,16 @@ class PlanAdmin(admin.ModelAdmin):
 
 @admin.register(Workspace)
 class WorkspaceAdmin(admin.ModelAdmin):
-    list_display = ('workspace_name', 'get_calendars_count', 'get_google_connections_count', 'created_at', 'updated_at')
+    list_display = ('workspace_name', 'get_current_plan', 'get_calendars_count', 'get_google_connections_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
-    inlines = [CalendarInline]
+    inlines = [WorkspaceSubscriptionInline, CalendarInline]
+    
+    def get_current_plan(self, obj):
+        current_plan = obj.current_plan
+        return current_plan.plan_name if current_plan else 'No Plan'
+    get_current_plan.short_description = 'Current Plan'
     
     def get_calendars_count(self, obj):
         return obj.calendars.count()
@@ -325,3 +367,79 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
     def get_provider(self, obj):
         return obj.calendar.provider.title()
     get_provider.short_description = 'Provider'
+
+
+@admin.register(WorkspaceSubscription)
+class WorkspaceSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'plan', 'started_at', 'ends_at', 'is_active', 'created_at')
+    list_filter = ('is_active', 'plan', 'started_at', 'ends_at', 'created_at')
+    search_fields = ('workspace__workspace_name', 'plan__plan_name')
+    ordering = ('-started_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Subscription Info', {
+            'fields': ('workspace', 'plan', 'is_active')
+        }),
+        ('Period', {
+            'fields': ('started_at', 'ends_at')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(WorkspaceUsage)
+class WorkspaceUsageAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'subscription', 'period_start', 'period_end', 'get_features_count')
+    list_filter = ('workspace', 'subscription__plan', 'period_start', 'period_end')
+    search_fields = ('workspace__workspace_name', 'subscription__plan__plan_name')
+    ordering = ('-period_start',)
+    readonly_fields = ('created_at', 'updated_at')
+    inlines = [FeatureUsageInline]
+    
+    def get_features_count(self, obj):
+        return obj.feature_usages.count()
+    get_features_count.short_description = 'Features Used'
+
+
+@admin.register(FeatureUsage)
+class FeatureUsageAdmin(admin.ModelAdmin):
+    list_display = ('get_workspace', 'feature', 'used_amount', 'get_period', 'updated_at')
+    list_filter = ('feature', 'feature__unit', 'usage_record__period_start')
+    search_fields = ('usage_record__workspace__workspace_name', 'feature__feature_name')
+    ordering = ('-updated_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    
+    def get_workspace(self, obj):
+        return obj.usage_record.workspace.workspace_name
+    get_workspace.short_description = 'Workspace'
+    
+    def get_period(self, obj):
+        return f"{obj.usage_record.period_start.date()} → {obj.usage_record.period_end.date()}"
+    get_period.short_description = 'Period'
+
+
+@admin.register(MetaIntegration)
+class MetaIntegrationAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'page_id', 'status', 'access_token_expires_at', 'created_at')
+    list_filter = ('status', 'access_token_expires_at', 'created_at')
+    search_fields = ('workspace__workspace_name', 'page_id')
+    ordering = ('-created_at',)
+    readonly_fields = ('access_token', 'verification_token', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Meta Integration Info', {
+            'fields': ('workspace', 'page_id', 'status')
+        }),
+        ('OAuth Tokens (Read Only - Encrypted)', {
+            'fields': ('access_token_expires_at', 'scopes'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )

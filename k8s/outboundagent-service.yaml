@@ -1,0 +1,31 @@
+# Outbound Agent Service Template
+# Usage: envsubst < outboundagent-service.yaml | kubectl apply -f -
+# Note: Agent typically doesn't need external service exposure,
+# but this provides internal service discovery and health monitoring
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PROJECT_PREFIX}-outboundagent-service
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: outboundagent
+    environment: ${ENVIRONMENT}
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+spec:
+  type: ClusterIP  # Internal only - agent connects outbound to LiveKit
+  selector:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: outboundagent
+  ports:
+  # Optional health/status port if agent exposes one
+  - name: health
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  # This service mainly exists for:
+  # 1. Service discovery within cluster
+  # 2. Potential monitoring/health endpoints
+  # 3. Future webhook/callback endpoints if needed

@@ -18,7 +18,7 @@ class VoiceSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.IntegerField)
     def get_agent_count(self, obj) -> int:
         """Get the number of agents using this voice"""
-        return obj.mapping_voice_agents.count()
+        return obj.agents.count()
 
 
 class VoiceCreateSerializer(serializers.ModelSerializer):

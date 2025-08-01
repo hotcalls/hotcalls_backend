@@ -1,19 +1,21 @@
 #!/bin/bash
 
-# HotCalls Single-Stage Deployment Script
+# HotCalls Pure .env Deployment Script
 # This script deploys the entire application stack to Azure using Terraform and Kubernetes
+# ALL CONFIGURATION via .env file - no command line parameters
 #
-# IMPROVEMENTS:
-# - MANDATORY --project-name parameter (no more defaults)
-# - Automatic handling of existing resource groups (import if needed)
+# FEATURES:
+# - Pure .env configuration (no command line complexity)
+# - Multi-repository support (backend, frontend, outbound agent)
+# - Automatic repository cloning and branch management
+# - Comprehensive resource configuration
 # - Retry logic for failed deployments
 # - Better error handling and cleanup
-# - Foolproof deployment with clear error messages
 # - Automatic ACR authentication setup for Kubernetes
 # - Fixed image naming consistency (project-specific names)
 # - Automatic deployment restart after auth configuration
 # 
-# SPEED & RELIABILITY OPTIMIZATIONS FOR NEW PROJECTS:
+# SPEED & RELIABILITY OPTIMIZATIONS:
 #   * REMOVED 15-minute ACR attachment bottleneck
 #   * Docker build optimization (cache detection, fresh builds)
 #   * Parallel Kubernetes resource deployment
@@ -26,129 +28,59 @@
 #   * Explicit defaults for all critical variables
 #
 # USAGE:
-#   ./deploy.sh --project-name=YOUR_EXACT_RG_NAME [options]
+#   ./deploy.sh
 #
-# EXAMPLES:
-#   ./deploy.sh --project-name=hotcalls-staging --environment=staging
-#   ./deploy.sh --project-name=prod-hotcalls --environment=production --update-only
-#   ./deploy.sh --project-name=test-env --branch=main
+# CONFIGURATION:
+#   Edit .env file with PROJECT_NAME, ENVIRONMENT, and all deployment settings
 
 set -euo pipefail
 
-# Default values - MUST BE OVERRIDDEN
-PROJECT_NAME=""
-ENVIRONMENT="staging"
-LOCATION_SHORT="ne"
-UPDATE_ONLY=false
-BRANCH=""
-DOMAIN=""
-NO_CACHE=false
-PURGE_DB=false
+# Pure .env Configuration - No Command Line Parameters
+# All configuration loaded from .env file
 
-# Parse command line arguments
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --project-name=*)
-            PROJECT_NAME="${1#*=}"
-            shift
-            ;;
-        --environment=*)
-            ENVIRONMENT="${1#*=}"
-            shift
-            ;;
-        --location-short=*)
-            LOCATION_SHORT="${1#*=}"
-            shift
-            ;;
-        --update-only)
-            UPDATE_ONLY=true
-            shift
-            ;;
-        --branch=*)
-            BRANCH="${1#*=}"
-            shift
-            ;;
-        --domain=*)
-            DOMAIN="${1#*=}"
-            shift
-            ;;
-        --no-cache)
-            NO_CACHE=true
-            shift
-            ;;
-        --purge)
-            PURGE_DB=true
-            shift
-            ;;
-        -h|--help)
-            echo "Usage: $0 --project-name=NAME [OPTIONS]"
+# Handle help request
+if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
+    echo "🚀 HotCalls Deployment Script - Pure .env Configuration"
             echo ""
-            echo "REQUIRED OPTIONS:"
-            echo "  --project-name=NAME    REQUIRED: Exact name for the Azure resource group"
-            echo "                         This will be used as-is, no prefixes or suffixes added"
+    echo "Usage: $0"
             echo ""
-            echo "OPTIONAL OPTIONS:"
-            echo "  --environment=ENV      Set environment (default: staging)"
-            echo "  --location-short=LOC   Set location short name (default: ne)"
-            echo "  --update-only          Only update Kubernetes deployment, skip infrastructure"
-            echo "  --branch=BRANCH        Git pull and checkout specified branch for both frontend and backend"
-            echo "  --domain=DOMAIN        Configure ingress with domain and TLS (requires certs/tls.cer and certs/private.key)"
-            echo "  --no-cache             Force fresh Docker build without using cache (slower but ensures all changes are included)"
-            echo "  --purge                DANGER: Drop all database tables, recreate migrations from scratch"
-            echo "  -h, --help             Show this help message"
+    echo "📝 All configuration is managed via .env file:"
+    echo "   - PROJECT_NAME: Azure resource group name"
+    echo "   - ENVIRONMENT: staging/production/development"
+    echo "   - All deployment flags: UPDATE_ONLY, NO_CACHE, PURGE_DB, etc."
+    echo "   - Repository branches: BRANCH_BACKEND, BRANCH_FRONTEND, BRANCH_AGENT"
+    echo "   - Resource settings: CPU, memory, replicas"
             echo ""
-            echo "Examples:"
-            echo "  $0 --project-name=hotcalls-prod           # Deploy to resource group: hotcalls-prod"
-            echo "  $0 --project-name=myapp --environment=dev # Deploy to resource group: myapp (dev environment)"  
-            echo "  $0 --project-name=test-rg --update-only   # Update K8s only in test-rg"
-            echo "  $0 --project-name=staging --branch=main   # Deploy staging with main branch"
-            echo "  $0 --project-name=prod --domain=app.example.com  # Deploy with HTTPS"
-            echo "  $0 --project-name=staging --update-only --no-cache  # Force fresh build without cache"
+    echo "📋 Examples:"
+    echo "   ./deploy.sh                    # Deploy using .env configuration"
+    echo "   cp .env.staging .env && ./deploy.sh  # Deploy staging environment"
+    echo ""
+    echo "🔧 To customize deployment:"
+    echo "   1. Edit .env file with your settings"
+    echo "   2. Run: ./deploy.sh"
+    echo ""
             exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
-done
+fi
 
-# Validate required parameters
-if [[ -z "$PROJECT_NAME" ]]; then
-    echo "❌ ERROR: --project-name is required!"
+# Reject any command line parameters (pure .env approach)
+if [[ $# -gt 0 ]]; then
+    echo "❌ This deployment script uses pure .env configuration"
     echo ""
-    echo "The project name will be used as the exact Azure resource group name."
-    echo "No prefixes or suffixes will be added."
+    echo "❗ Command line parameters are no longer supported."
+    echo "   Please configure all settings in your .env file."
     echo ""
-    echo "Usage: $0 --project-name=YOUR_PROJECT_NAME [other options]"
+    echo "📝 Edit .env file and set:"
+    echo "   PROJECT_NAME=your-project-name"
+    echo "   ENVIRONMENT=staging"
+    echo "   # ... other settings"
     echo ""
-    echo "Examples:"
-    echo "  $0 --project-name=hotcalls-staging"
-    echo "  $0 --project-name=mycompany-prod"
-    echo "  $0 --project-name=test-environment"
+    echo "Then run: ./deploy.sh"
     echo ""
-    echo "Use --help for full usage information."
+    echo "Use --help for more information."
     exit 1
 fi
 
-echo "🎯 Deployment Configuration:"
-echo "   PROJECT_NAME: $PROJECT_NAME"
-echo "   Environment: $ENVIRONMENT" 
-echo "   Location: $LOCATION_SHORT"
-echo "   Update Only: $UPDATE_ONLY"
-echo "   Docker Cache: $(if [[ "$NO_CACHE" == "true" ]]; then echo "Disabled (fresh build)"; else echo "Enabled"; fi)"
-if [[ -n "$BRANCH" ]]; then
-    echo "   Branch: $BRANCH"
-fi
-if [[ -n "$DOMAIN" ]]; then
-    echo "   Domain: $DOMAIN"
-    echo "   HTTPS: Enabled"
-fi
-if [[ "$PURGE_DB" == "true" ]]; then
-    echo "   🚨 PURGE MODE: ENABLED - ALL DATA WILL BE DELETED! 🚨"
-fi
-echo ""
+
 
 # Colors for output
 RED='\033[0;31m'
@@ -235,14 +167,60 @@ check_prerequisites() {
     log_success "All prerequisites validated!"
 }
 
-# Load environment variables from .env
+# Enhanced environment loading with hierarchy and deployment configuration
 load_environment() {
-    log_info "Loading environment variables from .env..."
+    log_info "Loading deployment configuration..."
     
-    # Export all variables from .env file
-    set -a  # automatically export all variables
+    # Load base configuration
+    if [[ -f ".env" ]]; then
+        log_info "Loading base configuration from .env"
+        set -a
     source .env
-    set +a  # stop automatically exporting
+        set +a
+    else
+        log_error ".env file not found!"
+        exit 1
+    fi
+    
+    # Load environment-specific overrides
+    local env_file=".env.${ENVIRONMENT}"
+    if [[ -f "$env_file" ]]; then
+        log_info "Loading environment overrides from $env_file"
+        set -a
+        source "$env_file"
+        set +a
+    fi
+    
+    # Load local overrides (developer-specific)
+    if [[ -f ".env.local" ]]; then
+        log_info "Loading local overrides from .env.local"
+        set -a
+        source .env.local
+        set +a
+    fi
+    
+    # Set branch defaults if not specified
+    BRANCH_BACKEND=${BRANCH_BACKEND:-${BRANCH_FALLBACK:-main}}
+    BRANCH_FRONTEND=${BRANCH_FRONTEND:-${BRANCH_FALLBACK:-main}}
+    BRANCH_AGENT=${BRANCH_AGENT:-${BRANCH_FALLBACK:-main}}
+    
+    # Override command line flags from .env if not already set
+    UPDATE_ONLY=${UPDATE_ONLY:-false}
+    NO_CACHE=${NO_CACHE:-false}
+    PURGE_DB=${PURGE_DB:-false}
+    DRY_RUN=${DRY_RUN:-false}
+    VERBOSE_LOGGING=${VERBOSE_LOGGING:-false}
+    
+    # Validate and show configuration
+    validate_deployment_config
+    show_deployment_config_summary
+    
+    log_success "Deployment configuration loaded!"
+}
+
+# Configuration validation
+validate_deployment_config() {
+    log_info "Validating deployment configuration..."
     
     # Validate required environment variables
     required_vars=(
@@ -254,6 +232,9 @@ load_environment() {
         "EMAIL_HOST"
         "EMAIL_HOST_USER"
         "EMAIL_HOST_PASSWORD"
+        "LIVEKIT_URL"
+        "LIVEKIT_API_KEY"
+        "LIVEKIT_API_SECRET"
     )
     
     for var in "${required_vars[@]}"; do
@@ -263,61 +244,188 @@ load_environment() {
         fi
     done
     
-    # Set frontend repository if not set
-    if [[ -z "${FRONTEND_REPO_URL:-}" ]]; then
-        log_warning "FRONTEND_REPO_URL not set in .env. Frontend deployment will be skipped."
-        log_warning "Add FRONTEND_REPO_URL=git@github.com:your-org/frontend-repo.git to .env if you want frontend deployment"
-    fi
+    # Validate numeric values
+    local numeric_vars=(
+        "BACKEND_REPLICAS" "FRONTEND_REPLICAS" "OUTBOUNDAGENT_REPLICAS"
+        "CELERY_WORKER_REPLICAS" "DEPLOYMENT_TIMEOUT"
+    )
     
-    log_success "Environment variables loaded and validated!"
+    for var in "${numeric_vars[@]}"; do
+        if [[ -n "${!var:-}" ]] && ! [[ "${!var}" =~ ^[0-9]+$ ]]; then
+            log_error "Invalid numeric value for $var: ${!var}"
+            exit 1
+        fi
+    done
+    
+    # Validate boolean values
+    local boolean_vars=(
+        "UPDATE_ONLY" "NO_CACHE" "PURGE_DB" "VERBOSE_LOGGING" "DRY_RUN"
+        "BUILD_BACKEND" "BUILD_FRONTEND" "BUILD_OUTBOUNDAGENT"
+        "BACKEND_HPA_ENABLED" "OUTBOUNDAGENT_HPA_ENABLED"
+    )
+    
+    for var in "${boolean_vars[@]}"; do
+        if [[ -n "${!var:-}" ]] && ! [[ "${!var}" =~ ^(true|false)$ ]]; then
+            log_error "Invalid boolean value for $var: ${!var}. Must be 'true' or 'false'"
+            exit 1
+        fi
+    done
+    
+    log_success "Configuration validation passed!"
 }
 
-# Pull and checkout branch for both repositories
-checkout_branch() {
-    if [[ -z "$BRANCH" ]]; then
-        log_info "No branch specified, using current branches"
-        return 0
-    fi
-    
-    log_info "Checking out branch '$BRANCH' for backend and frontend..."
-    
-    # Checkout backend branch
-    log_info "Pulling and checking out backend branch: $BRANCH"
-    git fetch origin
-    if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-        git checkout "$BRANCH"
-    elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-        git checkout -b "$BRANCH" "origin/$BRANCH"
+# Configuration summary display
+show_deployment_config_summary() {
+    if [[ "${VERBOSE_LOGGING:-false}" == "true" ]]; then
+        log_info "🚀 DEPLOYMENT CONFIGURATION SUMMARY:"
+        echo ""
+        log_info "📦 SERVICE SCALING:"
+        log_info "  Backend: ${BACKEND_REPLICAS:-2} replicas (${BACKEND_CPU_REQUEST:-250m}/${BACKEND_CPU_LIMIT:-1000m} CPU, ${BACKEND_MEMORY_REQUEST:-512Mi}/${BACKEND_MEMORY_LIMIT:-2Gi} RAM)"
+        log_info "  Frontend: ${FRONTEND_REPLICAS:-1} replicas (${FRONTEND_CPU_REQUEST:-100m}/${FRONTEND_CPU_LIMIT:-500m} CPU, ${FRONTEND_MEMORY_REQUEST:-128Mi}/${FRONTEND_MEMORY_LIMIT:-512Mi} RAM)"
+        log_info "  Agent: ${OUTBOUNDAGENT_REPLICAS:-1} replicas (${OUTBOUNDAGENT_CPU_REQUEST:-500m}/${OUTBOUNDAGENT_CPU_LIMIT:-2000m} CPU, ${OUTBOUNDAGENT_MEMORY_REQUEST:-1Gi}/${OUTBOUNDAGENT_MEMORY_LIMIT:-4Gi} RAM)"
+        
+        log_info "🌿 BRANCH CONFIGURATION:"
+        log_info "  Backend: $BRANCH_BACKEND"
+        log_info "  Frontend: $BRANCH_FRONTEND"
+        log_info "  Agent: $BRANCH_AGENT"
+        
+        log_info "⚙️ DEPLOYMENT MODE:"
+        log_info "  Update Only: ${UPDATE_ONLY}"
+        log_info "  No Cache: ${NO_CACHE}"
+        log_info "  Purge DB: ${PURGE_DB}"
+        log_info "  Parallel Deployment: ${DEPLOYMENT_PARALLEL:-true}"
+        
+        if [[ "${DRY_RUN:-false}" == "true" ]]; then
+            log_warning "🔍 DRY RUN MODE - No changes will be applied!"
+        fi
+        
+        echo ""
     else
-        log_error "Branch '$BRANCH' not found in backend repository"
-        exit 1
-    fi
-    git pull origin "$BRANCH"
-    
-    # Checkout frontend branch if repository exists
-    if [[ -n "${FRONTEND_REPO_URL:-}" ]]; then
-        if [[ -d "frontend" ]]; then
-            log_info "Pulling and checking out frontend branch: $BRANCH"
-            cd frontend
-            git fetch origin
-            if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
-                git checkout "$BRANCH"
-            elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
-                git checkout -b "$BRANCH" "origin/$BRANCH"
-            else
-                log_warning "Branch '$BRANCH' not found in frontend repository, keeping current branch"
-                cd ..
-                return 0
-            fi
-            git pull origin "$BRANCH"
-            cd ..
-            log_success "Frontend checked out to branch: $BRANCH"
-        else
-            log_info "Frontend directory doesn't exist yet, will clone with branch $BRANCH"
+        log_info "Environment: $ENVIRONMENT | Backend: ${BACKEND_REPLICAS:-2} replicas | Agent: ${OUTBOUNDAGENT_REPLICAS:-1} replicas"
+        if [[ "${DRY_RUN:-false}" == "true" ]]; then
+            log_warning "🔍 DRY RUN MODE"
         fi
     fi
+}
+
+# Enhanced multi-repository branch management
+checkout_and_pull_repositories() {
+    log_info "Managing repository branches from .env configuration..."
     
-    log_success "Branch checkout completed!"
+    # 1. Handle BACKEND repository (current directory)
+    manage_backend_repository "$BRANCH_BACKEND"
+    
+    # 2. Handle FRONTEND repository
+    if [[ -n "${FRONTEND_REPO_URL:-}" ]]; then
+        manage_frontend_repository "$BRANCH_FRONTEND"
+    else
+        log_info "FRONTEND_REPO_URL not set, skipping frontend repository"
+    fi
+    
+    # 3. Handle OUTBOUND AGENT repository
+    if [[ -n "${OUTBOUNDAGENT_REPO_URL:-}" ]]; then
+        manage_agent_repository "$BRANCH_AGENT"
+    else
+        log_info "OUTBOUNDAGENT_REPO_URL not set, skipping agent repository"
+    fi
+    
+    log_success "All repositories updated successfully!"
+}
+
+# Backend repository management (current directory)
+manage_backend_repository() {
+    local target_branch="$1"
+    
+    log_info "📦 Managing Backend Repository (branch: $target_branch)..."
+    
+    # Fetch latest from origin
+    git fetch origin
+    
+    # Check if branch exists locally
+    if git show-ref --verify --quiet refs/heads/$target_branch; then
+        log_info "Local branch '$target_branch' exists, checking out and pulling..."
+        git checkout "$target_branch"
+        git pull origin "$target_branch" || log_warning "Failed to pull $target_branch from origin"
+    elif git show-ref --verify --quiet refs/remotes/origin/$target_branch; then
+        log_info "Remote branch 'origin/$target_branch' exists, creating local tracking branch..."
+        git checkout -b "$target_branch" "origin/$target_branch"
+    else
+        log_warning "Branch '$target_branch' not found, staying on current branch"
+        local current_branch=$(git branch --show-current)
+        git pull origin "$current_branch" || log_warning "Failed to pull current branch"
+    fi
+    
+    log_success "Backend repository updated to branch: $(git branch --show-current)"
+}
+
+# Frontend repository management
+manage_frontend_repository() {
+    local target_branch="$1"
+    
+    log_info "🎨 Managing Frontend Repository (branch: $target_branch)..."
+    
+    # Clone or update frontend repository
+    if [[ ! -d "frontend" ]]; then
+        log_info "Cloning frontend repository: $FRONTEND_REPO_URL"
+        git clone "$FRONTEND_REPO_URL" frontend
+        cd frontend
+    else
+        log_info "Frontend repository exists, updating..."
+            cd frontend
+            git fetch origin
+    fi
+    
+    # Branch management
+    if git show-ref --verify --quiet refs/heads/$target_branch; then
+        log_info "Local branch '$target_branch' exists, checking out and pulling..."
+        git checkout "$target_branch"
+        git pull origin "$target_branch" || log_warning "Failed to pull $target_branch from origin"
+    elif git show-ref --verify --quiet refs/remotes/origin/$target_branch; then
+        log_info "Remote branch 'origin/$target_branch' exists, creating local tracking branch..."
+        git checkout -b "$target_branch" "origin/$target_branch"
+    else
+        log_warning "Branch '$target_branch' not found, staying on current branch"
+        local current_branch=$(git branch --show-current)
+        git pull origin "$current_branch" || log_warning "Failed to pull current branch"
+    fi
+    
+    cd ..
+    log_success "Frontend repository updated to branch: $(cd frontend && git branch --show-current)"
+}
+
+# Outbound agent repository management
+manage_agent_repository() {
+    local target_branch="$1"
+    
+    log_info "🤖 Managing Outbound Agent Repository (branch: $target_branch)..."
+    
+    # Clone or update agent repository
+    if [[ ! -d "outboundagent" ]]; then
+        log_info "Cloning outbound agent repository: $OUTBOUNDAGENT_REPO_URL"
+        git clone "$OUTBOUNDAGENT_REPO_URL" outboundagent
+        cd outboundagent
+    else
+        log_info "Outbound agent repository exists, updating..."
+        cd outboundagent
+        git fetch origin
+    fi
+    
+    # Branch management
+    if git show-ref --verify --quiet refs/heads/$target_branch; then
+        log_info "Local branch '$target_branch' exists, checking out and pulling..."
+        git checkout "$target_branch"
+        git pull origin "$target_branch" || log_warning "Failed to pull $target_branch from origin"
+    elif git show-ref --verify --quiet refs/remotes/origin/$target_branch; then
+        log_info "Remote branch 'origin/$target_branch' exists, creating local tracking branch..."
+        git checkout -b "$target_branch" "origin/$target_branch"
+    else
+        log_warning "Branch '$target_branch' not found, staying on current branch"
+        local current_branch=$(git branch --show-current)
+        git pull origin "$current_branch" || log_warning "Failed to pull current branch"
+    fi
+    
+    cd ..
+    log_success "Outbound agent repository updated to branch: $(cd outboundagent && git branch --show-current)"
 }
 
 # Clone and build frontend if needed
@@ -534,6 +642,37 @@ deploy_infrastructure() {
     export TF_VAR_app_db_password="$DB_PASSWORD"
     export TF_VAR_app_secret_key="$SECRET_KEY"
     export TF_VAR_app_redis_password="$REDIS_PASSWORD"
+    
+    # Export variables for Kubernetes envsubst (not just Terraform)
+    export REDIS_PASSWORD
+    export SECRET_KEY
+    export DB_NAME
+    export DB_USER  
+    export DB_PASSWORD
+    export DB_HOST
+    export EMAIL_BACKEND
+    export EMAIL_HOST
+    export EMAIL_PORT
+    export EMAIL_USE_TLS
+    export EMAIL_USE_SSL
+    export EMAIL_HOST_USER
+    export EMAIL_HOST_PASSWORD
+    export DEFAULT_FROM_EMAIL
+    export SERVER_EMAIL
+    export BASE_URL
+    export LIVEKIT_URL
+    export LIVEKIT_API_KEY
+    export LIVEKIT_API_SECRET
+    export TRUNK_ID
+    export SIP_PROVIDER
+    export STRIPE_SECRET_KEY
+    export STRIPE_PUBLISHABLE_KEY
+    export STRIPE_WEBHOOK_SECRET
+    export META_APP_ID
+    export META_APP_SECRET
+    export META_REDIRECT_URI
+    export META_API_VERSION
+    
     export TF_VAR_app_email_host="$EMAIL_HOST"
     export TF_VAR_app_email_port="$EMAIL_PORT"
     export TF_VAR_app_email_use_tls="$EMAIL_USE_TLS"
@@ -808,7 +947,88 @@ build_and_push_images() {
         export HAS_FRONTEND=false
     fi
     
+    # Build outbound agent image if enabled and directory exists
+    if [[ "${BUILD_OUTBOUNDAGENT:-true}" == "true" ]] && [[ -d "outboundagent" ]]; then
+        log_info "Building outbound agent image for AMD64 architecture..."
+        
+        cd outboundagent
+        
+        # Create Dockerfile if it doesn't exist
+        if [[ ! -f "Dockerfile" ]]; then
+            log_info "Creating Dockerfile for outbound agent..."
+            create_agent_dockerfile
+        fi
+        
+        if [[ "$NO_CACHE" == "true" ]]; then
+            log_info "Building agent WITHOUT cache (--no-cache flag enabled)..."
+            docker buildx build --platform linux/amd64 \
+                --no-cache \
+                -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:${IMAGE_TAG}" . --push
+        else
+            # Optimize for new projects - skip cache lookup on first build
+            if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:cache" >/dev/null 2>&1; then
+                log_info "Using existing agent cache for faster build..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:cache" \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:${IMAGE_TAG}" . --push
+            else
+                log_info "First agent build - no cache available, building fresh..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-outboundagent:${IMAGE_TAG}" . --push
+            fi
+        fi
+        
+        cd ..
+        export HAS_OUTBOUNDAGENT=true
+        log_success "Outbound agent image built and pushed!"
+    else
+        log_info "Skipping outbound agent build (BUILD_OUTBOUNDAGENT=false or directory not found)"
+        export HAS_OUTBOUNDAGENT=false
+    fi
+    
     log_success "Docker images built and pushed!"
+}
+
+# Create Dockerfile for outbound agent if it doesn't exist
+create_agent_dockerfile() {
+    cat > Dockerfile << 'EOF'
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    portaudio19-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN groupadd -r agent && useradd -r -g agent agent
+RUN chown -R agent:agent /app && \
+    mkdir -p /tmp /app/tmp && \
+    chown -R agent:agent /tmp /app/tmp
+USER agent
+
+# Expose port for health checks
+EXPOSE 8080
+
+# Health check endpoint
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run the agent
+CMD ["python", "agent.py", "start"]
+EOF
 }
 
 # Setup environment variables for Kubernetes deployment  
@@ -864,6 +1084,88 @@ setup_kubernetes_environment() {
         export HEALTH_TIMEOUT="5"
         export HEALTH_FAILURE_THRESHOLD="3"
     fi
+    
+    # Export deployment configuration from .env
+    export PROJECT_PREFIX="${PROJECT_NAME}"
+    export NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+    
+    # Export replica configuration
+    export BACKEND_REPLICAS="${BACKEND_REPLICAS:-2}"
+    export FRONTEND_REPLICAS="${FRONTEND_REPLICAS:-1}"
+    export OUTBOUNDAGENT_REPLICAS="${OUTBOUNDAGENT_REPLICAS:-1}"
+    export CELERY_WORKER_REPLICAS="${CELERY_WORKER_REPLICAS:-2}"
+    export REDIS_REPLICAS="${REDIS_REPLICAS:-1}"
+    
+    # Export resource configuration
+    export BACKEND_CPU_REQUEST="${BACKEND_CPU_REQUEST:-250m}"
+    export BACKEND_CPU_LIMIT="${BACKEND_CPU_LIMIT:-1000m}"
+    export BACKEND_MEMORY_REQUEST="${BACKEND_MEMORY_REQUEST:-512Mi}"
+    export BACKEND_MEMORY_LIMIT="${BACKEND_MEMORY_LIMIT:-2Gi}"
+    
+    export FRONTEND_CPU_REQUEST="${FRONTEND_CPU_REQUEST:-100m}"
+    export FRONTEND_CPU_LIMIT="${FRONTEND_CPU_LIMIT:-500m}"
+    export FRONTEND_MEMORY_REQUEST="${FRONTEND_MEMORY_REQUEST:-128Mi}"
+    export FRONTEND_MEMORY_LIMIT="${FRONTEND_MEMORY_LIMIT:-512Mi}"
+    
+    export OUTBOUNDAGENT_CPU_REQUEST="${OUTBOUNDAGENT_CPU_REQUEST:-500m}"
+    export OUTBOUNDAGENT_CPU_LIMIT="${OUTBOUNDAGENT_CPU_LIMIT:-2000m}"
+    export OUTBOUNDAGENT_MEMORY_REQUEST="${OUTBOUNDAGENT_MEMORY_REQUEST:-1Gi}"
+    export OUTBOUNDAGENT_MEMORY_LIMIT="${OUTBOUNDAGENT_MEMORY_LIMIT:-4Gi}"
+    
+    export CELERY_CPU_REQUEST="${CELERY_CPU_REQUEST:-200m}"
+    export CELERY_CPU_LIMIT="${CELERY_CPU_LIMIT:-800m}"
+    export CELERY_MEMORY_REQUEST="${CELERY_MEMORY_REQUEST:-256Mi}"
+    export CELERY_MEMORY_LIMIT="${CELERY_MEMORY_LIMIT:-1Gi}"
+    
+    export REDIS_CPU_REQUEST="${REDIS_CPU_REQUEST:-100m}"
+    export REDIS_CPU_LIMIT="${REDIS_CPU_LIMIT:-500m}"
+    export REDIS_MEMORY_REQUEST="${REDIS_MEMORY_REQUEST:-256Mi}"
+    export REDIS_MEMORY_LIMIT="${REDIS_MEMORY_LIMIT:-1Gi}"
+    
+    # Export HPA configuration
+    export BACKEND_HPA_ENABLED="${BACKEND_HPA_ENABLED:-true}"
+    export BACKEND_HPA_MIN_REPLICAS="${BACKEND_HPA_MIN_REPLICAS:-2}"
+    export BACKEND_HPA_MAX_REPLICAS="${BACKEND_HPA_MAX_REPLICAS:-10}"
+    export BACKEND_HPA_CPU_THRESHOLD="${BACKEND_HPA_CPU_THRESHOLD:-70}"
+    export BACKEND_HPA_MEMORY_THRESHOLD="${BACKEND_HPA_MEMORY_THRESHOLD:-80}"
+    
+    export OUTBOUNDAGENT_HPA_ENABLED="${OUTBOUNDAGENT_HPA_ENABLED:-true}"
+    export OUTBOUNDAGENT_HPA_MIN_REPLICAS="${OUTBOUNDAGENT_HPA_MIN_REPLICAS:-1}"
+    export OUTBOUNDAGENT_HPA_MAX_REPLICAS="${OUTBOUNDAGENT_HPA_MAX_REPLICAS:-5}"
+    export OUTBOUNDAGENT_HPA_CPU_THRESHOLD="${OUTBOUNDAGENT_HPA_CPU_THRESHOLD:-60}"
+    export OUTBOUNDAGENT_HPA_MEMORY_THRESHOLD="${OUTBOUNDAGENT_HPA_MEMORY_THRESHOLD:-75}"
+    
+    export CELERY_HPA_ENABLED="${CELERY_HPA_ENABLED:-true}"
+    export CELERY_HPA_MIN_REPLICAS="${CELERY_HPA_MIN_REPLICAS:-1}"
+    export CELERY_HPA_MAX_REPLICAS="${CELERY_HPA_MAX_REPLICAS:-8}"
+    export CELERY_HPA_CPU_THRESHOLD="${CELERY_HPA_CPU_THRESHOLD:-75}"
+    
+    # Export health check configuration (use .env values or fallback to existing logic)
+    export BACKEND_LIVENESS_INITIAL_DELAY="${BACKEND_LIVENESS_INITIAL_DELAY:-$LIVENESS_INITIAL_DELAY}"
+    export BACKEND_LIVENESS_PERIOD="${BACKEND_LIVENESS_PERIOD:-$HEALTH_CHECK_PERIOD}"
+    export BACKEND_LIVENESS_TIMEOUT="${BACKEND_LIVENESS_TIMEOUT:-$HEALTH_TIMEOUT}"
+    export BACKEND_LIVENESS_FAILURE_THRESHOLD="${BACKEND_LIVENESS_FAILURE_THRESHOLD:-$HEALTH_FAILURE_THRESHOLD}"
+    
+    export BACKEND_READINESS_INITIAL_DELAY="${BACKEND_READINESS_INITIAL_DELAY:-$READINESS_INITIAL_DELAY}"
+    export BACKEND_READINESS_PERIOD="${BACKEND_READINESS_PERIOD:-$HEALTH_CHECK_PERIOD}"
+    export BACKEND_READINESS_TIMEOUT="${BACKEND_READINESS_TIMEOUT:-$HEALTH_TIMEOUT}"
+    export BACKEND_READINESS_FAILURE_THRESHOLD="${BACKEND_READINESS_FAILURE_THRESHOLD:-$HEALTH_FAILURE_THRESHOLD}"
+    
+    export OUTBOUNDAGENT_LIVENESS_INITIAL_DELAY="${OUTBOUNDAGENT_LIVENESS_INITIAL_DELAY:-$LIVENESS_INITIAL_DELAY}"
+    export OUTBOUNDAGENT_LIVENESS_PERIOD="${OUTBOUNDAGENT_LIVENESS_PERIOD:-$HEALTH_CHECK_PERIOD}"
+    export OUTBOUNDAGENT_READINESS_INITIAL_DELAY="${OUTBOUNDAGENT_READINESS_INITIAL_DELAY:-$READINESS_INITIAL_DELAY}"
+    export OUTBOUNDAGENT_READINESS_PERIOD="${OUTBOUNDAGENT_READINESS_PERIOD:-$HEALTH_CHECK_PERIOD}"
+    
+    # Base64 encode outbound agent secrets for Kubernetes
+    export LIVEKIT_URL_B64="$(echo -n "${LIVEKIT_URL}" | base64)"
+    export LIVEKIT_API_KEY_B64="$(echo -n "${LIVEKIT_API_KEY}" | base64)"
+    export LIVEKIT_API_SECRET_B64="$(echo -n "${LIVEKIT_API_SECRET}" | base64)"
+    export OPENAI_API_KEY_B64="$(echo -n "${OPENAI_API_KEY}" | base64)"
+    export DEEPGRAM_API_KEY_B64="$(echo -n "${DEEPGRAM_API_KEY}" | base64)"
+    export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
+    export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
+    export TRUNK_ID_B64="$(echo -n "${TRUNK_ID:-}" | base64)"
+    export ELEVEN_VOICE_ID_B64="$(echo -n "${ELEVEN_VOICE_ID:-}" | base64)"
     
     log_success "Kubernetes environment variables configured!"
 }
@@ -1124,6 +1426,15 @@ deploy_kubernetes() {
     if [[ "${HAS_FRONTEND:-false}" == "true" ]] && [[ -f "frontend-deployment.yaml" ]]; then
         envsubst < frontend-deployment.yaml | kubectl apply -f - &
         envsubst < frontend-service.yaml | kubectl apply -f - &
+    fi
+    
+    # Deploy outbound agent if available (parallel with services)
+    if [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ -f "outboundagent-deployment.yaml" ]]; then
+        log_info "Deploying outbound agent..."
+        envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
+        envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
+        envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
+        envsubst < outboundagent-service.yaml | kubectl apply -f - &
     fi
     
     wait  # Wait for services to be created
@@ -1560,19 +1871,275 @@ print(f'SSL Mode: {db_config.get(\"OPTIONS\", {}).get(\"sslmode\")}')
     kubectl logs "$BACKEND_POD" -n "$NAMESPACE" --tail=50 | grep -i -E "(database|postgres|db_host|localhost)" || true
 }
 
-# Show deployment status
+# Show comprehensive deployment status and diagnostics
 show_status() {
     NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
-    log_info "Deployment Status:"
+    
     echo
-    kubectl get all -n "$NAMESPACE"
+    echo "🔍 =============================================================================="
+    log_success "📊 COMPREHENSIVE DEPLOYMENT DIAGNOSTICS"
+    echo "🔍 =============================================================================="
     echo
-    log_info "Ingress Status:"
-    kubectl get ingress -n "$NAMESPACE"
+    
+    # 1. Pod Status Summary
+    echo "📦 POD STATUS SUMMARY:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl get pods -n "$NAMESPACE" -o wide
     echo
-    log_info "To check logs: kubectl logs -f deployment/${PROJECT_NAME}-backend -n $NAMESPACE"
-    log_info "To check ingress: kubectl get ingress -n $NAMESPACE"
-    log_info "To check nginx controller: kubectl get service -n ingress-nginx ingress-nginx-controller"
+    
+    # 2. Outbound Agent Specific Diagnostics
+    if kubectl get deployment "${PROJECT_NAME}-outboundagent" -n "$NAMESPACE" >/dev/null 2>&1; then
+        echo "🤖 OUTBOUND AGENT DIAGNOSTICS:"
+        echo "────────────────────────────────────────────────────────────────────────────"
+        
+        AGENT_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=outboundagent --no-headers -o custom-columns=":metadata.name" | head -1)
+        
+        if [[ -n "$AGENT_POD" ]]; then
+            echo "   🟢 Agent Pod: $AGENT_POD"
+            echo "   📊 Status: $(kubectl get pod "$AGENT_POD" -n "$NAMESPACE" --no-headers -o custom-columns=":status.phase")"
+            echo "   🔄 Restarts: $(kubectl get pod "$AGENT_POD" -n "$NAMESPACE" --no-headers -o custom-columns=":status.containerStatuses[0].restartCount")"
+            echo "   ⏰ Age: $(kubectl get pod "$AGENT_POD" -n "$NAMESPACE" --no-headers -o custom-columns=":metadata.creationTimestamp")"
+            echo "   📝 Recent Logs (last 10 lines):"
+            echo "      ┌─────────────────────────────────────────────────────────────────"
+            kubectl logs "$AGENT_POD" -n "$NAMESPACE" --tail=10 2>/dev/null | sed 's/^/      │ /'
+            echo "      └─────────────────────────────────────────────────────────────────"
+        else
+            echo "   ❌ No outbound agent pod found!"
+        fi
+        echo
+    fi
+    
+    # 3. Service Status
+    echo "🌐 SERVICE STATUS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl get services -n "$NAMESPACE" -o wide
+    echo
+    
+    # 4. Ingress Status  
+    echo "🔗 INGRESS STATUS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl get ingress -n "$NAMESPACE" -o wide
+    echo
+    
+    # 5. ConfigMap and Secrets Status
+    echo "⚙️ CONFIGURATION STATUS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    echo "   ConfigMaps:"
+    kubectl get configmaps -n "$NAMESPACE" --no-headers | sed 's/^/   📄 /'
+    echo "   Secrets:"
+    kubectl get secrets -n "$NAMESPACE" --no-headers | sed 's/^/   🔐 /'
+    echo
+    
+    # 6. HPA Status  
+    echo "📈 HORIZONTAL POD AUTOSCALER STATUS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl get hpa -n "$NAMESPACE" -o wide 2>/dev/null || echo "   ℹ️ No HPA configured"
+    echo
+    
+    # 7. Recent Events
+    echo "📢 RECENT EVENTS (last 10):"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl get events -n "$NAMESPACE" --sort-by='.metadata.creationTimestamp' --no-headers | tail -10 | sed 's/^/   🔔 /'
+    echo
+    
+    # 8. Detailed Component Health Checks
+    echo "🩺 DETAILED COMPONENT HEALTH CHECKS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    
+    # Redis Health Check
+    echo "   🔴 REDIS Health Check:"
+    REDIS_POD=$(kubectl get pods -n "$NAMESPACE" -l app=redis --no-headers -o custom-columns=":metadata.name" | head -1)
+    if [[ -n "$REDIS_POD" ]]; then
+        if kubectl exec "$REDIS_POD" -n "$NAMESPACE" -- redis-cli ping 2>/dev/null | grep -q "PONG"; then
+            echo "      ✅ Redis: RESPONDING to ping"
+            # Check Redis memory usage
+            REDIS_MEMORY=$(kubectl exec "$REDIS_POD" -n "$NAMESPACE" -- redis-cli info memory 2>/dev/null | grep "used_memory_human" | cut -d: -f2 | tr -d '\r')
+            echo "      📊 Memory Usage: $REDIS_MEMORY"
+        else
+            echo "      ❌ Redis: NOT RESPONDING"
+        fi
+    else
+        echo "      ❌ Redis: POD NOT FOUND"
+    fi
+    echo
+    
+    # Backend Health Check
+    echo "   🖥️ BACKEND Health Check:"
+    BACKEND_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend --no-headers -o custom-columns=":metadata.name" | head -1)
+    if [[ -n "$BACKEND_POD" ]]; then
+        # Check if backend is ready
+        BACKEND_READY=$(kubectl get pod "$BACKEND_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+        if [[ "$BACKEND_READY" == "True" ]]; then
+            echo "      ✅ Backend Pod: READY"
+            
+            # Test health endpoint from inside the pod
+            if kubectl exec "$BACKEND_POD" -n "$NAMESPACE" -- curl -s -f http://localhost:8000/health/ >/dev/null 2>&1; then
+                echo "      ✅ Health endpoint: RESPONDING"
+            else
+                echo "      ❌ Health endpoint: NOT RESPONDING"
+            fi
+            
+            # Test readiness endpoint
+            if kubectl exec "$BACKEND_POD" -n "$NAMESPACE" -- curl -s -f http://localhost:8000/readiness/ >/dev/null 2>&1; then
+                echo "      ✅ Readiness endpoint: RESPONDING"
+            else
+                echo "      ⚠️ Readiness endpoint: NOT RESPONDING"
+            fi
+        else
+            echo "      ❌ Backend Pod: NOT READY"
+        fi
+    else
+        echo "      ❌ Backend: POD NOT FOUND"
+    fi
+    echo
+    
+    # Database Health Check
+    echo "   🗄️ DATABASE Health Check:"
+    if [[ -n "$BACKEND_POD" ]]; then
+        # Test database connection from backend pod
+        DB_TEST=$(kubectl exec "$BACKEND_POD" -n "$NAMESPACE" -- python manage.py shell -c "
+from django.db import connection
+try:
+    with connection.cursor() as cursor:
+        cursor.execute('SELECT 1')
+        result = cursor.fetchone()
+    print('DB_CONNECTION_OK' if result else 'DB_CONNECTION_FAILED')
+except Exception as e:
+    print(f'DB_CONNECTION_ERROR: {e}')
+" 2>/dev/null)
+        
+        if echo "$DB_TEST" | grep -q "DB_CONNECTION_OK"; then
+            echo "      ✅ Database: CONNECTION OK"
+            
+            # Check for pending migrations
+            PENDING_MIGRATIONS=$(kubectl exec "$BACKEND_POD" -n "$NAMESPACE" -- python manage.py showmigrations --plan 2>/dev/null | grep "\\[ \\]" | wc -l)
+            if [[ "$PENDING_MIGRATIONS" -eq 0 ]]; then
+                echo "      ✅ Migrations: UP TO DATE"
+            else
+                echo "      ⚠️ Migrations: $PENDING_MIGRATIONS PENDING"
+            fi
+        else
+            echo "      ❌ Database: CONNECTION FAILED"
+            echo "      🔍 Error: $DB_TEST"
+        fi
+    else
+        echo "      ❌ Cannot test DB: Backend pod not available"
+    fi
+    echo
+    
+    # Celery Workers Health Check
+    echo "   👷 CELERY WORKERS Health Check:"
+    CELERY_PODS=($(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=celery-worker --no-headers -o custom-columns=":metadata.name"))
+    
+    if [[ ${#CELERY_PODS[@]} -gt 0 ]]; then
+        echo "      📊 Found ${#CELERY_PODS[@]} Celery worker pod(s)"
+        
+        for pod in "${CELERY_PODS[@]}"; do
+            POD_READY=$(kubectl get pod "$pod" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+            if [[ "$POD_READY" == "True" ]]; then
+                echo "      ✅ Worker $pod: READY"
+                
+                # Check if celery is actually running
+                if kubectl exec "$pod" -n "$NAMESPACE" -- pgrep -f "celery worker" >/dev/null 2>&1; then
+                    echo "      ✅ Worker $pod: PROCESS RUNNING"
+                else
+                    echo "      ❌ Worker $pod: PROCESS NOT FOUND"
+                fi
+            else
+                echo "      ❌ Worker $pod: NOT READY"
+            fi
+        done
+        
+        # Check Celery status from one of the workers
+        FIRST_CELERY_POD="${CELERY_PODS[0]}"
+        echo "      🔍 Checking active workers via Celery inspect:"
+        CELERY_STATUS=$(kubectl exec "$FIRST_CELERY_POD" -n "$NAMESPACE" -- celery -A hotcalls inspect active 2>/dev/null | grep -E "(OK|Error)" | head -5)
+        if [[ -n "$CELERY_STATUS" ]]; then
+            echo "$CELERY_STATUS" | sed 's/^/         /'
+        else
+            echo "         ⚠️ Could not retrieve Celery status"
+        fi
+    else
+        echo "      ❌ Celery Workers: NO PODS FOUND"
+    fi
+    echo
+    
+    # Celery Beat Health Check
+    echo "   ⏰ CELERY BEAT Health Check:"
+    BEAT_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=celery-beat --no-headers -o custom-columns=":metadata.name" | head -1)
+    if [[ -n "$BEAT_POD" ]]; then
+        BEAT_READY=$(kubectl get pod "$BEAT_POD" -n "$NAMESPACE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
+        if [[ "$BEAT_READY" == "True" ]]; then
+            echo "      ✅ Celery Beat: READY"
+            
+            if kubectl exec "$BEAT_POD" -n "$NAMESPACE" -- pgrep -f "celery beat" >/dev/null 2>&1; then
+                echo "      ✅ Beat Scheduler: PROCESS RUNNING"
+            else
+                echo "      ❌ Beat Scheduler: PROCESS NOT FOUND"
+            fi
+        else
+            echo "      ❌ Celery Beat: NOT READY"
+        fi
+    else
+        echo "      ❌ Celery Beat: POD NOT FOUND"
+    fi
+    echo
+    
+    # External Endpoints Health Check
+    echo "   🌐 EXTERNAL ENDPOINTS Health Check:"
+    EXTERNAL_IP=$(kubectl get ingress "${PROJECT_NAME}-ingress" -n "$NAMESPACE" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+    if [[ -n "$EXTERNAL_IP" ]]; then
+        echo "      🌍 External IP: $EXTERNAL_IP"
+        
+        # Test health endpoint
+        HEALTH_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null "http://$EXTERNAL_IP/health/" 2>/dev/null)
+        if [[ "$HEALTH_RESPONSE" == "200" ]]; then
+            echo "      ✅ Health endpoint: RESPONDING (HTTP $HEALTH_RESPONSE)"
+        else
+            echo "      ❌ Health endpoint: NOT RESPONDING (HTTP $HEALTH_RESPONSE)"
+        fi
+        
+        # Test API endpoint
+        API_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null "http://$EXTERNAL_IP/api/" 2>/dev/null)
+        if [[ "$API_RESPONSE" == "200" ]]; then
+            echo "      ✅ API endpoint: ACCESSIBLE (HTTP $API_RESPONSE)"
+        else
+            echo "      ⚠️ API endpoint: NOT RESPONDING (HTTP $API_RESPONSE)"
+        fi
+        
+        # Test frontend
+        FRONTEND_RESPONSE=$(curl -s -w "%{http_code}" -o /dev/null "http://$EXTERNAL_IP/" 2>/dev/null)
+        if [[ "$FRONTEND_RESPONSE" == "200" ]]; then
+            echo "      ✅ Frontend: ACCESSIBLE (HTTP $FRONTEND_RESPONSE)"
+        else
+            echo "      ⚠️ Frontend: NOT RESPONDING (HTTP $FRONTEND_RESPONSE)"
+        fi
+    else
+        echo "      ⏳ External IP: PENDING"
+    fi
+    echo
+    
+    # 9. Resource Usage Summary
+    echo "📊 RESOURCE USAGE SUMMARY:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    kubectl top pods -n "$NAMESPACE" 2>/dev/null | sed 's/^/   📈 /' || echo "   ℹ️ Metrics not available (metrics-server required)"
+    echo
+    
+    # 10. Quick Reference Commands
+    echo "🛠️ USEFUL DIAGNOSTIC COMMANDS:"
+    echo "────────────────────────────────────────────────────────────────────────────"
+    echo "   🔍 Watch pods:           kubectl get pods -n $NAMESPACE -w"
+    echo "   📝 Backend logs:         kubectl logs -f deployment/${PROJECT_NAME}-backend -n $NAMESPACE"
+    echo "   🤖 Agent logs:           kubectl logs -f deployment/${PROJECT_NAME}-outboundagent -n $NAMESPACE"
+    echo "   🌐 Check ingress:        kubectl describe ingress ${PROJECT_NAME}-ingress -n $NAMESPACE"
+    echo "   🔧 Debug pod:            kubectl exec -it <pod-name> -n $NAMESPACE -- /bin/bash"
+    echo "   📊 Resource usage:       kubectl top pods -n $NAMESPACE"
+    echo "   🔄 Restart deployment:   kubectl rollout restart deployment/${PROJECT_NAME}-backend -n $NAMESPACE"
+    echo
+    
+    echo "🔍 =============================================================================="
+    log_success "📊 DIAGNOSTICS COMPLETE"
+    echo "🔍 =============================================================================="
 }
 
 # Clean up Docker disk space after successful deployment
@@ -1624,17 +2191,30 @@ main() {
     
     log_info "Starting HotCalls deployment..."
     
-    # Debug: Verify variables are set correctly
-    log_info "DEBUG: Initial variables:"
-    log_info "  PROJECT_NAME='$PROJECT_NAME'"
-    log_info "  ENVIRONMENT='$ENVIRONMENT'"
-    log_info "  LOCATION_SHORT='$LOCATION_SHORT'"
-    
     check_prerequisites
     load_environment
     
-    # Handle branch checkout first if specified
-    checkout_branch
+    # Display configuration after loading .env
+    echo "🎯 Deployment Configuration:"
+    echo "   PROJECT_NAME: $PROJECT_NAME"
+    echo "   Environment: $ENVIRONMENT" 
+    echo "   Location: $LOCATION_SHORT"
+    echo "   Update Only: $UPDATE_ONLY"
+    echo "   Docker Cache: $(if [[ "$NO_CACHE" == "true" ]]; then echo "Disabled (fresh build)"; else echo "Enabled"; fi)"
+    echo "   Backend Branch: $BRANCH_BACKEND"
+    echo "   Frontend Branch: $BRANCH_FRONTEND"
+    echo "   Agent Branch: $BRANCH_AGENT"
+    if [[ -n "${DOMAIN:-}" ]]; then
+        echo "   Domain: $DOMAIN"
+        echo "   HTTPS: Enabled"
+    fi
+    if [[ "$PURGE_DB" == "true" ]]; then
+        echo "   🚨 PURGE MODE: ENABLED - ALL DATA WILL BE DELETED! 🚨"
+    fi
+    echo ""
+    
+    # Handle repository checkout and branch management
+    checkout_and_pull_repositories
     
     if [[ "$UPDATE_ONLY" == "true" ]]; then
         log_info "Update-only mode: Skipping infrastructure deployment"

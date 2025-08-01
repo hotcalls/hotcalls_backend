@@ -91,9 +91,9 @@ LOGGING = {
 HEALTH_CHECK = {}
 
 # Test-specific apps
-INSTALLED_APPS += [
-    'django_extensions',
-]
+# INSTALLED_APPS += [
+#     'django_extensions',  # Not needed for tests
+# ]
 
 # REST Framework settings for tests
 REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES'] = [
