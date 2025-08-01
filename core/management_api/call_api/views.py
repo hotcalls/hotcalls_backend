@@ -4,9 +4,8 @@ from rest_framework.response import Response
 from django.db.models import Sum, Avg, Count, Q
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
-from django.db import transaction
 from django.utils import timezone
-import json
+import asyncio
 import os
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.exceptions import PermissionDenied
@@ -16,7 +15,7 @@ from core.models import CallLog, Lead, Agent, CallTask, CallStatus
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer,
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer, OutboundCallSerializer, TestCallSerializer,
+    CallLogAppointmentStatsSerializer, TestCallSerializer,
     CallTaskSerializer, CallTaskTriggerSerializer
 )
 from .filters import CallLogFilter, CallTaskFilter
@@ -608,279 +607,6 @@ class CallLogViewSet(viewsets.ModelViewSet):
         return agent_config
 
     @extend_schema(
-        summary="📞 Make outbound call",
-        description="""
-        Initiate an outbound call using LiveKit with specified agent.
-        
-        **⚡ SYNCHRONOUS ENDPOINT - NOT ASYNC!**
-        
-        **🚀 NEW: Dynamic Agent Configuration & Lead Personalization!**
-        
-        You can now override agent settings per call and provide custom lead data
-        with placeholders for highly personalized conversations.
-        
-        **🔐 Permission Requirements**:
-        - **✅ All Authenticated Users**: Can make calls with their agents
-        - **✅ Staff/Superuser**: Can use any agent
-        
-        **📋 Required Fields**:
-        - `phone`: Phone number to call (must start with + and country code)
-        - `agent_id`: Agent UUID to make the call
-        
-        **🎯 Optional Fields**:
-        - `lead_id`: Existing lead UUID (loads lead data from database)
-        - `agent_config`: Override any agent settings for this specific call
-        - `lead_data`: Provide lead information including custom fields
-        - `custom_greeting`: Custom greeting template with {placeholders}
-        
-        **📞 Call Process**:
-        1. Validates agent belongs to user's workspace
-        2. Merges agent configuration with any overrides
-        3. Prepares lead data (from DB and/or request)
-        4. Processes greeting templates with placeholders
-        5. Dispatches agent to LiveKit room
-        6. Initiates SIP call to the phone number
-        7. Creates call log entry with used configuration
-        
-        **🎨 Template Placeholders**:
-        Use {field_name} in greetings to insert dynamic values:
-        - Basic fields: {name}, {surname}, {email}, {phone}
-        - Custom fields: Any field from lead_data.custom_fields
-        - Example: "Hello {name}, I see you're interested in {topic}"
-        
-        **💡 Use Cases**:
-        - A/B test different agent personalities
-        - Personalized greetings per lead
-        - Campaign-specific agent behavior
-        - Quick agent configuration testing
-        """,
-        request=OutboundCallSerializer,
-        responses={
-            200: OpenApiResponse(
-                description="✅ Call initiated successfully",
-                examples=[
-                    OpenApiExample(
-                        'Minimal Call',
-                        summary='Basic call with required fields only',
-                        value={
-                            'success': True,
-                            'room_name': 'outbound-call-abc123',
-                            'participant_id': 'PA_abc123',
-                            'dispatch_id': 'DP_xyz789',
-                            'sip_call_id': 'SIP_123456',
-                            'to_number': '+4915111857588',
-                            'agent_name': 'Sales Agent',
-                            'call_log_id': 'uuid-of-created-log',
-                            'used_greeting': 'Hello, how can I help you today?'
-                        }
-                    ),
-                    OpenApiExample(
-                        'Call with Agent Override',
-                        summary='Override specific agent settings',
-                        value={
-                            'success': True,
-                            'room_name': 'outbound-call-def456',
-                            'agent_name': 'Sarah Custom',
-                            'used_greeting': 'Hi there! This is my custom greeting.',
-                            'call_log_id': 'uuid-of-created-log'
-                        }
-                    ),
-                    OpenApiExample(
-                        'Personalized Call',
-                        summary='Call with custom greeting and lead data',
-                        value={
-                            'success': True,
-                            'room_name': 'outbound-call-ghi789',
-                            'agent_name': 'Sarah',
-                            'used_greeting': 'Hello Thomas Schmidt, I see you\'re interested in CRM Software with a budget of 50.000€.',
-                            'call_log_id': 'uuid-of-created-log'
-                        }
-                    )
-                ]
-            ),
-            400: OpenApiResponse(
-                description="❌ Validation error",
-                examples=[
-                    OpenApiExample(
-                        'Agent Not Found',
-                        value={'agent_id': ['Agent not found']}
-                    ),
-                    OpenApiExample(
-                        'Invalid Agent Config',
-                        value={'agent_config': {'invalid_field': ['This field is not allowed']}}
-                    ),
-                    OpenApiExample(
-                        'Invalid Phone',
-                        value={'phone': ['Phone number must start with + and country code']}
-                    )
-                ]
-            ),
-            401: OpenApiResponse(description="🚫 Authentication required"),
-            500: OpenApiResponse(
-                description="❌ Call initiation failed",
-                examples=[
-                    OpenApiExample(
-                        'LiveKit Error',
-                        value={
-                            'success': False,
-                            'error': 'Failed to connect to SIP trunk',
-                            'to_number': '+4915111857588',
-                            'agent_name': 'Sales Agent'
-                        }
-                    )
-                ]
-            )
-        },
-        tags=["Call Management"],
-        examples=[
-            OpenApiExample(
-                'Minimal Request',
-                summary='Only required fields',
-                value={
-                    'phone': '+491234567890',
-                    'agent_id': '123e4567-e89b-12d3-a456-426614174000'
-                }
-            ),
-            OpenApiExample(
-                'Override Agent Settings',
-                summary='Change specific agent behaviors',
-                value={
-                    'phone': '+491234567890',
-                    'agent_id': '123e4567-e89b-12d3-a456-426614174000',
-                    'agent_config': {
-                        'name': 'Sarah Custom',
-                        'greeting_outbound': 'Hi! This is a test greeting.',
-                        'character': 'Very friendly and enthusiastic'
-                    }
-                }
-            ),
-            OpenApiExample(
-                'Full Personalization',
-                summary='Complete example with all features',
-                value={
-                    'phone': '+491234567890',
-                    'agent_id': '123e4567-e89b-12d3-a456-426614174000',
-                    'lead_data': {
-                        'name': 'Thomas',
-                        'surname': 'Schmidt',
-                        'email': 'thomas@example.com',
-                        'custom_fields': {
-                            'topic': 'CRM Software',
-                            'budget': '50.000€',
-                            'company': 'TechCorp GmbH'
-                        }
-                    },
-                    'custom_greeting': 'Hello {name} {surname} from {company}, I\'m calling about your interest in {topic} with a budget of {budget}.'
-                }
-            )
-        ]
-    )
-    @action(detail=False, methods=['post'])
-    def make_outbound_call(self, request):
-        """
-        Make an outbound call - SYNCHRONOUS ENDPOINT (NOT ASYNC!)
-        
-        This endpoint triggers the LiveKit outbound call process synchronously.
-        It uses the make_outbound_call_sync function which internally handles async operations.
-        """
-        serializer = OutboundCallSerializer(data=request.data, context={'request': request})
-        
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Get validated data
-        validated_data = serializer.validated_data
-        
-        # Get SIP trunk ID from environment
-        SIP_TRUNK_ID = os.getenv('TRUNK_ID', 'ST_HXXPUzZhwSej')
-        
-        # Retrieve agent
-        try:
-            agent = Agent.objects.select_related('workspace', 'voice').get(
-                agent_id=validated_data['agent_id']
-            )
-        except Agent.DoesNotExist:
-            return Response(
-                {'error': 'Agent not found'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Prepare agent configuration dictionary
-        agent_config = self._merge_agent_config(agent, validated_data.get('agent_config'))
-        
-        # Prepare lead data
-        lead_data = self._prepare_lead_data(validated_data)
-        
-        # Process custom greeting if provided
-        if validated_data.get('custom_greeting'):
-            # Custom greeting takes precedence over everything
-            processed_greeting = self._process_greeting_template(
-                validated_data['custom_greeting'], 
-                lead_data
-            )
-            agent_config['greeting_outbound'] = processed_greeting
-        elif agent_config.get('greeting_outbound'):
-            # Process agent's greeting template with lead data
-            agent_config['greeting_outbound'] = self._process_greeting_template(
-                agent_config['greeting_outbound'],
-                lead_data
-            )
-        
-        # Import the SYNC function (NOT ASYNC!)
-        try:
-            from core.utils.livekit_calls import make_outbound_call_sync
-        except ImportError:
-            return Response(
-                {'error': 'LiveKit integration not available'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-        
-        # Make the outbound call using SYNC wrapper
-        # THIS IS NOT ASYNC - IT'S A SYNCHRONOUS CALL!
-        result = make_outbound_call_sync(
-            sip_trunk_id=SIP_TRUNK_ID,
-            agent_config=agent_config,
-            lead_data=lead_data,
-            from_number="",  # Not used anymore
-            campaign_id="",  # Not used anymore
-            call_reason=None  # Not used anymore
-        )
-        
-        # Create call log entry if successful
-        if result.get('success'):
-            # Try to find lead from DB if lead_id was provided
-            lead = None
-            if validated_data.get('lead_id'):
-                try:
-                    lead = Lead.objects.get(id=validated_data['lead_id'])
-                except Lead.DoesNotExist:
-                    pass
-                    
-            with transaction.atomic():
-                call_log = CallLog.objects.create(
-                    lead=lead,  # Can be None if no lead_id provided
-                    agent=agent,
-                    from_number="OUTBOUND_CALL",
-                    to_number=validated_data['phone'],
-                    direction='outbound',
-                    status='not_reached',  # Use valid status from CALL_STATUS_CHOICES
-                    duration=0,
-                    disconnection_reason=f"LiveKit room: {result.get('room_name', '')}"
-                )
-                
-                # Add call log ID to result
-                result['call_log_id'] = str(call_log.id)
-                
-                # Add used greeting to response for transparency
-                result['used_greeting'] = agent_config.get('greeting_outbound', '')
-        
-        # Return the result
-        if result.get('success'):
-            return Response(result, status=status.HTTP_200_OK)
-        else:
-            return Response(result, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    @extend_schema(
         summary="📅 Get appointment statistics",
         description="""
         Retrieve comprehensive appointment scheduling statistics.
@@ -1350,11 +1076,57 @@ class CallTaskViewSet(viewsets.ModelViewSet):
                 # ATOMICALLY update task status to IN_PROGRESS
                 call_task.status = CallStatus.IN_PROGRESS
                 call_task.save(update_fields=['status', 'updated_at'])
+                
+                # 📦 EXTRACT ALL DATA within transaction (explicit DB access - zero coupling)
+                agent = call_task.agent
+                workspace = call_task.workspace
+                lead = call_task.lead
+                
+                sip_trunk_id = getattr(workspace, 'sip_trunk_id', None) or os.getenv('TRUNK_ID')
+                agent_config = {
+                    'name': agent.name,
+                    'voice_external_id': agent.voice.voice_external_id if agent.voice else None,
+                    'language': agent.language,
+                    'prompt': agent.prompt,
+                    'greeting_outbound': agent.greeting_outbound,
+                    'greeting_inbound': agent.greeting_inbound,
+                    'character': agent.character,
+                    'config_id': agent.config_id,
+                    'workspace_name': workspace.workspace_name,
+                }
+                
+                lead_data = {
+                    'id': str(lead.id) if lead else str(call_task.id),
+                    'name': lead.name if lead else 'Test',
+                    'surname': lead.surname if lead else 'Call',
+                    'email': lead.email if lead else 'test@example.com',
+                    'phone': lead.phone if lead else call_task.phone,
+                    'company': lead.company if lead else 'Test Company',
+                    'address': lead.address if lead else '',
+                    'city': lead.city if lead else '',
+                    'state': lead.state if lead else '',
+                    'zip_code': lead.zip_code if lead else '',
+                    'country': lead.country if lead else '',
+                    'notes': lead.notes if lead else 'Test call',
+                    'metadata': lead.metadata if lead else {'test_call': True, 'call_task_id': str(call_task.id)},
+                }
+                
+                agent_phone = agent.phone_numbers.first().phonenumber if agent.phone_numbers.exists() else None
+                from_number = agent_phone or getattr(workspace, 'phone_number', None) or os.getenv('DEFAULT_FROM_NUMBER')
+                campaign_id = str(workspace.id)
+                call_reason = None if lead else "Test call - triggered manually"
             
-            # Initiate the actual call
+            # 🚀 DIRECT ASYNC CALL (zero coupling) - This happens OUTSIDE transaction
             try:
-                from core.utils.livekit_calls import initiate_call_from_task
-                call_result = initiate_call_from_task(call_task)
+                from core.utils.livekit_calls import _make_call_async
+                call_result = asyncio.run(_make_call_async(
+                    sip_trunk_id=sip_trunk_id,
+                    agent_config=agent_config,
+                    lead_data=lead_data,
+                    from_number=from_number,
+                    campaign_id=campaign_id,
+                    call_reason=call_reason
+                ))
                 
                 if call_result.get('success'):
                     # Keep status as IN_PROGRESS if call was successful

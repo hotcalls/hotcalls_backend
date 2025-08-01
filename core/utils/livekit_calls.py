@@ -1,4 +1,3 @@
-import asyncio
 import os
 import json
 import uuid
@@ -10,100 +9,7 @@ from livekit.protocol.sip import CreateSIPParticipantRequest
 # Load environment variables from .env file
 load_dotenv()
 
-def initiate_call_from_task(call_task):
-    """
-    Initiate an outbound call from a CallTask object
-    
-    Args:
-        call_task: CallTask model instance
-    
-    Returns:
-        dict: Call result with success status and details
-    """
-    try:
-        # Get agent configuration
-        agent = call_task.agent
-        workspace = call_task.workspace
-        agent_config = {
-            'name': agent.name,
-            'voice_external_id': agent.voice.voice_external_id if agent.voice else None,
-            'language': agent.language,
-            'prompt': agent.prompt,
-            'greeting_outbound': agent.greeting_outbound,
-            'greeting_inbound': agent.greeting_inbound,
-            'character': agent.character,
-            'config_id': agent.config_id,
-            'workspace_name': workspace.workspace_name,
-        }
-        
-        # Get lead data or create test data
-        if call_task.lead:
-            # Real call with lead
-            lead = call_task.lead
-            lead_data = {
-                'id': str(lead.id),
-                'name': lead.name,
-                'surname': lead.surname,
-                'email': lead.email,
-                'phone': lead.phone,
-                'company': lead.company,
-                'address': lead.address,
-                'city': lead.city,
-                'state': lead.state,
-                'zip_code': lead.zip_code,
-                'country': lead.country,
-                'notes': lead.notes,
-                'metadata': lead.metadata,
-            }
-            call_reason = None
-        else:
-            # Test call without lead
-            lead_data = {
-                'id': str(call_task.id),
-                'name': 'Test',
-                'surname': 'Call',
-                'email': 'test@example.com',
-                'phone': call_task.phone,
-                'company': 'Test Company',
-                'address': '',
-                'city': '',
-                'state': '',
-                'zip_code': '',
-                'country': '',
-                'notes': 'Test call',
-                'metadata': {'test_call': True, 'call_task_id': str(call_task.id)},
-            }
-            call_reason = "Test call - triggered manually"
-        
-        # Get workspace for SIP trunk and campaign info
-        sip_trunk_id = workspace.sip_trunk_id if hasattr(workspace, 'sip_trunk_id') else os.getenv('TRUNK_ID')
-        
-        # Get first phone number from agent's phone_numbers or use workspace/default
-        agent_phone = None
-        if agent.phone_numbers.exists():
-            agent_phone = agent.phone_numbers.first().phonenumber
-        
-        from_number = agent_phone or (workspace.phone_number if hasattr(workspace, 'phone_number') else os.getenv('DEFAULT_FROM_NUMBER'))
-        
-        # Use workspace id as campaign_id
-        campaign_id = str(workspace.id)
-        
-        # === INTEGRATED LIVEKIT CALL LOGIC ===
-        return asyncio.run(_make_call_async(
-            sip_trunk_id=sip_trunk_id,
-            agent_config=agent_config,
-            lead_data=lead_data,
-            from_number=from_number,
-            campaign_id=campaign_id,
-            call_reason=call_reason
-        ))
-        
-    except Exception as e:
-        return {
-            'success': False,
-            'error': str(e),
-            'call_task_id': str(call_task.id)
-        }
+# All wrapper functions removed - now only _make_call_async remains for pure call execution
 
 async def _make_call_async(
     sip_trunk_id: str, 
