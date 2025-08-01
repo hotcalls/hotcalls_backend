@@ -440,7 +440,6 @@ class Workspace(models.Model):
     # NEW: Track current subscription status (mirrors Stripe)
     SUBSCRIPTION_STATUS_CHOICES = [
         ('none', 'None'),
-        ('trial', 'Trial'),
         ('active', 'Active'),
         ('past_due', 'Past Due'),
         ('unpaid', 'Unpaid'),
