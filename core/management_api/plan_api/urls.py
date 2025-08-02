@@ -4,7 +4,7 @@ from . import views
 
 # Router für automatische URL-Generierung
 router = DefaultRouter()
-router.register(r'plans', views.PlanViewSet, basename='plan')
+router.register(r'', views.PlanViewSet, basename='plan')  # Empty string to avoid /plans/plans/
 router.register(r'features', views.FeatureViewSet, basename='feature')
 router.register(r'plan-features', views.PlanFeatureViewSet, basename='planfeature')
 
@@ -14,7 +14,7 @@ urlpatterns = [
     path('', include(router.urls)),
     
     # Zusätzliche custom endpoints könnten hier hinzugefügt werden
-    # path('plans/custom-endpoint/', views.custom_view, name='custom-endpoint'),
+    # path('custom-endpoint/', views.custom_view, name='custom-endpoint'),
 ]
 
 """
@@ -22,20 +22,36 @@ Automatisch generierte URLs durch Router:
 
 PLAN ENDPOINTS:
     GET    /api/plans/                     → Alle Pläne
+    POST   /api/plans/                     → Plan erstellen
     GET    /api/plans/{id}/                → Einzelner Plan (Detail)
+    PUT    /api/plans/{id}/                → Plan vollständig bearbeiten
+    PATCH  /api/plans/{id}/                → Plan teilweise bearbeiten
+    DELETE /api/plans/{id}/                → Plan löschen
     GET    /api/plans/summary/             → Kompakte Plan-Übersicht
     GET    /api/plans/comparison/          → Plan-Vergleichstabelle  
     GET    /api/plans/pricing/             → Nur Preisinformationen
     GET    /api/plans/{id}/features/       → Features eines Plans
 
 FEATURE ENDPOINTS:
-    GET    /api/features/                  → Alle Features
-    GET    /api/features/{id}/             → Einzelnes Feature
-    GET    /api/features/by_plan/          → Features gruppiert nach Plänen
+    GET    /api/plans/features/            → Alle Features
+    POST   /api/plans/features/            → Feature erstellen
+    GET    /api/plans/features/{id}/       → Einzelnes Feature
+    PUT    /api/plans/features/{id}/       → Feature bearbeiten
+    PATCH  /api/plans/features/{id}/       → Feature teilweise bearbeiten
+    DELETE /api/plans/features/{id}/       → Feature löschen
+    GET    /api/plans/features/by_plan/    → Features gruppiert nach Plänen
 
 PLAN-FEATURE ENDPOINTS:
-    GET    /api/plan-features/             → Alle Plan-Feature Zuordnungen
-    GET    /api/plan-features/{id}/        → Einzelne Zuordnung
+    GET    /api/plans/plan-features/       → Alle Plan-Feature Zuordnungen
+    POST   /api/plans/plan-features/       → Zuordnung erstellen
+    GET    /api/plans/plan-features/{id}/  → Einzelne Zuordnung
+    PUT    /api/plans/plan-features/{id}/  → Zuordnung bearbeiten
+    PATCH  /api/plans/plan-features/{id}/  → Zuordnung teilweise bearbeiten
+    DELETE /api/plans/plan-features/{id}/  → Zuordnung löschen
+
+PERMISSIONS:
+    - GET: Öffentlich zugänglich
+    - POST/PUT/PATCH/DELETE: Nur für Staff/Admin
 
 FILTER BEISPIELE:
     GET    /api/plans/?price_max=500                    → Pläne unter 500€

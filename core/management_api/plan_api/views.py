@@ -17,7 +17,7 @@ from .permissions import PlanAPIPermissions
 from .filters import PlanFilter
 
 
-class PlanViewSet(viewsets.ReadOnlyModelViewSet):
+class PlanViewSet(viewsets.ModelViewSet):
     """
     ViewSet für Subscription Pläne
     
@@ -26,9 +26,10 @@ class PlanViewSet(viewsets.ReadOnlyModelViewSet):
     - Einzelplan-Details
     - Plan-Vergleich
     - Öffentliche Plan-Info
+    - Plan erstellen/bearbeiten/löschen (Admin only)
     """
     queryset = Plan.objects.filter(is_active=True).prefetch_related('planfeature_set__feature')
-    permission_classes = [AllowAny]  # Pläne sind öffentlich einsehbar
+    permission_classes = [PlanAPIPermissions]  # Admin für Write, AllowAny für Read
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_class = PlanFilter
     search_fields = ['plan_name', 'description']
@@ -139,17 +140,14 @@ class PlanViewSet(viewsets.ReadOnlyModelViewSet):
         })
 
 
-class FeatureViewSet(viewsets.ReadOnlyModelViewSet):
+class FeatureViewSet(viewsets.ModelViewSet):
     """
     ViewSet für Features
-    
-    Stellt Endpunkte bereit für:
-    - Liste aller Features
-    - Feature-Details
+    Ermöglicht CRUD-Operationen für Features
     """
     queryset = Feature.objects.all()
     serializer_class = FeatureSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [PlanAPIPermissions]  # Admin für Write, AllowAny für Read
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['feature_name', 'description']
     ordering_fields = ['feature_name', 'created_at']
@@ -176,14 +174,14 @@ class FeatureViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(features_by_plan)
 
 
-class PlanFeatureViewSet(viewsets.ReadOnlyModelViewSet):
+class PlanFeatureViewSet(viewsets.ModelViewSet):
     """
     ViewSet für Plan-Feature Zuordnungen
+    Ermöglicht CRUD-Operationen für Plan-Feature-Relationships
     """
-    queryset = PlanFeature.objects.select_related('plan', 'feature').all()
+    queryset = PlanFeature.objects.all().select_related('plan', 'feature')
     serializer_class = PlanFeatureSerializer
-    permission_classes = [AllowAny]
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['plan', 'feature']
+    permission_classes = [PlanAPIPermissions]  # Admin für Write, AllowAny für Read
+    filter_backends = [filters.OrderingFilter]
     ordering_fields = ['plan__plan_name', 'feature__feature_name', 'limit']
-    ordering = ['plan__price_monthly', 'feature__feature_name'] 
+    ordering = ['plan__plan_name', 'feature__feature_name'] 
