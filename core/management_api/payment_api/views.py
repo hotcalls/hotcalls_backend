@@ -278,8 +278,7 @@ def create_customer_portal_session(request):
         session = stripe.billing_portal.Session.create(**session_data)
         
         return Response({
-            'url': session.url,
-            'expires_at': session.expires_at
+            'url': session.url
         })
         
     except Workspace.DoesNotExist:
