@@ -377,7 +377,6 @@ Authorization: Token your-auth-token-here
     'TAGS': [
         {'name': 'Authentication', 'description': '🔐 Token-based authentication with mandatory email verification'},
         {'name': 'User Management', 'description': '👤 User accounts and blacklist management - Requires token auth'},
-        {'name': 'Subscription Management', 'description': '📋 Plans, features, and subscription management'},
         {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management'},
         {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management'},
         {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations'},

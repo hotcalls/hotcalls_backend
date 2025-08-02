@@ -33,6 +33,9 @@ class Command(BaseCommand):
         # Create plans with features
         self._create_plans(features)
         
+        # Clean up old cosmetic features that are now in JSON field
+        self._cleanup_old_cosmetic_features()
+        
         # Create endpoint mappings for quota enforcement
         self._create_endpoint_mappings(features)
         
@@ -231,6 +234,41 @@ class Command(BaseCommand):
         self.stdout.write(f'    {status}: {feature.feature_name} (limit: {limit_display})')
         
         return plan_feature 
+
+    def _cleanup_old_cosmetic_features(self):
+        """Remove old cosmetic features that are now stored in Plan.cosmetic_features JSON field"""
+        from core.models import Feature, PlanFeature
+        
+        self.stdout.write('🧹 Cleaning up old cosmetic features...')
+        
+        # List of cosmetic features that should be removed from Feature table
+        cosmetic_feature_names = [
+            'whitelabel_solution',
+            'crm_integrations', 
+            'priority_support',
+            'custom_voice_cloning',
+            'advanced_analytics'
+        ]
+        
+        total_deleted = 0
+        
+        for feature_name in cosmetic_feature_names:
+            try:
+                feature = Feature.objects.get(feature_name=feature_name)
+                
+                # Delete all PlanFeature mappings first (to avoid foreign key constraints)
+                plan_features_deleted = PlanFeature.objects.filter(feature=feature).delete()[0]
+                
+                # Delete the feature itself
+                feature.delete()
+                
+                total_deleted += 1
+                self.stdout.write(f'  🗑️ Deleted: {feature_name} (and {plan_features_deleted} plan mappings)')
+                
+            except Feature.DoesNotExist:
+                self.stdout.write(f'  ✔️ Already removed: {feature_name}')
+        
+        self.stdout.write(f'🎯 Cleaned up {total_deleted} old cosmetic features')
 
     def _create_endpoint_mappings(self, features):
         """Create EndpointFeature mappings for quota enforcement"""
