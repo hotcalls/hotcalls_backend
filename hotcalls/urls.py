@@ -100,7 +100,7 @@ urlpatterns = [
     path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
     
     # Meta Webhooks (for Meta to call)
-    path('api/integrations/meta/', include('core.management_api.meta_api.webhook_urls')),
+    path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
 ]
 
 # Serve media files in development with CORS support

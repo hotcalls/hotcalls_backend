@@ -1194,6 +1194,11 @@ setup_kubernetes_environment() {
     export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
     export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
     
+    # LiveKit Agent Configuration - Base64 encoded (CRITICAL FIX)
+    export NUMBER_OF_LIVEKIT_AGENTS_B64="$(echo -n "${NUMBER_OF_LIVEKIT_AGENTS:-1}" | base64)"
+    export CONCURRENCY_PER_LIVEKIT_AGENT_B64="$(echo -n "${CONCURRENCY_PER_LIVEKIT_AGENT:-100}" | base64)"
+    export LIVEKIT_AGENT_NAME_B64="$(echo -n "${LIVEKIT_AGENT_NAME:-hotcalls_agent}" | base64)"
+    
     # Agent Configuration - Base64 encoded
     export AGENT_NAME_B64="$(echo -n "${AGENT_NAME:-hotcalls_agent}" | base64)"
     export NAME_B64="$(echo -n "${NAME:-hotcalls_agent}" | base64)"
