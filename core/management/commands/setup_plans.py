@@ -33,6 +33,9 @@ class Command(BaseCommand):
         # Create plans with features
         self._create_plans(features)
         
+        # Assign Enterprise plan to existing superusers
+        self._assign_enterprise_to_superusers()
+        
         self.stdout.write(
             self.style.SUCCESS('🎉 Successfully setup all plans and features!')
         )
@@ -41,54 +44,81 @@ class Command(BaseCommand):
         """Create all required features"""
         self.stdout.write('📋 Creating features...')
         
+        # NOTE: Added `unit` to align with new quota/feature system
         feature_definitions = [
             {
                 'name': 'call_minutes',
-                'description': 'Included call minutes per month'
+                'description': 'Included call minutes per month',
+                'unit': 'minute',
             },
             {
                 'name': 'overage_rate_cents',
-                'description': 'Cost per minute after included minutes are used (in cents)'
+                'description': 'Cost per minute after included minutes are used (in cents)',
+                'unit': 'general_unit',
             },
             {
                 'name': 'max_users',
-                'description': 'Maximum number of users allowed in workspace'
+                'description': 'Maximum number of users allowed in workspace',
+                'unit': 'general_unit',
             },
             {
                 'name': 'max_agents',
-                'description': 'Maximum number of agents allowed per workspace'
+                'description': 'Maximum number of agents allowed per workspace',
+                'unit': 'general_unit',
             },
             {
                 'name': 'whitelabel_solution',
-                'description': 'White-label branding and customization'
+                'description': 'White-label branding and customization',
+                'unit': 'access',
             },
             {
                 'name': 'crm_integrations',
-                'description': 'CRM system integrations'
+                'description': 'CRM system integrations',
+                'unit': 'access',
             },
             {
                 'name': 'priority_support',
-                'description': 'Priority customer support'
+                'description': 'Priority customer support',
+                'unit': 'access',
             },
             {
                 'name': 'custom_voice_cloning',
-                'description': 'Custom voice cloning capabilities'
+                'description': 'Custom voice cloning capabilities',
+                'unit': 'access',
             },
             {
                 'name': 'advanced_analytics',
-                'description': 'Advanced analytics and reporting'
-            }
+                'description': 'Advanced analytics and reporting',
+                'unit': 'access',
+            },
         ]
         
         features = {}
         for feature_def in feature_definitions:
             feature, created = Feature.objects.get_or_create(
                 feature_name=feature_def['name'],
-                defaults={'description': feature_def['description']}
+                defaults={
+                    'description': feature_def['description'],
+                    'unit': feature_def.get('unit', 'general_unit'),
+                },
             )
+
+            # Ensure existing record has correct description/unit
+            updated = False
+            if not created:
+                if feature.description != feature_def['description']:
+                    feature.description = feature_def['description']
+                    updated = True
+                desired_unit = feature_def.get('unit', 'general_unit')
+                if feature.unit != desired_unit:
+                    feature.unit = desired_unit
+                    updated = True
+                if updated:
+                    feature.save(update_fields=['description', 'unit'])
+            
             features[feature_def['name']] = feature
             
-            status = '✅ Created' if created else '🔄 Updated'
+            status = '✅ Created' if created else ('🔄 Updated' if updated else '✔️ Unchanged')
             self.stdout.write(f'  {status}: {feature.feature_name}')
         
         return features
@@ -195,3 +225,57 @@ class Command(BaseCommand):
         self.stdout.write(f'    {status}: {feature.feature_name} (limit: {limit_display})')
         
         return plan_feature 
+
+    def _assign_enterprise_to_superusers(self):
+        """Assign Enterprise plan to existing superusers without active subscriptions"""
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from core.models import Workspace, WorkspaceSubscription
+        
+        User = get_user_model()
+        self.stdout.write('👑 Checking superusers for Enterprise plan assignment...')
+        
+        # Get Enterprise plan
+        try:
+            enterprise_plan = Plan.objects.get(plan_name='Enterprise')
+        except Plan.DoesNotExist:
+            self.stdout.write(self.style.ERROR('❌ Enterprise plan not found! Create plans first.'))
+            return
+        
+        superusers = User.objects.filter(is_superuser=True)
+        assigned_count = 0
+        
+        for superuser in superusers:
+            # Check if superuser has any workspace with active subscription
+            has_active_subscription = False
+            for workspace in superuser.mapping_user_workspaces.all():
+                if WorkspaceSubscription.objects.filter(workspace=workspace, is_active=True).exists():
+                    has_active_subscription = True
+                    break
+            
+            if not has_active_subscription:
+                # Create workspace if superuser doesn't have one
+                if not superuser.mapping_user_workspaces.exists():
+                    workspace = Workspace.objects.create(
+                        workspace_name=f"{superuser.first_name} {superuser.last_name} Admin Workspace".strip() or f"Admin Workspace ({superuser.email})"
+                    )
+                    workspace.users.add(superuser)
+                    self.stdout.write(f'  📁 Created workspace for {superuser.email}')
+                else:
+                    workspace = superuser.mapping_user_workspaces.first()
+                
+                # Create Enterprise subscription
+                WorkspaceSubscription.objects.create(
+                    workspace=workspace,
+                    plan=enterprise_plan,
+                    started_at=timezone.now(),
+                    is_active=True
+                )
+                
+                assigned_count += 1
+                self.stdout.write(f'  ✅ Assigned Enterprise plan to superuser: {superuser.email}')
+        
+        if assigned_count == 0:
+            self.stdout.write('  ✔️ All superusers already have active subscriptions')
+        else:
+            self.stdout.write(self.style.SUCCESS(f'🎉 Assigned Enterprise plan to {assigned_count} superuser(s)')) 

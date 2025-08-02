@@ -12,12 +12,11 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         self.stdout.write('Creating Basic plan with quota features...')
         
-        # Create or get the Basic plan
+        # Plan model no longer has a "description" field – keep defaults minimal
         basic_plan, created = Plan.objects.get_or_create(
             plan_name='Basic',
             defaults={
-                'price_monthly': Decimal('29.99'),
-                'description': 'Basic plan with essential features for small teams'
+                'price_monthly': Decimal('29.99')
             }
         )
         

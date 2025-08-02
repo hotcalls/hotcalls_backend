@@ -52,7 +52,7 @@ def api_root(request):
             "calls": "/api/calls/",
             "calendars": "/api/calendars/",
             "voices": "/api/voices/",
-            "subscriptions": "/api/subscriptions/",
+            "plans": "/api/plans/",
             "payments": "/api/payments/",
             "meta": "/api/meta/",
             "livekit": "/api/livekit/",
@@ -88,13 +88,13 @@ urlpatterns = [
     path('api/agents/', include(('core.management_api.agent_api.urls', 'agent_api'), namespace='agent_api')),
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
-    # path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
+    path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
 
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
     # Subscription management is handled by payment_api above
     
     # Meta Integration Management API
-    # path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
+    path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
     
     # LiveKit Token Management API (Superuser only)
     path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
