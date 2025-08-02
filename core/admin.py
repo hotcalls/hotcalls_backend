@@ -344,7 +344,7 @@ class CalendarAdmin(admin.ModelAdmin):
 
 @admin.register(CalendarConfiguration)
 class CalendarConfigurationAdmin(admin.ModelAdmin):
-    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'get_conflict_calendars_count')
     list_filter = ('calendar__provider', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
     search_fields = ('calendar__workspace__workspace_name', 'calendar__name')
     ordering = ('-created_at',)
@@ -359,6 +359,10 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
         }),
         ('Availability Window', {
             'fields': ('from_time', 'to_time', 'workdays')
+        }),
+        ('Conflict Checking', {
+            'fields': ('conflict_check_calendars',),
+            'description': 'List of calendar IDs to check for scheduling conflicts'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -377,6 +381,13 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
     def get_provider(self, obj):
         return obj.calendar.provider.title()
     get_provider.short_description = 'Provider'
+    
+    def get_conflict_calendars_count(self, obj):
+        """Show number of calendars configured for conflict checking"""
+        if obj.conflict_check_calendars:
+            return f"{len(obj.conflict_check_calendars)} calendars"
+        return "None"
+    get_conflict_calendars_count.short_description = 'Conflict Check'
 
 
 @admin.register(WorkspaceSubscription)

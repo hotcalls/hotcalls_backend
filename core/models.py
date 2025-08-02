@@ -1044,6 +1044,32 @@ class CalendarConfiguration(models.Model):
         related_name='configurations'
     )
     
+    # Configuration name and meeting details
+    name = models.CharField(
+        max_length=255, 
+        help_text="Name/title for this calendar configuration"
+    )
+    meeting_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('online', 'Online Meeting'),
+            ('in_person', 'In Person'),
+            ('phone', 'Phone Call'),
+        ],
+        default='online',
+        help_text="Type of meeting"
+    )
+    meeting_link = models.URLField(
+        blank=True,
+        null=True,
+        help_text="Meeting link for online meetings (optional)"
+    )
+    meeting_address = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Meeting address for in-person meetings (optional)"
+    )
+    
     # Scheduling settings
     duration = models.IntegerField(help_text="Duration of appointments in minutes")
     prep_time = models.IntegerField(help_text="Preparation time in minutes before appointments")
@@ -1056,6 +1082,12 @@ class CalendarConfiguration(models.Model):
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
+    )
+    
+    # Conflict checking settings
+    conflict_check_calendars = models.JSONField(
+        default=list,
+        help_text="List of calendar IDs to check for scheduling conflicts"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

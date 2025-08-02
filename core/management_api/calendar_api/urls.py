@@ -2,11 +2,15 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import CalendarViewSet, CalendarConfigurationViewSet
 
-# Create router and register viewsets
-router = DefaultRouter()
-router.register(r'', CalendarViewSet, basename='calendar')
-router.register(r'configurations', CalendarConfigurationViewSet, basename='calendarconfig')
+# Create separate routers to avoid URL conflicts
+calendar_router = DefaultRouter()
+calendar_router.register(r'', CalendarViewSet, basename='calendar')
+
+config_router = DefaultRouter()
+config_router.register(r'', CalendarConfigurationViewSet, basename='calendar-configuration')
 
 urlpatterns = [
-    path('', include(router.urls)),
+    # Calendar configurations must come BEFORE the general calendar routes
+    path('configurations/', include(config_router.urls)),
+    path('', include(calendar_router.urls)),
 ] 

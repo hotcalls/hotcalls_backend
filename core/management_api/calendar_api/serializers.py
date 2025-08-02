@@ -109,12 +109,16 @@ class CalendarConfigurationSerializer(serializers.ModelSerializer):
     calendar_name = serializers.CharField(source='calendar.name', read_only=True)
     calendar_provider = serializers.CharField(source='calendar.provider', read_only=True)
     
+    # Support both field names for backward compatibility
+    conflict_calendars = serializers.JSONField(source='conflict_check_calendars', required=False)
+    
     class Meta:
         model = CalendarConfiguration
         fields = [
             'id', 'calendar', 'calendar_workspace_name', 'calendar_name', 
-            'calendar_provider', 'duration', 'prep_time', 'days_buffer', 
-            'from_time', 'to_time', 'workdays', 'created_at', 'updated_at'
+            'calendar_provider', 'name', 'meeting_type', 'meeting_link', 'meeting_address',
+            'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'workdays', 
+            'conflict_check_calendars', 'conflict_calendars', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -122,24 +126,44 @@ class CalendarConfigurationSerializer(serializers.ModelSerializer):
 class CalendarConfigurationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating calendar configurations"""
     
+    # Support both field names for backward compatibility
+    conflict_calendars = serializers.JSONField(source='conflict_check_calendars', required=False)
+    
     class Meta:
         model = CalendarConfiguration
         fields = [
-            'calendar', 'duration', 'prep_time', 'days_buffer', 
-            'from_time', 'to_time', 'workdays'
+            'calendar', 'name', 'meeting_type', 'meeting_link', 'meeting_address',
+            'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'workdays', 
+            'conflict_check_calendars', 'conflict_calendars'
         ]
     
-    def validate_calendar(self, value):
-        """Validate that calendar is active and belongs to user's workspace"""
-        user = self.context['request'].user
+    def validate_workdays(self, value):
+        """Validate workdays format"""
+        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Workdays must be a list")
         
-        if not value.active:
-            raise serializers.ValidationError("Cannot create configuration for inactive calendar")
-        
-        if not user.is_staff and value.workspace not in user.workspaces.all():
-            raise serializers.ValidationError("Calendar must belong to your workspace")
+        for day in value:
+            if day.lower() not in valid_days:
+                raise serializers.ValidationError(f"Invalid workday: {day}")
         
         return value
+    
+    def validate_conflict_check_calendars(self, value):
+        """Validate conflict_check_calendars format"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("conflict_check_calendars must be a list")
+        
+        # Optional: Validate that calendar IDs exist (can be added later if needed)
+        # for calendar_id in value:
+        #     if not Calendar.objects.filter(id=calendar_id).exists():
+        #         raise serializers.ValidationError(f"Calendar with ID {calendar_id} does not exist")
+        
+        return value
+    
+    def validate_conflict_calendars(self, value):
+        """Validate conflict_calendars format (alias for conflict_check_calendars)"""
+        return self.validate_conflict_check_calendars(value)
 
 
 class CalendarAvailabilityRequestSerializer(serializers.Serializer):
