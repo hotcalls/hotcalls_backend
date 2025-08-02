@@ -336,10 +336,13 @@ class CalendarViewSet(viewsets.ModelViewSet):
         """List Google Calendar connections for workspace"""
         user = request.user
         if user.is_staff:
-            connections = GoogleCalendarConnection.objects.all()
+            connections = GoogleCalendarConnection.objects.filter(active=True)
         else:
             user_workspace = self._get_user_workspace(user)
-            connections = GoogleCalendarConnection.objects.filter(workspace=user_workspace)
+            connections = GoogleCalendarConnection.objects.filter(
+                workspace=user_workspace, 
+                active=True
+            )
         
         serializer = GoogleCalendarConnectionSerializer(connections, many=True)
         return Response(serializer.data)
