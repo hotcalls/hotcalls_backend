@@ -503,6 +503,7 @@ META_APP_ID = os.getenv('META_APP_ID', '')
 META_APP_SECRET = os.getenv('META_APP_SECRET', '')
 META_REDIRECT_URI = os.getenv('META_REDIRECT_URI', '')
 META_API_VERSION = os.getenv('META_API_VERSION', 'v18.0')
+META_WEBHOOK_VERIFY_TOKEN = os.getenv('META_WEBHOOK_VERIFY_TOKEN', '')
 
 # LiveKit Configuration
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', '')

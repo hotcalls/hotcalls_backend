@@ -202,13 +202,17 @@ class MetaIntegrationService:
             
             # Set up webhook subscription
             callback_url = f"{settings.SITE_URL}/api/integrations/meta/lead_in/"
-            try:
-                self.setup_webhook_subscription(
-                    page_id, page_access_token, callback_url, verification_token
-                )
-            except Exception as e:
-                logger.warning(f"Failed to set up webhook: {str(e)}")
-                # Don't fail the integration creation if webhook setup fails
+            webhook_verify_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN', '')
+            if not webhook_verify_token:
+                logger.warning("META_WEBHOOK_VERIFY_TOKEN not configured, skipping webhook setup")
+            else:
+                try:
+                    self.setup_webhook_subscription(
+                        page_id, page_access_token, callback_url, webhook_verify_token
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to set up webhook: {str(e)}")
+                    # Don't fail the integration creation if webhook setup fails
             
             # Sync lead forms
             self.sync_lead_forms(integration)

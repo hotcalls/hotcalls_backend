@@ -6,9 +6,13 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 from django.db import transaction
 from django.utils import timezone
+from django.conf import settings
+from django.http import HttpResponse
 from datetime import datetime
 import logging
 import json
+import hmac
+import hashlib
 
 from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
 from .serializers import (
@@ -312,25 +316,55 @@ class MetaWebhookView(viewsets.ViewSet):
             logger.warning(f"Invalid hub mode: {hub_mode}")
             return Response('Invalid mode', status=status.HTTP_400_BAD_REQUEST)
         
-        # Validate verification token against stored tokens
-        try:
-            meta_integration = MetaIntegration.objects.get(
-                verification_token=hub_verify_token,
-                status='active'
-            )
-            logger.info(f"Webhook verification successful for integration {meta_integration.id}")
-            return Response(hub_challenge, content_type='text/plain')
-        except MetaIntegration.DoesNotExist:
-            logger.warning(f"Invalid verification token: {hub_verify_token}")
+        # Validate verification token against static configuration
+        expected_verify_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN', '')
+        if not expected_verify_token:
+            logger.error("META_WEBHOOK_VERIFY_TOKEN not configured")
+            return Response('Webhook verification not configured', status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        if hub_verify_token == expected_verify_token:
+            logger.info("Meta webhook verification successful")
+            return HttpResponse(hub_challenge, content_type='text/plain')
+        else:
+            logger.warning(f"Invalid verification token received: {hub_verify_token}")
             return Response('Invalid verification token', status=status.HTTP_403_FORBIDDEN)
+    
+    def _verify_webhook_signature(self, payload: bytes, signature: str) -> bool:
+        """Verify Meta webhook signature using app secret"""
+        try:
+            app_secret = getattr(settings, 'META_APP_SECRET', '')
+            if not app_secret:
+                logger.error("META_APP_SECRET not configured")
+                return False
+            
+            # Calculate expected signature
+            expected_signature = hmac.new(
+                app_secret.encode('utf-8'),
+                payload,
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Meta sends signature in format: sha256=<hash>
+            expected_signature_formatted = f"sha256={expected_signature}"
+            
+            # Use constant-time comparison to prevent timing attacks
+            return hmac.compare_digest(expected_signature_formatted, signature)
+        except Exception as e:
+            logger.error(f"Error verifying webhook signature: {str(e)}")
+            return False
     
     def _handle_webhook_data(self, request):
         """Process incoming lead webhook data"""
         try:
-            # TODO: Verify webhook signature
-            # signature = request.META.get('HTTP_X_HUB_SIGNATURE_256')
-            # if not self._verify_webhook_signature(request.body, signature):
-            #     return Response('Invalid signature', status=status.HTTP_401_UNAUTHORIZED)
+            # Verify webhook signature for security
+            signature = request.META.get('HTTP_X_HUB_SIGNATURE_256')
+            if not signature:
+                logger.warning("Missing X-Hub-Signature-256 header in webhook request")
+                return Response('Missing signature', status=status.HTTP_401_UNAUTHORIZED)
+            
+            if not self._verify_webhook_signature(request.body, signature):
+                logger.warning("Invalid webhook signature")
+                return Response('Invalid signature', status=status.HTTP_401_UNAUTHORIZED)
             
             serializer = MetaLeadWebhookSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)

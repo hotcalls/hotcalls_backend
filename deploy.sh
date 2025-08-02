@@ -672,6 +672,7 @@ deploy_infrastructure() {
     export META_APP_SECRET
     export META_REDIRECT_URI
     export META_API_VERSION
+    export META_WEBHOOK_VERIFY_TOKEN
     
     # LiveKit Agent Configuration
     export LIVEKIT_AGENT_NAME
