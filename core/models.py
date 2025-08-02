@@ -121,7 +121,50 @@ class CustomUserManager(BaseUserManager):
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
         
-        return self.create_user(email, password, **extra_fields)
+        user = self.create_user(email, password, **extra_fields)
+        
+        # Auto-create workspace and assign Enterprise plan for superuser
+        self._setup_superuser_workspace_and_plan(user)
+        
+        return user
+    
+    def _setup_superuser_workspace_and_plan(self, user):
+        """Setup workspace and Enterprise plan for superuser"""
+        from django.utils import timezone
+        
+        try:
+            # Create workspace for superuser
+            workspace = Workspace.objects.create(
+                workspace_name=f"{user.first_name} {user.last_name} Admin Workspace".strip() or f"Admin Workspace ({user.email})"
+            )
+            workspace.users.add(user)
+            
+            # Get or create Enterprise plan
+            enterprise_plan, created = Plan.objects.get_or_create(
+                plan_name='Enterprise',
+                defaults={
+                    'price_monthly': None,  # Custom pricing
+                    'is_active': True
+                }
+            )
+            
+            # Create active subscription for the workspace
+            WorkspaceSubscription.objects.create(
+                workspace=workspace,
+                plan=enterprise_plan,
+                started_at=timezone.now(),
+                is_active=True
+            )
+            
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Superuser {user.email} automatically assigned Enterprise plan in workspace '{workspace.workspace_name}'")
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to setup workspace/plan for superuser {user.email}: {str(e)}")
+            # Don't raise exception to avoid breaking superuser creation
 
 
 class User(AbstractBaseUser, PermissionsMixin):

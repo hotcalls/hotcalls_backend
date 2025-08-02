@@ -210,6 +210,39 @@ class GoogleOAuthService:
     """Service for Google OAuth operations"""
     
     @staticmethod
+    def get_authorization_url(state: str = None) -> str:
+        """Generate Google OAuth authorization URL"""
+        from google_auth_oauthlib.flow import Flow
+        
+        try:
+            flow = Flow.from_client_config(
+                client_config={
+                    "web": {
+                        "client_id": settings.GOOGLE_CLIENT_ID,
+                        "client_secret": settings.GOOGLE_CLIENT_SECRET,
+                        "redirect_uris": [settings.GOOGLE_REDIRECT_URI],
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token"
+                    }
+                },
+                scopes=settings.GOOGLE_SCOPES
+            )
+            flow.redirect_uri = settings.GOOGLE_REDIRECT_URI
+            
+            authorization_url, _ = flow.authorization_url(
+                access_type='offline',
+                prompt='consent',
+                state=state,
+                include_granted_scopes='true'
+            )
+            
+            return authorization_url
+            
+        except Exception as e:
+            logger.error(f"Failed to generate authorization URL: {str(e)}")
+            raise
+    
+    @staticmethod
     def exchange_code_for_tokens(code: str) -> Credentials:
         """Exchange authorization code for access and refresh tokens"""
         try:

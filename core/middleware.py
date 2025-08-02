@@ -37,6 +37,10 @@ class PlanQuotaMiddleware(MiddlewareMixin):
         if not request.user.is_authenticated:
             return None
 
+        # Skip quota enforcement for superusers (they have unlimited access)
+        if request.user.is_superuser:
+            return None
+
         # Get route information
         if not hasattr(request, 'resolver_match') or not request.resolver_match:
             # No route match, let request continue

@@ -114,6 +114,75 @@ class CalendarViewSet(viewsets.ModelViewSet):
     # 🎯 GOOGLE OAUTH ENDPOINTS
     
     @extend_schema(
+        summary="🔗 Get Google OAuth Authorization URL",
+        description="""
+        **Generate Google OAuth authorization URL to start OAuth flow**
+        
+        This endpoint generates the URL where users should be redirected to authorize Google Calendar access.
+        
+        **📋 Process Flow:**
+        1. Frontend calls this endpoint
+        2. Backend generates Google OAuth URL with required parameters
+        3. Frontend redirects user to the returned URL
+        4. User authorizes on Google
+        5. Google redirects back to your callback endpoint
+        
+        **🔐 Parameters:**
+        - `state`: Optional CSRF protection parameter
+        
+        **📊 Response:**
+        - `authorization_url`: The URL to redirect user to Google OAuth
+        - `state`: The state parameter used (for verification)
+        """,
+        responses={
+            200: OpenApiResponse(
+                response={'type': 'object', 'properties': {
+                    'authorization_url': {'type': 'string'},
+                    'state': {'type': 'string'}
+                }},
+                description="✅ Authorization URL generated successfully"
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            500: OpenApiResponse(description="💥 Server error generating URL")
+        },
+        tags=["Google Calendar"]
+    )
+    @action(detail=False, methods=['post'], url_path='google_auth_url')
+    def get_google_auth_url(self, request):
+        """
+        🎯 OAUTH START POINT - Generate Google OAuth authorization URL
+        """
+        try:
+            # Get optional state parameter from request
+            state = request.data.get('state')
+            
+            # If no state provided, generate one for CSRF protection
+            if not state:
+                import secrets
+                state = secrets.token_urlsafe(32)
+            
+            # Generate authorization URL
+            authorization_url = GoogleOAuthService.get_authorization_url(state=state)
+            
+            # Store state in session for verification (optional)
+            request.session[f'google_oauth_state'] = state
+            
+            logger.info(f"Generated Google OAuth URL for user {request.user.email}")
+            
+            return Response({
+                'authorization_url': authorization_url,
+                'state': state,
+                'message': 'Redirect user to this URL to start Google OAuth flow'
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to generate Google OAuth URL: {str(e)}")
+            return Response({
+                'error': 'Failed to generate authorization URL',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
         summary="🔗 Google OAuth Callback",
         description="""
         **Handle Google OAuth callback and create calendar connection**

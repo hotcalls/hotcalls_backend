@@ -33,6 +33,9 @@ class Command(BaseCommand):
         # Create plans with features
         self._create_plans(features)
         
+        # Assign Enterprise plan to existing superusers
+        self._assign_enterprise_to_superusers()
+        
         self.stdout.write(
             self.style.SUCCESS('🎉 Successfully setup all plans and features!')
         )
@@ -222,3 +225,57 @@ class Command(BaseCommand):
         self.stdout.write(f'    {status}: {feature.feature_name} (limit: {limit_display})')
         
         return plan_feature 
+
+    def _assign_enterprise_to_superusers(self):
+        """Assign Enterprise plan to existing superusers without active subscriptions"""
+        from django.contrib.auth import get_user_model
+        from django.utils import timezone
+        from core.models import Workspace, WorkspaceSubscription
+        
+        User = get_user_model()
+        self.stdout.write('👑 Checking superusers for Enterprise plan assignment...')
+        
+        # Get Enterprise plan
+        try:
+            enterprise_plan = Plan.objects.get(plan_name='Enterprise')
+        except Plan.DoesNotExist:
+            self.stdout.write(self.style.ERROR('❌ Enterprise plan not found! Create plans first.'))
+            return
+        
+        superusers = User.objects.filter(is_superuser=True)
+        assigned_count = 0
+        
+        for superuser in superusers:
+            # Check if superuser has any workspace with active subscription
+            has_active_subscription = False
+            for workspace in superuser.mapping_user_workspaces.all():
+                if WorkspaceSubscription.objects.filter(workspace=workspace, is_active=True).exists():
+                    has_active_subscription = True
+                    break
+            
+            if not has_active_subscription:
+                # Create workspace if superuser doesn't have one
+                if not superuser.mapping_user_workspaces.exists():
+                    workspace = Workspace.objects.create(
+                        workspace_name=f"{superuser.first_name} {superuser.last_name} Admin Workspace".strip() or f"Admin Workspace ({superuser.email})"
+                    )
+                    workspace.users.add(superuser)
+                    self.stdout.write(f'  📁 Created workspace for {superuser.email}')
+                else:
+                    workspace = superuser.mapping_user_workspaces.first()
+                
+                # Create Enterprise subscription
+                WorkspaceSubscription.objects.create(
+                    workspace=workspace,
+                    plan=enterprise_plan,
+                    started_at=timezone.now(),
+                    is_active=True
+                )
+                
+                assigned_count += 1
+                self.stdout.write(f'  ✅ Assigned Enterprise plan to superuser: {superuser.email}')
+        
+        if assigned_count == 0:
+            self.stdout.write('  ✔️ All superusers already have active subscriptions')
+        else:
+            self.stdout.write(self.style.SUCCESS(f'🎉 Assigned Enterprise plan to {assigned_count} superuser(s)')) 
