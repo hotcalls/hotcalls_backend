@@ -21,8 +21,25 @@ logger = logging.getLogger(__name__)
 class GoogleCalendarService:
     """Service for Google Calendar API interactions"""
     
-    def __init__(self, connection: GoogleCalendarConnection):
-        self.connection = connection
+    def __init__(self, google_calendar):
+        # Support both GoogleCalendar and GoogleCalendarConnection objects
+        if hasattr(google_calendar, 'refresh_token'):
+            # This is a GoogleCalendar object (direct token fields)
+            self.google_calendar = google_calendar
+            self.connection = google_calendar  # Use same object as connection for compatibility
+        else:
+            # This is a GoogleCalendarConnection object
+            self.connection = google_calendar
+            self.google_calendar = None
+    
+    def get_account_email(self):
+        """Get account email for logging - compatible with both object types"""
+        if self.google_calendar and hasattr(self.google_calendar, 'calendar'):
+            return self.google_calendar.calendar.name  # Calendar name is usually the email
+        elif hasattr(self.connection, 'account_email'):
+            return self.connection.account_email
+        else:
+            return "unknown@email.com"
         
     def _make_timezone_aware(self, dt):
         """Convert timezone-naive datetime to timezone-aware UTC datetime"""
@@ -34,7 +51,10 @@ class GoogleCalendarService:
         return dt
         
     def get_credentials(self) -> Credentials:
-        """Get refreshed Google credentials"""
+        """Get refreshed Google credentials with robust error handling"""
+        if not self.connection.access_token or not self.connection.refresh_token:
+            raise ValueError(f"Missing tokens for {self.get_account_email()}. Re-authorization required.")
+        
         credentials = Credentials(
             token=self.connection.access_token,
             refresh_token=self.connection.refresh_token,
@@ -47,14 +67,49 @@ class GoogleCalendarService:
         # Check if token needs refresh
         if credentials.expired or self._token_expires_soon():
             try:
+                logger.info(f"Refreshing expired/expiring token for {self.get_account_email()}")
                 credentials.refresh(Request())
                 self._update_connection_tokens(credentials)
-                logger.info(f"Refreshed tokens for {self.connection.account_email}")
+                logger.info(f"✅ Successfully refreshed tokens for {self.get_account_email()}")
             except Exception as e:
-                logger.error(f"Failed to refresh token for {self.connection.account_email}: {str(e)}")
-                raise
+                error_msg = str(e)
+                logger.error(f"❌ Failed to refresh token for {self.get_account_email()}: {error_msg}")
+                
+                # Check for specific Google API errors that require re-authorization
+                if self._is_reauth_required_error(error_msg):
+                    logger.error(f"🚨 Re-authorization required for {self.get_account_email()}")
+                    # Clear invalid tokens to force re-auth
+                    self._clear_invalid_tokens()
+                    raise ValueError(f"Re-authorization required for {self.get_account_email()}. Please reconnect your Google Calendar.")
+                else:
+                    # Other types of errors (network, temporary, etc.)
+                    raise RuntimeError(f"Token refresh failed for {self.get_account_email()}: {error_msg}")
                 
         return credentials
+    
+    def _is_reauth_required_error(self, error_msg: str) -> bool:
+        """Check if the error indicates re-authorization is required"""
+        reauth_keywords = [
+            'invalid_grant',
+            'refresh_token',
+            'authorization_revoked',
+            'invalid_client',
+            'unauthorized_client',
+            'access_denied'
+        ]
+        
+        error_lower = error_msg.lower()
+        return any(keyword in error_lower for keyword in reauth_keywords)
+    
+    def _clear_invalid_tokens(self):
+        """Clear invalid tokens from the database"""
+        try:
+            self.connection.access_token = None
+            self.connection.refresh_token = None
+            self.connection.save(update_fields=['access_token', 'refresh_token', 'updated_at'])
+            logger.info(f"Cleared invalid tokens for {self.get_account_email()}")
+        except Exception as e:
+            logger.error(f"Failed to clear tokens for {self.get_account_email()}: {str(e)}")
     
     def _token_expires_soon(self, minutes=5) -> bool:
         """Check if token expires in the next X minutes"""
@@ -87,7 +142,7 @@ class GoogleCalendarService:
                 'calendars_available': len(calendar_list.get('items', []))
             }
         except Exception as e:
-            logger.error(f"Connection test failed for {self.connection.account_email}: {str(e)}")
+            logger.error(f"Connection test failed for {self.get_account_email()}: {str(e)}")
             return {
                 'success': False,
                 'error': str(e)
@@ -110,12 +165,12 @@ class GoogleCalendarService:
             self.connection.sync_errors = {}
             self.connection.save(update_fields=['last_sync', 'sync_errors', 'updated_at'])
             
-            logger.info(f"Synced {len(synced_calendars)} calendars for {self.connection.account_email}")
+            logger.info(f"Synced {len(synced_calendars)} calendars for {self.get_account_email()}")
             return synced_calendars
             
         except Exception as e:
             error_msg = f"Failed to sync calendars: {str(e)}"
-            logger.error(f"Calendar sync failed for {self.connection.account_email}: {error_msg}")
+            logger.error(f"Calendar sync failed for {self.get_account_email()}: {error_msg}")
             
             # Store sync error
             self.connection.sync_errors = {
@@ -324,6 +379,6 @@ class CalendarServiceFactory:
         if calendar.provider == 'google':
             if not hasattr(calendar, 'google_calendar'):
                 raise ValueError(f"Google calendar data not found for calendar {calendar.id}")
-            return GoogleCalendarService(calendar.google_calendar.connection)
+            return GoogleCalendarService(calendar.google_calendar)
         else:
             raise ValueError(f"Unsupported calendar provider: {calendar.provider}") 

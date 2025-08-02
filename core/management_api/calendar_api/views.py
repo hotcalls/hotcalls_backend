@@ -477,7 +477,170 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 'connection_status': 'error',
                 'error': str(e),
                 'last_tested': timezone.now().isoformat()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="📊 Google Calendar Health Status",
+        description="""
+        Get comprehensive health status of all Google Calendar connections.
+        
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot access
+        - **❌ Staff Members**: Cannot access  
+        - **✅ Superuser ONLY**: Can view health status
+        
+        **📊 Information Provided**:
+        - Token expiry status for all calendars
+        - Health statistics and summary
+        - Calendars requiring attention
+        - Automatic recommendations
+        """,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Health status retrieved successfully"
+            ),
+            403: OpenApiResponse(description="🚫 Access denied - Superuser required")
+        },
+        tags=["System Health"]
+    )
+    @action(detail=False, methods=['get'], url_path='google_health')
+    def google_calendar_health(self, request):
+        """Get Google Calendar health status (Superuser only)"""
+        # Superuser only check
+        if not request.user.is_superuser:
+            return Response({
+                'error': 'Access denied',
+                'details': 'Superuser access required for health monitoring'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            from core.models import GoogleCalendar
+            from datetime import timedelta
+            
+            now = timezone.now()
+            all_calendars = GoogleCalendar.objects.all()
+            
+            health_data = {
+                'timestamp': now.isoformat(),
+                'total_calendars': all_calendars.count(),
+                'healthy': 0,
+                'expiring_soon': 0,  # Within 24 hours
+                'expired': 0,
+                'missing_tokens': 0,
+                'calendar_details': [],
+                'recommendations': []
+            }
+            
+            for calendar in all_calendars:
+                details = self._analyze_calendar_health(calendar, now)
+                health_data['calendar_details'].append(details)
+                health_data[details['status']] += 1
+            
+            # Generate recommendations
+            health_data['recommendations'] = self._generate_health_recommendations(health_data)
+            
+            logger.info(f"Google Calendar health check completed: {health_data['healthy']}/{health_data['total_calendars']} healthy")
+            
+            return Response(health_data)
+            
+        except Exception as e:
+            logger.error(f"Google Calendar health check failed: {str(e)}")
+            return Response({
+                'error': 'Health check failed',
+                'details': str(e),
+                'timestamp': timezone.now().isoformat()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _analyze_calendar_health(self, calendar, now):
+        """Analyze the health of a single Google Calendar"""
+        details = {
+            'calendar_id': str(calendar.calendar.id),
+            'calendar_name': calendar.calendar.name,
+            'external_id': calendar.external_id,
+            'status': 'healthy',
+            'issue': None,
+            'expires_at': calendar.token_expires_at.isoformat() if calendar.token_expires_at else None,
+            'time_until_expiry': None,
+            'needs_action': False
+        }
+        
+        # Check for missing tokens
+        if not calendar.access_token or not calendar.refresh_token:
+            details['status'] = 'missing_tokens'
+            details['issue'] = 'Missing access or refresh token - requires re-authorization'
+            details['needs_action'] = True
+            return details
+        
+        # Check expiry status
+        if not calendar.token_expires_at:
+            details['status'] = 'missing_tokens'
+            details['issue'] = 'No token expiry time set'
+            details['needs_action'] = True
+            return details
+        
+        time_diff = calendar.token_expires_at - now
+        
+        if calendar.token_expires_at < now:
+            details['status'] = 'expired'
+            details['issue'] = f'Token expired {abs(time_diff)} ago'
+            details['needs_action'] = True
+        elif calendar.token_expires_at < now + timedelta(hours=24):
+            details['status'] = 'expiring_soon'
+            details['issue'] = f'Token expires in {time_diff}'
+            details['time_until_expiry'] = str(time_diff)
+            details['needs_action'] = True
+        else:
+            details['time_until_expiry'] = str(time_diff)
+        
+        return details
+    
+    def _generate_health_recommendations(self, health_data):
+        """Generate actionable recommendations based on health data"""
+        recommendations = []
+        
+        if health_data['expired'] > 0:
+            recommendations.append({
+                'priority': 'high',
+                'action': 'refresh_expired_tokens',
+                'message': f"{health_data['expired']} calendars have expired tokens",
+                'command': 'python manage.py google_calendar_health --refresh-tokens'
+            })
+        
+        if health_data['missing_tokens'] > 0:
+            recommendations.append({
+                'priority': 'high', 
+                'action': 'reauthorize_calendars',
+                'message': f"{health_data['missing_tokens']} calendars need re-authorization",
+                'command': 'Users must reconnect their Google Calendar accounts'
+            })
+        
+        if health_data['expiring_soon'] > 0:
+            recommendations.append({
+                'priority': 'medium',
+                'action': 'proactive_refresh',
+                'message': f"{health_data['expiring_soon']} calendars expire within 24 hours",
+                'command': 'Automatic refresh should handle these, monitor closely'
+            })
+        
+        unhealthy_count = health_data['expired'] + health_data['missing_tokens']
+        total_count = health_data['total_calendars']
+        
+        if unhealthy_count == 0:
+            recommendations.append({
+                'priority': 'info',
+                'action': 'all_healthy',
+                'message': f"✅ All {total_count} Google Calendar connections are healthy",
+                'command': None
+            })
+        elif unhealthy_count > total_count * 0.5:  # More than 50% unhealthy
+            recommendations.append({
+                'priority': 'critical',
+                'action': 'system_wide_issue',
+                'message': f"⚠️ {unhealthy_count}/{total_count} calendars are unhealthy - investigate system-wide issues",
+                'command': 'Check Google API credentials and quotas'
+            })
+        
+        return recommendations 
 
 
 @extend_schema_view(
@@ -883,6 +1046,10 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             if slot_end.time() > end_time:
                 break
             
+            # Make timezone aware (do this before checking conflicts)
+            slot_start_aware = timezone.make_aware(slot_start)
+            slot_end_aware = timezone.make_aware(slot_end)
+            
             # Check if slot conflicts with busy times
             is_available = True
             
@@ -894,10 +1061,6 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                     busy_start = datetime.fromisoformat(busy_start.replace('Z', '+00:00'))
                 if isinstance(busy_end, str):
                     busy_end = datetime.fromisoformat(busy_end.replace('Z', '+00:00'))
-                
-                # Make timezone aware
-                slot_start_aware = timezone.make_aware(slot_start)
-                slot_end_aware = timezone.make_aware(slot_end)
                 
                 # Check for overlap (including prep_time buffer)
                 buffer_start = slot_start_aware - timedelta(minutes=config.prep_time)
