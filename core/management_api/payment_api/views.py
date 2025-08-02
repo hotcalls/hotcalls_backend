@@ -817,7 +817,7 @@ def stripe_webhook(request):
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
     webhook_secret = getattr(settings, 'STRIPE_WEBHOOK_SECRET', '')
     
-    print(f"=== WEBHOOK RECEIVED ===")
+    print("=== WEBHOOK RECEIVED ===")
     print(f"Payload length: {len(payload)} bytes")
     print(f"Signature header: {sig_header}")
     print(f"Webhook secret configured: {'Yes' if webhook_secret else 'No'}")
@@ -834,7 +834,7 @@ def stripe_webhook(request):
         event = stripe.Webhook.construct_event(
             payload, sig_header, webhook_secret
         )
-        print(f"✅ Webhook signature verified successfully")
+        print("✅ Webhook signature verified successfully")
     except ValueError as e:
         # Invalid payload
         print(f"❌ Invalid payload: {e}")
@@ -928,7 +928,7 @@ def stripe_webhook(request):
         metadata = session.get('metadata', {})
         workspace_id = metadata.get('workspace_id') or session.get('client_reference_id')
         
-        print(f"🛒 CHECKOUT SESSION COMPLETED:")
+        print("🛒 CHECKOUT SESSION COMPLETED:")
         print(f"  Customer ID: {customer_id}")
         print(f"  Subscription ID: {subscription_id}")
         print(f"  Workspace ID: {workspace_id}")
@@ -968,13 +968,37 @@ def stripe_webhook(request):
                     ).first()
                     
                     if plan:
-                        workspace.current_plan = plan
-                        print(f"📋 Setting plan: {plan.plan_name}")
+                        # Create WorkspaceSubscription record (this is what the quota system expects!)
+                        from core.models import WorkspaceSubscription
+                        from datetime import datetime, timezone
+                        
+                        # Deactivate any existing subscriptions
+                        WorkspaceSubscription.objects.filter(
+                            workspace=workspace,
+                            is_active=True
+                        ).update(is_active=False)
+                        
+                        # Create new active subscription
+                        workspace_sub, created = WorkspaceSubscription.objects.get_or_create(
+                            workspace=workspace,
+                            plan=plan,
+                            defaults={
+                                'started_at': datetime.now(timezone.utc),
+                                'is_active': True
+                            }
+                        )
+                        
+                        if not created:
+                            workspace_sub.is_active = True
+                            workspace_sub.started_at = datetime.now(timezone.utc)
+                            workspace_sub.save()
+                        
+                        print(f"📋 Created WorkspaceSubscription: {plan.plan_name}")
                     else:
                         print(f"⚠️ No plan found for price ID: {price_id}")
                 
                 workspace.save()
-                print(f"✅ Workspace updated successfully!")
+                print("✅ Workspace updated successfully!")
                 print(f"Subscription {subscription_id} activated for workspace {workspace_id}")
             except Workspace.DoesNotExist:
                 print(f"❌ Workspace {workspace_id} not found!")
@@ -999,10 +1023,31 @@ def stripe_webhook(request):
             # Try to map plan based on price ID
             if subscription['items']['data']:
                 price_id = subscription['items']['data'][0]['price']['id']
-                from core.models import Plan
+                from core.models import Plan, WorkspaceSubscription
+                from datetime import datetime, timezone
                 plan = Plan.objects.filter(stripe_price_id_monthly=price_id).first() or Plan.objects.filter(stripe_price_id_yearly=price_id).first()
                 if plan:
-                    workspace.current_plan = plan
+                    # Create WorkspaceSubscription record (this is what the quota system expects!)
+                    # Deactivate any existing subscriptions
+                    WorkspaceSubscription.objects.filter(
+                        workspace=workspace,
+                        is_active=True
+                    ).update(is_active=False)
+                    
+                    # Create new active subscription
+                    workspace_sub, created = WorkspaceSubscription.objects.get_or_create(
+                        workspace=workspace,
+                        plan=plan,
+                        defaults={
+                            'started_at': datetime.now(timezone.utc),
+                            'is_active': True
+                        }
+                    )
+                    
+                    if not created:
+                        workspace_sub.is_active = True
+                        workspace_sub.started_at = datetime.now(timezone.utc)
+                        workspace_sub.save()
             workspace.save()
             print(f"Subscription {subscription['id']} created for workspace {workspace.id} – status: {subscription_status}")
         except Workspace.DoesNotExist:
