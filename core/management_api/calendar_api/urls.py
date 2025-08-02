@@ -4,8 +4,8 @@ from .views import CalendarViewSet, CalendarConfigurationViewSet
 
 # Create router and register viewsets
 router = DefaultRouter()
-router.register(r'calendars', CalendarViewSet, basename='calendar')
-router.register(r'calendar-configurations', CalendarConfigurationViewSet, basename='calendarconfig')
+router.register(r'', CalendarViewSet, basename='calendar')
+router.register(r'configurations', CalendarConfigurationViewSet, basename='calendarconfig')
 
 urlpatterns = [
     path('', include(router.urls)),

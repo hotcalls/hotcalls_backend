@@ -2,7 +2,7 @@
 Google Calendar API service for handling OAuth and calendar operations.
 """
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, List, Optional, Tuple
 from django.conf import settings
 from django.utils import timezone
@@ -23,6 +23,15 @@ class GoogleCalendarService:
     
     def __init__(self, connection: GoogleCalendarConnection):
         self.connection = connection
+        
+    def _make_timezone_aware(self, dt):
+        """Convert timezone-naive datetime to timezone-aware UTC datetime"""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            # Assume UTC if no timezone info
+            dt = dt.replace(tzinfo=dt_timezone.utc)
+        return dt
         
     def get_credentials(self) -> Credentials:
         """Get refreshed Google credentials"""
@@ -51,12 +60,15 @@ class GoogleCalendarService:
         """Check if token expires in the next X minutes"""
         if not self.connection.token_expires_at:
             return True
-        return self.connection.token_expires_at <= timezone.now() + timedelta(minutes=minutes)
+        # Ensure both datetimes are timezone-aware for comparison
+        token_expiry = self._make_timezone_aware(self.connection.token_expires_at)
+        return token_expiry <= timezone.now() + timedelta(minutes=minutes)
     
     def _update_connection_tokens(self, credentials: Credentials):
         """Update connection with new tokens"""
         self.connection.access_token = credentials.token
-        self.connection.token_expires_at = credentials.expiry
+        # Convert expiry to timezone-aware datetime
+        self.connection.token_expires_at = self._make_timezone_aware(credentials.expiry)
         self.connection.save(update_fields=['access_token', 'token_expires_at', 'updated_at'])
     
     def get_service(self):
@@ -124,23 +136,18 @@ class GoogleCalendarService:
                 defaults={'active': True}
             )
             
-            # Create or update GoogleCalendar
+            # Create or update GoogleCalendar using only existing fields
             google_calendar, gc_created = GoogleCalendar.objects.update_or_create(
-                connection=self.connection,
                 external_id=calendar_data['id'],
                 defaults={
                     'calendar': calendar,
-                    'summary': calendar_data['summary'],
-                    'description': calendar_data.get('description', ''),
-                    'color_id': calendar_data.get('colorId'),
-                    'background_color': calendar_data.get('backgroundColor'),
-                    'foreground_color': calendar_data.get('foregroundColor'),
                     'primary': calendar_data.get('primary', False),
-                    'access_role': calendar_data['accessRole'],
                     'time_zone': calendar_data.get('timeZone', 'UTC'),
-                    'selected': calendar_data.get('selected', True),
-                    'etag': calendar_data.get('etag'),
-                    'kind': calendar_data.get('kind', 'calendar#calendarListEntry')
+                    # Note: We don't store tokens here anymore as they're in GoogleCalendarConnection
+                    'refresh_token': '',  # Keep empty - tokens are in connection
+                    'access_token': '',   # Keep empty - tokens are in connection
+                    'token_expires_at': timezone.now(),  # Placeholder
+                    'scopes': []  # Keep empty - scopes are in connection
                 }
             )
             

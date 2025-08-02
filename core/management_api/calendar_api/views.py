@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import viewsets, status, filters
@@ -153,19 +153,18 @@ class CalendarViewSet(viewsets.ModelViewSet):
         🎯 OAUTH START POINT - Generate Google OAuth authorization URL
         """
         try:
-            # Get optional state parameter from request
-            state = request.data.get('state')
+            # Generate state with user ID for callback identification
+            import secrets
+            state = secrets.token_urlsafe(32)
             
-            # If no state provided, generate one for CSRF protection
-            if not state:
-                import secrets
-                state = secrets.token_urlsafe(32)
+            # Store user ID in state for callback lookup
+            request.session[f'google_oauth_state_{state}'] = {
+                'user_id': str(request.user.id),  # Convert UUID to string for JSON serialization
+                'created_at': timezone.now().isoformat()
+            }
             
             # Generate authorization URL
             authorization_url = GoogleOAuthService.get_authorization_url(state=state)
-            
-            # Store state in session for verification (optional)
-            request.session[f'google_oauth_state'] = state
             
             logger.info(f"Generated Google OAuth URL for user {request.user.email}")
             
@@ -213,13 +212,14 @@ class CalendarViewSet(viewsets.ModelViewSet):
         },
         tags=["Google Calendar"]
     )
-    @action(detail=False, methods=['get'], url_path='google_callback')
+    @action(detail=False, methods=['get'], url_path='google_callback', permission_classes=[AllowAny])
     def google_oauth_callback(self, request):
         """
         🎯 MAIN ENTRY POINT - Handle Google OAuth callback
         This is where our backend picks up the OAuth flow
         """
         code = request.GET.get('code')
+        state = request.GET.get('state')
         error = request.GET.get('error')
         
         if error:
@@ -229,6 +229,29 @@ class CalendarViewSet(viewsets.ModelViewSet):
         if not code:
             logger.warning("No authorization code received in OAuth callback")
             return Response({'error': 'No authorization code received'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        if not state:
+            logger.warning("No state parameter received in OAuth callback")
+            return Response({'error': 'No state parameter received'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get user from state
+        state_key = f'google_oauth_state_{state}'
+        state_data = request.session.get(state_key)
+        
+        if not state_data:
+            logger.warning(f"Invalid or expired state parameter: {state}")
+            return Response({'error': 'Invalid or expired OAuth session'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get user from state data
+        try:
+            from core.models import User
+            user = User.objects.get(id=state_data['user_id'])
+        except User.DoesNotExist:
+            logger.error(f"User not found for OAuth callback: {state_data['user_id']}")
+            return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Clean up state from session
+        del request.session[state_key]
         
         try:
             # 1. Exchange code for tokens
@@ -237,8 +260,8 @@ class CalendarViewSet(viewsets.ModelViewSet):
             # 2. Get user info from Google
             user_info = GoogleOAuthService.get_user_info(credentials)
             
-            # 3. Get user's workspace (assuming users belong to workspaces)
-            user_workspace = self._get_user_workspace(request.user)
+            # 3. Get user's workspace
+            user_workspace = self._get_user_workspace(user)
             if not user_workspace:
                 return Response({
                     'error': 'User must belong to a workspace to connect Google Calendar'
@@ -249,10 +272,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 workspace=user_workspace,
                 account_email=user_info['email'],
                 defaults={
-                    'user': request.user,
+                    'user': user,
                     'refresh_token': credentials.refresh_token,
                     'access_token': credentials.token,
-                    'token_expires_at': credentials.expiry,
+                    'token_expires_at': self._make_timezone_aware(credentials.expiry),
                     'scopes': list(credentials.scopes),
                     'active': True
                 }
@@ -265,17 +288,24 @@ class CalendarViewSet(viewsets.ModelViewSet):
             logger.info(f"{'Created' if created else 'Updated'} Google Calendar connection for {user_info['email']}")
             
             # 6. Return success with calendar data
-            return Response({
-                'success': True,
-                'connection': {
-                    'id': connection.id,
-                    'account_email': connection.account_email,
-                    'calendars_count': len(synced_calendars),
-                    'created': created
-                },
-                'calendars': CalendarSerializer(synced_calendars, many=True).data,
-                'message': f'Successfully connected {connection.account_email}'
-            })
+            if request.GET.get('redirect_frontend'):
+                # Redirect to frontend with success
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+                return redirect(f"{frontend_url}/calendar-integration?success=true&calendars={len(synced_calendars)}")
+            else:
+                # API response (for direct API calls)
+                return Response({
+                    'success': True,
+                    'connection': {
+                        'id': connection.id,
+                        'account_email': connection.account_email,
+                        'calendars_count': len(synced_calendars),
+                        'created': created
+                    },
+                    'calendars': CalendarSerializer(synced_calendars, many=True).data,
+                    'message': f'Successfully connected {connection.account_email}'
+                })
             
         except Exception as e:
             logger.error(f"Google OAuth callback failed: {str(e)}")
@@ -285,20 +315,25 @@ class CalendarViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_user_workspace(self, user):
-        """Get user's workspace (customize based on your user-workspace relationship)"""
-        # Assuming users have a default workspace or belong to one workspace
-        # Adjust this logic based on your actual user-workspace relationship
-        if hasattr(user, 'workspaces'):
-            return user.workspaces.first()
-        elif hasattr(user, 'workspace'):
-            return user.workspace
+        """Get user's workspace - PRODUCTION VERSION"""
+        # Get user's workspace via ManyToMany relationship
+        user_workspaces = user.mapping_user_workspaces.all()
+        
+        if user_workspaces.exists():
+            return user_workspaces.first()
         else:
-            # If user doesn't have workspace, try to get or create one
-            workspace, _ = Workspace.objects.get_or_create(
-                workspace_name=f"{user.username}_workspace",
-                defaults={'description': f'Default workspace for {user.username}'}
-            )
-            return workspace
+            # PRODUCTION: User MUSS ein Workspace haben
+            logger.error(f"User {user.email} has no workspace - this should not happen in production")
+            raise ValueError(f"User {user.email} has no workspace assigned. Please contact support.")
+    
+    def _make_timezone_aware(self, dt):
+        """Convert timezone-naive datetime to timezone-aware UTC datetime"""
+        if dt is None:
+            return None
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is None:
+            # Assume UTC if no timezone info
+            return dt.replace(tzinfo=dt_timezone.utc)
+        return dt
     
     # 🔗 GOOGLE CONNECTION MANAGEMENT
     

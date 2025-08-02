@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
     GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
@@ -324,10 +325,19 @@ class CalendarAdmin(admin.ModelAdmin):
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
             # Check if the Google calendar has valid tokens
             google_cal = obj.google_calendar
-            if google_cal.token_expires_at and google_cal.token_expires_at > timezone.now():
-                return '✅ Connected'
+            if google_cal.token_expires_at:
+                # Make timezone-aware comparison
+                token_expiry = google_cal.token_expires_at
+                if token_expiry.tzinfo is None:
+                    # Convert naive datetime to timezone-aware
+                    token_expiry = token_expiry.replace(tzinfo=dt_timezone.utc)
+                
+                if token_expiry > timezone.now():
+                    return '✅ Connected'
+                else:
+                    return '⚠️ Token Expired'
             else:
-                return '⚠️ Token Expired'
+                return '⚠️ No Token'
         return '❓ Unknown'
     get_connection_status.short_description = 'Status'
 

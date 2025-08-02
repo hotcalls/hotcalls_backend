@@ -5,15 +5,13 @@ from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnectio
 
 class GoogleCalendarDetailSerializer(serializers.ModelSerializer):
     """Google-specific calendar details"""
-    connection_email = serializers.CharField(source='connection.account_email', read_only=True)
-    connection_id = serializers.UUIDField(source='connection.id', read_only=True)
+    # Note: GoogleCalendar model doesn't have connection field anymore
+    # Connection info is handled separately through GoogleCalendarConnection
     
     class Meta:
         model = GoogleCalendar
         fields = [
-            'external_id', 'summary', 'description', 'primary', 'access_role', 
-            'time_zone', 'background_color', 'foreground_color', 'selected',
-            'connection_email', 'connection_id'
+            'external_id', 'primary', 'time_zone', 'created_at', 'updated_at'
         ]
 
 
@@ -49,13 +47,24 @@ class CalendarSerializer(serializers.ModelSerializer):
     def get_connection_status(self, obj):
         """Get connection status"""
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
-            connection = obj.google_calendar.connection
-            if not connection.active:
-                return 'disconnected'
-            elif connection.sync_errors:
-                return 'error'
-            else:
-                return 'connected'
+            # Find the connection through workspace since GoogleCalendar doesn't have connection field
+            try:
+                connections = GoogleCalendarConnection.objects.filter(
+                    workspace=obj.workspace,
+                    active=True
+                )
+                if connections.exists():
+                    connection = connections.first()
+                    if not connection.active:
+                        return 'disconnected'
+                    elif connection.sync_errors:
+                        return 'error'
+                    else:
+                        return 'connected'
+                else:
+                    return 'disconnected'
+            except Exception:
+                return 'unknown'
         return 'unknown'
 
 
@@ -80,7 +89,8 @@ class GoogleCalendarConnectionSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.IntegerField)
     def get_calendar_count(self, obj) -> int:
         """Get number of calendars for this connection"""
-        return obj.calendars.count()
+        # Count calendars in the workspace since there's no direct connection->calendars relationship
+        return Calendar.objects.filter(workspace=obj.workspace, provider='google', active=True).count()
     
     @extend_schema_field(serializers.CharField)
     def get_status(self, obj):

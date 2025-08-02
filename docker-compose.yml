@@ -62,49 +62,6 @@ services:
              python manage.py collectstatic --noinput &&
              python manage.py runserver 0.0.0.0:8000"
 
-  celery:
-    build:
-      context: .
-      target: development
-    env_file: .env
-    environment:
-      # Django settings configuration
-      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
-      - ENVIRONMENT=development
-      # Override for Docker networking
-      - DB_HOST=db
-      - REDIS_HOST=redis
-      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
-    volumes:
-      - .:/app
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: celery -A hotcalls worker -l info
-
-  celery-beat:
-    build:
-      context: .
-      target: development
-    env_file: .env
-    environment:
-      # Django settings configuration
-      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
-      - ENVIRONMENT=development
-      # Override for Docker networking
-      - DB_HOST=db
-      - REDIS_HOST=redis
-      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
-    volumes:
-      - .:/app
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    command: celery -A hotcalls beat -l info
 
 volumes:
   postgres_data:
