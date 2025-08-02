@@ -2230,6 +2230,7 @@ cleanup_on_exit() {
 
 # Main execution
 main() {
+    clear
     # Set up trap to clean up on exit (success or failure)
     trap cleanup_on_exit EXIT
     
