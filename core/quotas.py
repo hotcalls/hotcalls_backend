@@ -344,3 +344,86 @@ IMPLEMENTATION GUIDE FOR FUTURE VIRTUAL ROUTES:
 This pattern provides unified quota enforcement across all workspace operations,
 whether triggered by HTTP requests or internal processes.
 """
+
+
+def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
+    """
+    Get current usage status for a specific feature (read-only version for API endpoints).
+    
+    This version doesn't use select_for_update, making it safe for read-only operations
+    outside of transactions.
+    
+    Args:
+        workspace: Workspace instance
+        feature_name: Name of the feature to check
+        
+    Returns:
+        Dict with usage information:
+        {
+            'used': Decimal,
+            'limit': Decimal|None, 
+            'remaining': Decimal|None,
+            'unlimited': bool
+        }
+    """
+    from core.models import Feature, FeatureUsage, WorkspaceSubscription, WorkspaceUsage
+    
+    try:
+        feature = Feature.objects.get(feature_name=feature_name)
+        
+        # Get active subscription (read-only)
+        subscription = WorkspaceSubscription.objects.select_related("plan").get(
+            workspace=workspace, 
+            is_active=True
+        )
+        
+        # Calculate current billing window
+        period_start, period_end = current_billing_window(subscription)
+        
+        # Get usage container for this period (read-only)
+        usage_container = WorkspaceUsage.objects.filter(
+            workspace=workspace,
+            subscription=subscription,
+            period_start=period_start,
+            period_end=period_end,
+        ).first()
+        
+        if not usage_container:
+            # No usage recorded yet for this period
+            used = Decimal('0')
+            limit = None
+        else:
+            # Get feature usage
+            feature_usage = FeatureUsage.objects.filter(
+                usage_record=usage_container,
+                feature=feature
+            ).first()
+            
+            if not feature_usage:
+                used = Decimal('0')
+            else:
+                used = feature_usage.used_amount
+                
+            # Get limit from plan
+            limit = feature_usage.limit if feature_usage else None
+            
+        remaining = None
+        unlimited = limit is None
+        
+        if not unlimited:
+            remaining = max(limit - used, Decimal('0'))
+            
+        return {
+            'used': used,
+            'limit': limit,
+            'remaining': remaining, 
+            'unlimited': unlimited
+        }
+        
+    except (Feature.DoesNotExist, WorkspaceSubscription.DoesNotExist):
+        return {
+            'used': Decimal('0'),
+            'limit': None,
+            'remaining': None,
+            'unlimited': True
+        }

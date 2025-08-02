@@ -9,7 +9,8 @@ from .views import (
     create_checkout_session,
     get_subscription_status,
     cancel_subscription,
-    check_workspace_subscription
+    check_workspace_subscription,
+    get_workspace_usage_status
 )
 
 urlpatterns = [
@@ -56,4 +57,9 @@ urlpatterns = [
     path('workspaces/<uuid:workspace_id>/subscription/cancel/', 
          cancel_subscription, 
          name='cancel-subscription'),
+    
+    # Usage and quota management
+    path('workspaces/<uuid:workspace_id>/usage/', 
+         get_workspace_usage_status, 
+         name='workspace-usage-status'),
 ] 

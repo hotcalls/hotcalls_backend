@@ -1128,4 +1128,137 @@ def check_workspace_subscription(request, workspace_id):
         return Response(
             {"error": "Workspace not found"},
             status=status.HTTP_404_NOT_FOUND
+        )
+
+
+@extend_schema(
+    summary="📊 Get workspace usage and quota status",
+    description="""
+    Get comprehensive usage and quota information for a workspace.
+    
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+    
+    **📊 Returns**:
+    - Current usage for all features
+    - Plan limits and remaining quotas
+    - Billing period information
+    - Usage percentages
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Usage status retrieved",
+            examples=[
+                OpenApiExample(
+                    'Usage Status',
+                    value={
+                        'workspace': {
+                            'id': 'workspace-uuid',
+                            'name': 'My Company',
+                            'plan': 'Pro'
+                        },
+                        'billing_period': {
+                            'start': '2025-01-01T00:00:00Z',
+                            'end': '2025-02-01T00:00:00Z',
+                            'days_remaining': 15
+                        },
+                        'features': {
+                            'call_minutes': {
+                                'used': 234.5,
+                                'limit': 1000,
+                                'remaining': 765.5,
+                                'unlimited': False,
+                                'percentage_used': 23.45
+                            },
+                            'max_agents': {
+                                'used': 2,
+                                'limit': 3,
+                                'remaining': 1,
+                                'unlimited': False,
+                                'percentage_used': 66.67
+                            }
+                        }
+                    }
+                )
+            ]
+        ),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsWorkspaceMember])
+def get_workspace_usage_status(request, workspace_id):
+    """Get comprehensive usage and quota status for workspace"""
+    from core.quotas import get_feature_usage_status_readonly, current_billing_window
+    from core.models import Feature, WorkspaceSubscription
+    from datetime import datetime, timezone
+    
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        
+        # Get active subscription for billing period
+        subscription = workspace.current_subscription
+        if subscription:
+            plan = subscription.plan
+            period_start, period_end = current_billing_window(subscription)
+            
+            # Calculate days remaining in billing period
+            now = datetime.now(timezone.utc)
+            days_remaining = max(0, (period_end - now).days)
+        else:
+            plan = None
+            period_start = period_end = None
+            days_remaining = None
+        
+        # Get all measurable features (exclude cosmetic ones)
+        features = Feature.objects.all()
+        feature_usage = {}
+        
+        for feature in features:
+            usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
+            
+            # Calculate percentage used if not unlimited
+            percentage_used = None
+            if not usage_info['unlimited'] and usage_info['limit'] and usage_info['limit'] > 0:
+                percentage_used = float((usage_info['used'] / usage_info['limit']) * 100)
+                percentage_used = round(percentage_used, 2)
+            
+            feature_usage[feature.feature_name] = {
+                'used': float(usage_info['used']),
+                'limit': float(usage_info['limit']) if usage_info['limit'] else None,
+                'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
+                'unlimited': usage_info['unlimited'],
+                'percentage_used': percentage_used,
+                'unit': feature.unit
+            }
+        
+        # Build response
+        response_data = {
+            'workspace': {
+                'id': str(workspace.id),
+                'name': workspace.workspace_name,
+                'plan': plan.plan_name if plan else None
+            },
+            'billing_period': {
+                'start': period_start.isoformat() if period_start else None,
+                'end': period_end.isoformat() if period_end else None,
+                'days_remaining': days_remaining
+            } if period_start and period_end else None,
+            'features': feature_usage
+        }
+        
+        # Add cosmetic features from plan if available
+        if plan and plan.cosmetic_features:
+            response_data['cosmetic_features'] = plan.cosmetic_features
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"},
+            status=status.HTTP_404_NOT_FOUND
         ) 
