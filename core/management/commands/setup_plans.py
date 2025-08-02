@@ -114,8 +114,8 @@ class Command(BaseCommand):
             name='Start',
             price_monthly=Decimal('199.00'),
             description='Ideal für Einzelpersonen und kleine Teams',
-            stripe_product_id='prod_start_hotcalls',
-            stripe_price_id_monthly='price_start_monthly_199',
+            stripe_product_id='prod_SlrPR8OxP3GpFW',
+            stripe_price_id_monthly='price_1RqJh1Rreb0r83Oz2N9nVrl9',
             cosmetic_features={
                 'whitelabel_solution': False,
                 'crm_integrations': False,
@@ -136,8 +136,8 @@ class Command(BaseCommand):
             name='Pro',
             price_monthly=Decimal('549.00'),
             description='Am beliebtesten - Ideal für Unternehmen mit höherem Volumen',
-            stripe_product_id='prod_pro_hotcalls',
-            stripe_price_id_monthly='price_pro_monthly_549',
+            stripe_product_id='prod_SlrQWBeZ7ecw6d',
+            stripe_price_id_monthly='price_1RqJheRreb0r83OzM0jmhwzX',
             cosmetic_features={
                 'whitelabel_solution': False,
                 'crm_integrations': True,
@@ -158,7 +158,7 @@ class Command(BaseCommand):
             name='Enterprise',
             price_monthly=None,  # Individuell
             description='Individuelle Lösungen für große Unternehmen und Agenturen - Preis auf Anfrage',
-            stripe_product_id='prod_enterprise_hotcalls',
+            stripe_product_id=None,  # No Stripe product - custom pricing
             stripe_price_id_monthly=None,  # Enterprise hat keinen festen Preis
             cosmetic_features={
                 'whitelabel_solution': True,
