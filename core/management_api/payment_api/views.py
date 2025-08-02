@@ -979,19 +979,12 @@ def stripe_webhook(request):
                         ).update(is_active=False)
                         
                         # Create new active subscription
-                        workspace_sub, created = WorkspaceSubscription.objects.get_or_create(
+                        WorkspaceSubscription.objects.create(
                             workspace=workspace,
                             plan=plan,
-                            defaults={
-                                'started_at': datetime.now(timezone.utc),
-                                'is_active': True
-                            }
+                            started_at=datetime.now(timezone.utc),
+                            is_active=True
                         )
-                        
-                        if not created:
-                            workspace_sub.is_active = True
-                            workspace_sub.started_at = datetime.now(timezone.utc)
-                            workspace_sub.save()
                         
                         print(f"📋 Created WorkspaceSubscription: {plan.plan_name}")
                     else:
@@ -1020,34 +1013,7 @@ def stripe_webhook(request):
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
             workspace.stripe_subscription_id = subscription['id']
             workspace.subscription_status = subscription_status
-            # Try to map plan based on price ID
-            if subscription['items']['data']:
-                price_id = subscription['items']['data'][0]['price']['id']
-                from core.models import Plan, WorkspaceSubscription
-                from datetime import datetime, timezone
-                plan = Plan.objects.filter(stripe_price_id_monthly=price_id).first() or Plan.objects.filter(stripe_price_id_yearly=price_id).first()
-                if plan:
-                    # Create WorkspaceSubscription record (this is what the quota system expects!)
-                    # Deactivate any existing subscriptions
-                    WorkspaceSubscription.objects.filter(
-                        workspace=workspace,
-                        is_active=True
-                    ).update(is_active=False)
-                    
-                    # Create new active subscription
-                    workspace_sub, created = WorkspaceSubscription.objects.get_or_create(
-                        workspace=workspace,
-                        plan=plan,
-                        defaults={
-                            'started_at': datetime.now(timezone.utc),
-                            'is_active': True
-                        }
-                    )
-                    
-                    if not created:
-                        workspace_sub.is_active = True
-                        workspace_sub.started_at = datetime.now(timezone.utc)
-                        workspace_sub.save()
+            # WorkspaceSubscription creation is handled by checkout.session.completed - don't duplicate here!
             workspace.save()
             print(f"Subscription {subscription['id']} created for workspace {workspace.id} – status: {subscription_status}")
         except Workspace.DoesNotExist:
