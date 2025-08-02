@@ -1,4 +1,4 @@
-from django.core.management.base import BaseCommand, CommandError
+from django.core.management.base import BaseCommand
 from core.models import Plan, Feature, PlanFeature
 from decimal import Decimal
 
@@ -33,6 +33,9 @@ class Command(BaseCommand):
         # Create plans with features
         self._create_plans(features)
         
+        # Create endpoint mappings for quota enforcement
+        self._create_endpoint_mappings(features)
+        
         # Assign Enterprise plan to existing superusers
         self._assign_enterprise_to_superusers()
         
@@ -44,7 +47,8 @@ class Command(BaseCommand):
         """Create all required features"""
         self.stdout.write('📋 Creating features...')
         
-        # NOTE: Added `unit` to align with new quota/feature system
+        # ONLY MEASURABLE/ENFORCEABLE FEATURES
+        # Cosmetic features are now stored in Plan.cosmetic_features JSON field
         feature_definitions = [
             {
                 'name': 'call_minutes',
@@ -65,31 +69,6 @@ class Command(BaseCommand):
                 'name': 'max_agents',
                 'description': 'Maximum number of agents allowed per workspace',
                 'unit': 'general_unit',
-            },
-            {
-                'name': 'whitelabel_solution',
-                'description': 'White-label branding and customization',
-                'unit': 'access',
-            },
-            {
-                'name': 'crm_integrations',
-                'description': 'CRM system integrations',
-                'unit': 'access',
-            },
-            {
-                'name': 'priority_support',
-                'description': 'Priority customer support',
-                'unit': 'access',
-            },
-            {
-                'name': 'custom_voice_cloning',
-                'description': 'Custom voice cloning capabilities',
-                'unit': 'access',
-            },
-            {
-                'name': 'advanced_analytics',
-                'description': 'Advanced analytics and reporting',
-                'unit': 'access',
             },
         ]
         
@@ -133,7 +112,14 @@ class Command(BaseCommand):
             price_monthly=Decimal('199.00'),
             description='Ideal für Einzelpersonen und kleine Teams',
             stripe_product_id='prod_start_hotcalls',
-            stripe_price_id_monthly='price_start_monthly_199'
+            stripe_price_id_monthly='price_start_monthly_199',
+            cosmetic_features={
+                'whitelabel_solution': False,
+                'crm_integrations': False,
+                'priority_support': 'standard',
+                'custom_voice_cloning': False,
+                'advanced_analytics': False,
+            }
         )
         
         # Add features to Start plan
@@ -148,7 +134,14 @@ class Command(BaseCommand):
             price_monthly=Decimal('549.00'),
             description='Am beliebtesten - Ideal für Unternehmen mit höherem Volumen',
             stripe_product_id='prod_pro_hotcalls',
-            stripe_price_id_monthly='price_pro_monthly_549'
+            stripe_price_id_monthly='price_pro_monthly_549',
+            cosmetic_features={
+                'whitelabel_solution': False,
+                'crm_integrations': True,
+                'priority_support': 'premium',
+                'custom_voice_cloning': False,
+                'advanced_analytics': True,
+            }
         )
         
         # Add features to Pro plan
@@ -163,7 +156,14 @@ class Command(BaseCommand):
             price_monthly=None,  # Individuell
             description='Individuelle Lösungen für große Unternehmen und Agenturen - Preis auf Anfrage',
             stripe_product_id='prod_enterprise_hotcalls',
-            stripe_price_id_monthly=None  # Enterprise hat keinen festen Preis
+            stripe_price_id_monthly=None,  # Enterprise hat keinen festen Preis
+            cosmetic_features={
+                'whitelabel_solution': True,
+                'crm_integrations': True,
+                'priority_support': 'enterprise',
+                'custom_voice_cloning': True,
+                'advanced_analytics': True,
+            }
         )
         
         # Add features to Enterprise plan
@@ -171,29 +171,29 @@ class Command(BaseCommand):
         self._add_feature_to_plan(enterprise_plan, features['overage_rate_cents'], 0)  # No overage
         self._add_feature_to_plan(enterprise_plan, features['max_users'], 999999)  # Unlimited users
         self._add_feature_to_plan(enterprise_plan, features['max_agents'], 999999)  # Unlimited agents
-        self._add_feature_to_plan(enterprise_plan, features['whitelabel_solution'], 1)
-        self._add_feature_to_plan(enterprise_plan, features['crm_integrations'], 1)
-        self._add_feature_to_plan(enterprise_plan, features['priority_support'], 2)  # Premium support
-        self._add_feature_to_plan(enterprise_plan, features['advanced_analytics'], 1)
-        self._add_feature_to_plan(enterprise_plan, features['custom_voice_cloning'], 1)
 
-    def _create_plan(self, name, price_monthly, description, stripe_product_id=None, stripe_price_id_monthly=None):
-        """Create a single plan with Stripe IDs"""
+    def _create_plan(self, name, price_monthly, description, stripe_product_id=None, stripe_price_id_monthly=None, cosmetic_features=None):
+        """Create a single plan with Stripe IDs and cosmetic features"""
+        if cosmetic_features is None:
+            cosmetic_features = {}
+            
         plan, created = Plan.objects.get_or_create(
             plan_name=name,
             defaults={
                 'price_monthly': price_monthly,
                 'stripe_product_id': stripe_product_id,
                 'stripe_price_id_monthly': stripe_price_id_monthly,
+                'cosmetic_features': cosmetic_features,
                 'is_active': True
             }
         )
         
         if not created:
-            # Update existing plan with new Stripe IDs
+            # Update existing plan with new data
             plan.price_monthly = price_monthly
             plan.stripe_product_id = stripe_product_id
             plan.stripe_price_id_monthly = stripe_price_id_monthly
+            plan.cosmetic_features = cosmetic_features
             plan.save()
         
         status = '✅ Created' if created else '🔄 Updated'
@@ -205,6 +205,12 @@ class Command(BaseCommand):
             self.stdout.write(f'      🔗 Stripe Product: {stripe_product_id}')
         if stripe_price_id_monthly:
             self.stdout.write(f'      💳 Stripe Price: {stripe_price_id_monthly}')
+        
+        # Show cosmetic features
+        if cosmetic_features:
+            enabled_features = [k for k, v in cosmetic_features.items() if v and v != 'standard']
+            if enabled_features:
+                self.stdout.write(f'      ✨ Cosmetic Features: {", ".join(enabled_features)}')
         
         return plan
 
@@ -225,6 +231,93 @@ class Command(BaseCommand):
         self.stdout.write(f'    {status}: {feature.feature_name} (limit: {limit_display})')
         
         return plan_feature 
+
+    def _create_endpoint_mappings(self, features):
+        """Create EndpointFeature mappings for quota enforcement"""
+        from core.models import EndpointFeature
+        
+        self.stdout.write('🔗 Creating endpoint mappings for quota enforcement...')
+        
+        # Define which API routes should be mapped to which features
+        # Only map REAL implemented features to avoid quota blocking non-existent endpoints
+        endpoint_mappings = [
+            # =========================
+            # VIRTUAL ROUTES (Internal Operations)  
+            # =========================
+            {
+                'route_name': 'internal:outbound_call',
+                'http_method': 'POST',
+                'feature': features['call_minutes'],
+                'description': 'Outbound call quota check (amount=0, status check only)'
+            },
+            {
+                'route_name': 'internal:call_duration_used',
+                'http_method': 'POST',
+                'feature': features['call_minutes'],
+                'description': 'Recording actual call duration usage (from call log creation)'
+            },
+            
+            # =========================
+            # REAL API ROUTES (HTTP Endpoints)
+            # =========================
+            
+            # Agent Management (consumes max_agents feature)
+            {
+                'route_name': 'agent_api:agent-list',
+                'http_method': 'POST',
+                'feature': features['max_agents'],
+                'description': 'Creating new agents'
+            },
+            
+            # User Management (consumes max_users feature)
+            {
+                'route_name': 'user_api:user-list',
+                'http_method': 'POST',
+                'feature': features['max_users'],
+                'description': 'Adding users to workspace'
+            },
+            {
+                'route_name': 'workspace_api:workspace-add-users',
+                'http_method': 'POST',
+                'feature': features['max_users'],
+                'description': 'Adding users to workspace'
+            },
+            
+            # NOTE: Overdraft protection is handled in trigger_call task - calls allowed
+            # if not already in overdraft. Actual minutes recorded here when call log created.
+            #
+            # Premium features (crm_integrations, custom_voice_cloning, etc.) are not 
+            # yet implemented in the API, so no endpoint mappings are created for them.
+        ]
+        
+        created_count = 0
+        updated_count = 0
+        
+        for mapping in endpoint_mappings:
+            endpoint, created = EndpointFeature.objects.get_or_create(
+                route_name=mapping['route_name'],
+                http_method=mapping['http_method'],
+                defaults={
+                    'feature': mapping['feature']
+                }
+            )
+            
+            if not created and endpoint.feature != mapping['feature']:
+                endpoint.feature = mapping['feature']
+                endpoint.save()
+                updated_count += 1
+            elif created:
+                created_count += 1
+            
+            status = '✅ Created' if created else ('🔄 Updated' if not created and endpoint.feature != mapping['feature'] else '✔️ Unchanged')
+            self.stdout.write(f'  {status}: {mapping["route_name"]} ({mapping["http_method"]}) → {mapping["feature"].feature_name}')
+        
+        if created_count == 0 and updated_count == 0:
+            self.stdout.write('  ✔️ All endpoint mappings already exist')
+        else:
+            self.stdout.write(
+                self.style.SUCCESS(f'🎯 Created {created_count} and updated {updated_count} endpoint mappings')
+            )
 
     def _assign_enterprise_to_superusers(self):
         """Assign Enterprise plan to existing superusers without active subscriptions"""

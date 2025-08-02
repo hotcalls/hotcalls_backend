@@ -225,7 +225,36 @@ def trigger_call(self, call_task_id):
         )
         campaign_id = str(workspace.id)
 
-        # 🚀 Place the outbound call (synchronous wait inside worker)
+        # 🎯 QUOTA ENFORCEMENT: Check quota with amount=0 (status check only)
+        try:
+            from core.quotas import enforce_and_record, QuotaExceeded
+            
+            # Check quota without recording usage (amount=0)
+            enforce_and_record(
+                workspace=workspace,
+                route_name="internal:outbound_call",
+                http_method="POST",
+                amount=0  # Just check status, don't pre-charge
+            )
+            
+        except QuotaExceeded as quota_err:
+            logger.warning(f"🚫 Call quota exceeded for workspace {workspace.id}: {quota_err}")
+            # DELETE this call task - quota exceeded
+            with transaction.atomic():
+                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                call_task.delete()
+            return {
+                "success": False,
+                "call_task_id": call_task_id,
+                "error": "quota_exceeded", 
+                "message": f"Call task deleted - {quota_err}",
+            }
+        except Exception as quota_err:
+            # Log error but don't block the call on quota system failures
+            logger.error(f"⚠️ Quota check failed for workspace {workspace.id}: {quota_err}")
+            # Allow call to proceed
+
+        # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
         call_result = asyncio.run(
             _make_call_async(
                 sip_trunk_id=sip_trunk_id,

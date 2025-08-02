@@ -9,6 +9,9 @@ from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 import json
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 from core.models import CallLog, Agent, Lead, CallTask, CallStatus
 from .serializers import (
@@ -264,6 +267,37 @@ class CallLogViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return CallLogCreateSerializer
         return CallLogSerializer
+    
+    def perform_create(self, serializer):
+        """Create call log and record actual call minutes usage"""
+        from core.quotas import enforce_and_record
+        from decimal import Decimal
+        
+        # Create the call log first
+        call_log = serializer.save()
+        
+        # Record actual call duration in quota system
+        try:
+            # Get workspace from agent
+            workspace = call_log.agent.workspace
+            
+            # Convert duration from seconds to minutes
+            duration_minutes = Decimal(call_log.duration) / Decimal('60')
+            
+            # Record actual usage (virtual route, bypasses HTTP middleware)
+            enforce_and_record(
+                workspace=workspace,
+                route_name="internal:call_duration_used",
+                http_method="POST",
+                amount=duration_minutes
+            )
+            
+            logger.info(f"📞 Recorded {duration_minutes} minutes usage for workspace {workspace.id}")
+            
+        except Exception as quota_err:
+            # Log error but don't fail call log creation
+            logger.error(f"⚠️ Failed to record call minutes for call log {call_log.id}: {quota_err}")
+            # Call log creation succeeds regardless of quota recording errors
     
     @extend_schema(
         summary="📊 Get call analytics",
