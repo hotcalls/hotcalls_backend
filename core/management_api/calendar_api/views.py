@@ -104,11 +104,12 @@ class CalendarViewSet(viewsets.ModelViewSet):
         """Filter queryset based on user permissions"""
         user = self.request.user
         if user.is_staff:
-            return Calendar.objects.all().select_related('workspace').prefetch_related('google_calendar')
+            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar')
         else:
-            # Regular users can only see calendars in their workspaces
+            # Regular users can only see calendars in their workspaces and only active calendars
             return Calendar.objects.filter(
-                workspace__users=user
+                workspace__users=user,
+                active=True
             ).select_related('workspace').prefetch_related('google_calendar')
     
     # 🎯 GOOGLE OAUTH ENDPOINTS
@@ -224,14 +225,26 @@ class CalendarViewSet(viewsets.ModelViewSet):
         
         if error:
             logger.warning(f"Google OAuth error: {error}")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=oauth_failed&details={error}")
             return Response({'error': f'OAuth failed: {error}'}, status=status.HTTP_400_BAD_REQUEST)
             
         if not code:
             logger.warning("No authorization code received in OAuth callback")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=no_code")
             return Response({'error': 'No authorization code received'}, status=status.HTTP_400_BAD_REQUEST)
             
         if not state:
             logger.warning("No state parameter received in OAuth callback")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=no_state")
             return Response({'error': 'No state parameter received'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Get user from state
@@ -240,6 +253,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
         
         if not state_data:
             logger.warning(f"Invalid or expired state parameter: {state}")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=invalid_state")
             return Response({'error': 'Invalid or expired OAuth session'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Get user from state data
@@ -248,6 +265,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             user = User.objects.get(id=state_data['user_id'])
         except User.DoesNotExist:
             logger.error(f"User not found for OAuth callback: {state_data['user_id']}")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=user_not_found")
             return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Clean up state from session
@@ -263,6 +284,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             # 3. Get user's workspace
             user_workspace = self._get_user_workspace(user)
             if not user_workspace:
+                if not request.GET.get('api_response'):
+                    from django.shortcuts import redirect
+                    frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                    return redirect(f"{frontend_url}/oauth2callback?error=no_workspace")
                 return Response({
                     'error': 'User must belong to a workspace to connect Google Calendar'
                 }, status=status.HTTP_400_BAD_REQUEST)
@@ -288,13 +313,15 @@ class CalendarViewSet(viewsets.ModelViewSet):
             logger.info(f"{'Created' if created else 'Updated'} Google Calendar connection for {user_info['email']}")
             
             # 6. Return success with calendar data
-            if request.GET.get('redirect_frontend'):
-                # Redirect to frontend with success
+            # OAuth callbacks should redirect to frontend by default (better UX)
+            # Only return JSON if explicitly requested via api_response=true
+            if not request.GET.get('api_response'):
+                # Default: Redirect to frontend with success
                 from django.shortcuts import redirect
-                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
-                return redirect(f"{frontend_url}/calendar-integration?success=true&calendars={len(synced_calendars)}")
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?success=true&calendars={len(synced_calendars)}&email={connection.account_email}")
             else:
-                # API response (for direct API calls)
+                # API response (for direct API calls when api_response=true)
                 return Response({
                     'success': True,
                     'connection': {
@@ -309,6 +336,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Google OAuth callback failed: {str(e)}")
+            if not request.GET.get('api_response'):
+                from django.shortcuts import redirect
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5173')
+                return redirect(f"{frontend_url}/oauth2callback?error=server_error&details={str(e)}")
             return Response({
                 'error': 'Failed to connect Google Calendar',
                 'details': str(e)
@@ -348,10 +379,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
         """List Google Calendar connections for workspace"""
         user = request.user
         if user.is_staff:
-            connections = GoogleCalendarConnection.objects.all()
+            connections = GoogleCalendarConnection.objects.filter(active=True)
         else:
             user_workspace = self._get_user_workspace(user)
-            connections = GoogleCalendarConnection.objects.filter(workspace=user_workspace)
+            connections = GoogleCalendarConnection.objects.filter(workspace=user_workspace, active=True)
         
         serializer = GoogleCalendarConnectionSerializer(connections, many=True)
         return Response(serializer.data)
@@ -423,9 +454,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             connection.active = False
             connection.save()
             
-            # Deactivate related calendars
+            # Deactivate related calendars in the same workspace
             Calendar.objects.filter(
-                google_calendar__connection=connection
+                workspace=connection.workspace,
+                provider='google'
             ).update(active=False)
             
             logger.info(f"Disconnected Google Calendar for {connection.account_email}")
