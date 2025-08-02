@@ -99,6 +99,9 @@ urlpatterns = [
     # LiveKit Token Management API (Superuser only)
     path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
     
+    # Google Calendar MCP Token Management API
+    path('api/google-calendar-mcp/', include(('core.management_api.google_calendar_mcp_api.urls', 'google_calendar_mcp_api'), namespace='google_calendar_mcp_api')),
+    
     # Meta Webhooks (for Meta to call)
     path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
 ]

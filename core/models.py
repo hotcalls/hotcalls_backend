@@ -1010,6 +1010,14 @@ class GoogleCalendar(models.Model):
         on_delete=models.CASCADE, 
         related_name='google_calendar'
     )
+    connection = models.ForeignKey(
+        'GoogleCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='calendars',
+        null=True,
+        blank=True,
+        help_text="OAuth connection that provides access to this calendar"
+    )
     # Google Calendar API fields
     external_id = models.CharField(
         max_length=255, 
@@ -1019,13 +1027,26 @@ class GoogleCalendar(models.Model):
     # Calendar properties
     primary = models.BooleanField(default=False)
     time_zone = models.CharField(max_length=50)
+    access_role = models.CharField(
+        max_length=20,
+        choices=[
+            ('freeBusyReader', 'Free/Busy Reader'),
+            ('reader', 'Reader'),
+            ('writer', 'Writer'),
+            ('owner', 'Owner'),
+        ],
+        default='reader',
+        help_text="Access level for this calendar"
+    )
     
-    refresh_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API refresh token (encrypted at rest)")
-    access_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API access token (encrypted at rest)")
-    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    # Legacy fields - kept for compatibility but tokens come from connection
+    refresh_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.refresh_token")
+    access_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.access_token")
+    token_expires_at = models.DateTimeField(null=True, blank=True, help_text="DEPRECATED: Use connection.token_expires_at")
     scopes = models.JSONField(
         default=list,
-        help_text="Granted OAuth scopes"
+        blank=True,
+        help_text="DEPRECATED: Use connection.scopes"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)

@@ -21,16 +21,22 @@ logger = logging.getLogger(__name__)
 class GoogleCalendarService:
     """Service for Google Calendar API interactions"""
     
-    def __init__(self, google_calendar):
-        # Support both GoogleCalendar and GoogleCalendarConnection objects
-        if hasattr(google_calendar, 'refresh_token'):
-            # This is a GoogleCalendar object (direct token fields)
-            self.google_calendar = google_calendar
-            self.connection = google_calendar  # Use same object as connection for compatibility
-        else:
-            # This is a GoogleCalendarConnection object
-            self.connection = google_calendar
+    def __init__(self, google_calendar_or_connection):
+        # Support multiple initialization modes for backward compatibility
+        if hasattr(google_calendar_or_connection, 'workspace') and hasattr(google_calendar_or_connection, 'account_email'):
+            # This is a GoogleCalendarConnection object (new preferred way)
+            self.connection = google_calendar_or_connection
             self.google_calendar = None
+        elif hasattr(google_calendar_or_connection, 'connection'):
+            # This is a GoogleCalendar object with connection reference (new way)
+            self.google_calendar = google_calendar_or_connection
+            self.connection = google_calendar_or_connection.connection
+        elif hasattr(google_calendar_or_connection, 'refresh_token'):
+            # This is a GoogleCalendar object with direct token fields (legacy mode)
+            self.google_calendar = google_calendar_or_connection
+            self.connection = google_calendar_or_connection  # Use same object as connection for compatibility
+        else:
+            raise ValueError("Invalid input: Expected GoogleCalendarConnection or GoogleCalendar object")
     
     def get_account_email(self):
         """Get account email for logging - compatible with both object types"""
@@ -51,9 +57,16 @@ class GoogleCalendarService:
         return dt
         
     def get_credentials(self) -> Credentials:
-        """Get refreshed Google credentials with robust error handling"""
+        """Get refreshed Google credentials with robust error handling and graceful degradation"""
+        
+        # Check if we have basic tokens first
         if not self.connection.access_token or not self.connection.refresh_token:
-            raise ValueError(f"Missing tokens for {self.get_account_email()}. Re-authorization required.")
+            error_msg = f"Missing tokens for {self.get_account_email()}. Re-authorization required."
+            logger.error(f"🚨 TOKEN MISSING: {error_msg}")
+            
+            # Mark connection as needing reauth for monitoring
+            self._mark_connection_needs_reauth("missing_tokens")
+            raise ValueError(error_msg)
         
         credentials = Credentials(
             token=self.connection.access_token,
@@ -67,25 +80,76 @@ class GoogleCalendarService:
         # Check if token needs refresh
         if credentials.expired or self._token_expires_soon():
             try:
-                logger.info(f"Refreshing expired/expiring token for {self.get_account_email()}")
+                logger.info(f"🔄 REFRESHING TOKEN: {self.get_account_email()} (expires: {self.connection.token_expires_at})")
                 credentials.refresh(Request())
                 self._update_connection_tokens(credentials)
-                logger.info(f"✅ Successfully refreshed tokens for {self.get_account_email()}")
+                
+                # Clear any previous error status
+                self._clear_connection_error_status()
+                logger.info(f"✅ TOKEN REFRESH SUCCESS: {self.get_account_email()}")
+                
             except Exception as e:
                 error_msg = str(e)
-                logger.error(f"❌ Failed to refresh token for {self.get_account_email()}: {error_msg}")
+                logger.error(f"❌ TOKEN REFRESH FAILED: {self.get_account_email()} - {error_msg}")
                 
                 # Check for specific Google API errors that require re-authorization
                 if self._is_reauth_required_error(error_msg):
-                    logger.error(f"🚨 Re-authorization required for {self.get_account_email()}")
-                    # Clear invalid tokens to force re-auth
+                    logger.error(f"🚨 REAUTH REQUIRED: {self.get_account_email()}")
+                    
+                    # Clear invalid tokens and mark for reauth
                     self._clear_invalid_tokens()
+                    self._mark_connection_needs_reauth("invalid_grant")
+                    
                     raise ValueError(f"Re-authorization required for {self.get_account_email()}. Please reconnect your Google Calendar.")
                 else:
                     # Other types of errors (network, temporary, etc.)
+                    self._mark_connection_error("refresh_failed", error_msg)
                     raise RuntimeError(f"Token refresh failed for {self.get_account_email()}: {error_msg}")
                 
         return credentials
+    
+    def _mark_connection_needs_reauth(self, reason: str):
+        """Mark connection as needing re-authorization for monitoring"""
+        try:
+            if not hasattr(self.connection, 'auth_status'):
+                # If the field doesn't exist, we'll skip this for now
+                logger.warning(f"Connection {self.get_account_email()} doesn't have auth_status field")
+                return
+                
+            self.connection.auth_status = 'needs_reauth'
+            self.connection.last_error = {
+                'type': 'auth_required',
+                'reason': reason,
+                'timestamp': timezone.now().isoformat()
+            }
+            self.connection.save(update_fields=['auth_status', 'last_error', 'updated_at'])
+            logger.info(f"Marked {self.get_account_email()} as needing re-authorization")
+        except Exception as e:
+            logger.warning(f"Failed to mark connection status for {self.get_account_email()}: {str(e)}")
+    
+    def _mark_connection_error(self, error_type: str, error_msg: str):
+        """Mark connection as having an error for monitoring"""
+        try:
+            if hasattr(self.connection, 'last_error'):
+                self.connection.last_error = {
+                    'type': error_type,
+                    'message': error_msg,
+                    'timestamp': timezone.now().isoformat()
+                }
+                self.connection.save(update_fields=['last_error', 'updated_at'])
+        except Exception as e:
+            logger.warning(f"Failed to mark connection error for {self.get_account_email()}: {str(e)}")
+    
+    def _clear_connection_error_status(self):
+        """Clear error status when connection is working again"""
+        try:
+            if hasattr(self.connection, 'auth_status') and self.connection.auth_status == 'needs_reauth':
+                self.connection.auth_status = 'active'
+            if hasattr(self.connection, 'last_error'):
+                self.connection.last_error = None
+            self.connection.save(update_fields=['auth_status', 'last_error', 'updated_at'])
+        except Exception as e:
+            logger.warning(f"Failed to clear connection status for {self.get_account_email()}: {str(e)}")
     
     def _is_reauth_required_error(self, error_msg: str) -> bool:
         """Check if the error indicates re-authorization is required"""
@@ -95,7 +159,9 @@ class GoogleCalendarService:
             'authorization_revoked',
             'invalid_client',
             'unauthorized_client',
-            'access_denied'
+            'access_denied',
+            'token_expired',
+            'invalid_token'
         ]
         
         error_lower = error_msg.lower()
@@ -191,23 +257,25 @@ class GoogleCalendarService:
                 defaults={'active': True}
             )
             
-            # Create or update GoogleCalendar using only existing fields
+            # Create or update GoogleCalendar with connection reference
             google_calendar, gc_created = GoogleCalendar.objects.update_or_create(
                 external_id=calendar_data['id'],
                 defaults={
                     'calendar': calendar,
+                    'connection': self.connection,  # Link to GoogleCalendarConnection
                     'primary': calendar_data.get('primary', False),
                     'time_zone': calendar_data.get('timeZone', 'UTC'),
-                    # Note: We don't store tokens here anymore as they're in GoogleCalendarConnection
-                    'refresh_token': '',  # Keep empty - tokens are in connection
-                    'access_token': '',   # Keep empty - tokens are in connection
-                    'token_expires_at': timezone.now(),  # Placeholder
-                    'scopes': []  # Keep empty - scopes are in connection
+                    'access_role': calendar_data.get('accessRole', 'reader'),  # Add access_role from Google API
+                    # Legacy fields - kept empty as tokens come from connection
+                    'refresh_token': '',  # DEPRECATED: Use connection.refresh_token
+                    'access_token': '',   # DEPRECATED: Use connection.access_token
+                    'token_expires_at': None,  # DEPRECATED: Use connection.token_expires_at
+                    'scopes': []  # DEPRECATED: Use connection.scopes
                 }
             )
             
             if created or gc_created:
-                logger.info(f"{'Created' if created else 'Updated'} calendar: {calendar_data['summary']}")
+                logger.info(f"{'Created' if created else 'Updated'} calendar: {calendar_data['summary']} (access: {calendar_data.get('accessRole', 'reader')})")
             
             return calendar
             
@@ -216,7 +284,7 @@ class GoogleCalendarService:
             return None
     
     def check_availability(self, calendar_id: str, start_time: datetime, end_time: datetime) -> List[Dict]:
-        """Check availability using Google Free/Busy API"""
+        """Check availability using Google Free/Busy API with robust error handling"""
         try:
             service = self.get_service()
             
@@ -226,16 +294,46 @@ class GoogleCalendarService:
                 'items': [{'id': calendar_id}]
             }
             
+            logger.debug(f"Checking availability for calendar {calendar_id} from {start_time} to {end_time}")
             freebusy_result = service.freebusy().query(body=body).execute()
             busy_times = freebusy_result.get('calendars', {}).get(calendar_id, {}).get('busy', [])
             
+            logger.debug(f"Found {len(busy_times)} busy periods for calendar {calendar_id}")
             return busy_times
             
+        except ValueError as e:
+            # Handle OAuth/token errors - these are expected and should be handled gracefully
+            error_msg = str(e)
+            if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                logger.warning(f"Calendar {calendar_id} needs re-authorization: {error_msg}")
+                # Return empty busy times rather than failing - graceful degradation
+                return []
+            else:
+                logger.error(f"OAuth error checking availability for calendar {calendar_id}: {error_msg}")
+                raise
+                
         except HttpError as e:
-            logger.error(f"Google API error checking availability: {str(e)}")
-            raise
+            status_code = e.resp.status
+            logger.error(f"Google API error checking availability (HTTP {status_code}): {str(e)}")
+            
+            # Handle specific HTTP errors gracefully
+            if status_code == 401:
+                logger.warning(f"Unauthorized access to calendar {calendar_id} - tokens may need refresh")
+                return []  # Graceful degradation
+            elif status_code == 403:
+                logger.warning(f"Forbidden access to calendar {calendar_id} - insufficient permissions")
+                return []  # Graceful degradation
+            elif status_code == 404:
+                logger.warning(f"Calendar {calendar_id} not found")
+                return []  # Graceful degradation
+            elif status_code >= 500:
+                logger.error(f"Google API server error for calendar {calendar_id}")
+                raise  # Server errors should be retried
+            else:
+                raise  # Other errors should be handled by caller
+                
         except Exception as e:
-            logger.error(f"Failed to check availability for calendar {calendar_id}: {str(e)}")
+            logger.error(f"Unexpected error checking availability for calendar {calendar_id}: {str(e)}")
             raise
     
     def create_event(self, calendar_id: str, event_data: Dict) -> Dict:
@@ -249,8 +347,11 @@ class GoogleCalendarService:
                 external_id=calendar_id
             )
             
-            if google_calendar.access_role not in ['writer', 'owner']:
-                raise ValueError(f"Cannot create events in calendar with {google_calendar.access_role} access")
+            # Check calendar permissions if access_role is available
+            access_role = getattr(google_calendar, 'access_role', 'reader')
+            if access_role not in ['writer', 'owner']:
+                logger.warning(f"Calendar {calendar_id} has {access_role} access - may not be able to create events")
+                # Continue anyway - let Google API return appropriate error if needed
             
             event = service.events().insert(
                 calendarId=calendar_id,

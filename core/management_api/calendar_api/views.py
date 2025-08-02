@@ -21,7 +21,7 @@ from .serializers import (
     GoogleCalendarMCPTokenRequestSerializer, GoogleCalendarMCPTokenResponseSerializer
 )
 from .filters import CalendarFilter, CalendarConfigurationFilter
-from .permissions import CalendarPermission, CalendarConfigurationPermission, SuperuserOnlyPermission, GoogleCalendarMCPPermission
+from .permissions import CalendarPermission, CalendarConfigurationPermission, GoogleCalendarMCPPermission, SuperuserOnlyPermission, GoogleCalendarMCPPermission
 
 logger = logging.getLogger(__name__)
 
@@ -806,34 +806,52 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                     'busy_periods': [],
                     'config_name': config.name,
                     'total_slots_found': 0,
-                    'message': validation['reason']
+                    'message': validation['reason'],
+                    'calendar_health': {'status': 'rules_violation', 'message': validation['reason']}
                 })
             
-            # Get busy times from conflict calendars
-            busy_times = self._get_busy_times_from_conflicts(config, date)
+            # Get busy times from conflict calendars with enhanced error tracking
+            busy_times_result = self._get_busy_times_from_conflicts_with_health(config, date)
+            busy_times = busy_times_result['busy_times']
+            calendar_health = busy_times_result['health_status']
             
             # Calculate available slots
             available_slots = self._calculate_available_slots(config, date, duration_minutes, busy_times)
             
-            # Prepare response
+            # Prepare response with health information
             response_data = {
                 'date': date,
                 'available_slots': available_slots,
                 'busy_periods': busy_times,
                 'config_name': config.name,
-                'total_slots_found': len(available_slots)
+                'total_slots_found': len(available_slots),
+                'calendar_health': calendar_health
             }
             
-            logger.info(f"Availability check for config {config.id}: {len(available_slots)} slots found for {date}")
+            # Add warnings if some calendars failed
+            if calendar_health['failed_calendars']:
+                response_data['warnings'] = [
+                    f"Could not check availability for {len(calendar_health['failed_calendars'])} calendars: {', '.join(calendar_health['failed_calendars'])}"
+                ]
             
             return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
             logger.error(f"Error checking availability for config {config.id}: {str(e)}")
-            return Response({
+            
+            # Provide more specific error information
+            error_response = {
                 'error': 'Failed to check availability',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'details': str(e),
+                'config_name': config.name,
+                'date': date,
+                'calendar_health': {
+                    'status': 'system_error',
+                    'message': 'Unexpected system error occurred'
+                }
+            }
+            
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="📅 Book Appointment",
@@ -889,11 +907,15 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             if not validation['valid']:
                 return Response({
                     'error': 'Booking rules validation failed',
-                    'details': validation['reason']
+                    'details': validation['reason'],
+                    'config_name': config.name
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Get current busy times and check if slot is still available
-            busy_times = self._get_busy_times_from_conflicts(config, date)
+            busy_times_result = self._get_busy_times_from_conflicts_with_health(config, date)
+            busy_times = busy_times_result['busy_times']
+            calendar_health = busy_times_result['health_status']
+            
             available_slots = self._calculate_available_slots(config, date, duration_minutes, busy_times)
             
             # Check if requested time slot is available
@@ -906,8 +928,29 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             if not slot_available:
                 return Response({
                     'error': 'Time slot no longer available',
-                    'details': f'Requested time {requested_time} is not available'
+                    'details': f'Requested time {requested_time} is not available',
+                    'calendar_health': calendar_health,
+                    'config_name': config.name
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check main calendar health before attempting to book
+            main_calendar = config.calendar
+            if not hasattr(main_calendar, 'google_calendar'):
+                return Response({
+                    'error': 'Calendar configuration error',
+                    'details': 'Main calendar has no Google Calendar connection',
+                    'config_name': config.name
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Verify main calendar has valid tokens
+            google_calendar = main_calendar.google_calendar
+            if not google_calendar.connection or not google_calendar.connection.access_token:
+                return Response({
+                    'error': 'Main calendar authentication required',
+                    'details': f'Calendar "{main_calendar.name}" needs re-authorization',
+                    'config_name': config.name,
+                    'requires_reauth': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
             
             # Build event data
             event_data = self._build_event_data(
@@ -916,18 +959,25 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             )
             
             # Create event in main calendar
-            main_calendar = config.calendar
-            if not hasattr(main_calendar, 'google_calendar'):
-                return Response({
-                    'error': 'Calendar configuration error',
-                    'details': 'Main calendar has no Google Calendar connection'
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            service = CalendarServiceFactory.get_service(main_calendar)
-            external_id = main_calendar.google_calendar.external_id
-            
-            # Create the event
-            created_event = service.create_event(external_id, event_data)
+            try:
+                service = CalendarServiceFactory.get_service(main_calendar)
+                external_id = main_calendar.google_calendar.external_id
+                
+                # Create the event
+                created_event = service.create_event(external_id, event_data)
+                
+            except ValueError as e:
+                # Handle OAuth/token errors for main calendar
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    return Response({
+                        'error': 'Main calendar authentication required',
+                        'details': f'Calendar "{main_calendar.name}" needs re-authorization: {error_msg}',
+                        'config_name': config.name,
+                        'requires_reauth': True
+                    }, status=status.HTTP_401_UNAUTHORIZED)
+                else:
+                    raise  # Re-raise other ValueError types
             
             # Prepare meeting details for response
             meeting_details = {
@@ -950,19 +1000,33 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 'title': title,
                 'attendee_email': attendee_email,
                 'meeting_details': meeting_details,
-                'config_name': config.name
+                'config_name': config.name,
+                'calendar_health': calendar_health
             }
             
-            logger.info(f"Appointment booked successfully: {created_event['id']} for config {config.id}")
+            # Add warnings if some conflict calendars failed during availability check
+            if calendar_health['failed_calendars']:
+                response_data['warnings'] = [
+                    f"Appointment booked successfully, but {len(calendar_health['failed_calendars'])} conflict calendars could not be checked: {', '.join(calendar_health['failed_calendars'])}"
+                ]
+            
+            logger.info(f"✅ Successfully booked appointment for config {config.id}: {title} at {start_time}")
             
             return Response(response_data, status=status.HTTP_201_CREATED)
         
         except Exception as e:
-            logger.error(f"Error booking appointment for config {config.id}: {str(e)}")
-            return Response({
+            logger.error(f"❌ Error booking appointment for config {config.id}: {str(e)}")
+            
+            # Provide detailed error response
+            error_response = {
                 'error': 'Failed to book appointment',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 
+                'details': str(e),
+                'config_name': config.name,
+                'start_time': start_time.isoformat() if start_time else None,
+                'title': title
+            }
+            
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _validate_booking_rules(self, config: CalendarConfiguration, date) -> dict:
         """Validate booking rules (workdays, days_buffer)"""
@@ -985,7 +1049,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         return {'valid': True}
     
     def _get_busy_times_from_conflicts(self, config: CalendarConfiguration, date) -> list:
-        """Get busy times from all conflict_check_calendars"""
+        """Get busy times from all conflict_check_calendars with robust error handling"""
         busy_times = []
         
         start_datetime = datetime.combine(date, config.from_time)
@@ -995,14 +1059,24 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         start_datetime = timezone.make_aware(start_datetime)
         end_datetime = timezone.make_aware(end_datetime)
         
+        failed_calendars = []
+        
         for calendar_id in config.conflict_check_calendars:
             try:
                 conflict_calendar = Calendar.objects.select_related(
-                    'google_calendar'
+                    'google_calendar__connection'
                 ).get(id=calendar_id)
                 
                 if not hasattr(conflict_calendar, 'google_calendar'):
                     logger.warning(f"Calendar {calendar_id} has no google_calendar data")
+                    failed_calendars.append(conflict_calendar.name if hasattr(conflict_calendar, 'name') else str(calendar_id))
+                    continue
+                
+                # Check if calendar has valid tokens before attempting API call
+                google_calendar = conflict_calendar.google_calendar
+                if not google_calendar.connection or not google_calendar.connection.access_token:
+                    logger.warning(f"Calendar {conflict_calendar.name} has no valid tokens - skipping availability check")
+                    failed_calendars.append(conflict_calendar.name)
                     continue
                 
                 # Get GoogleCalendarService through existing factory
@@ -1022,12 +1096,142 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                     
             except Calendar.DoesNotExist:
                 logger.warning(f"Conflict calendar {calendar_id} not found")
+                failed_calendars.append(str(calendar_id))
+                continue
+            except ValueError as e:
+                # Handle OAuth/token errors gracefully
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    logger.warning(f"Calendar {calendar_id} needs re-authorization - skipping for availability check: {error_msg}")
+                    failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
+                else:
+                    logger.error(f"OAuth error for calendar {calendar_id}: {error_msg}")
+                    failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
                 continue
             except Exception as e:
-                logger.error(f"Error getting busy times for calendar {calendar_id}: {str(e)}")
+                logger.error(f"Unexpected error getting busy times for calendar {calendar_id}: {str(e)}")
+                failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
                 continue
         
+        # Log summary of failed calendars for monitoring
+        if failed_calendars:
+            logger.warning(f"Failed to check availability for {len(failed_calendars)} calendars: {', '.join(failed_calendars)}")
+        
         return busy_times
+    
+    def _get_busy_times_from_conflicts_with_health(self, config: CalendarConfiguration, date) -> dict:
+        """Get busy times with comprehensive health status tracking"""
+        busy_times = []
+        failed_calendars = []
+        token_issues = []
+        successful_calendars = []
+        
+        start_datetime = datetime.combine(date, config.from_time)
+        end_datetime = datetime.combine(date, config.to_time)
+        
+        # Make timezone aware
+        start_datetime = timezone.make_aware(start_datetime)
+        end_datetime = timezone.make_aware(end_datetime)
+        
+        total_calendars = len(config.conflict_check_calendars)
+        
+        for calendar_id in config.conflict_check_calendars:
+            calendar_name = f"Calendar-{calendar_id}"
+            
+            try:
+                conflict_calendar = Calendar.objects.select_related(
+                    'google_calendar__connection'
+                ).get(id=calendar_id)
+                
+                calendar_name = conflict_calendar.name
+                
+                if not hasattr(conflict_calendar, 'google_calendar'):
+                    logger.warning(f"Calendar {calendar_name} has no google_calendar data")
+                    failed_calendars.append(calendar_name)
+                    continue
+                
+                # Check if calendar has valid tokens before attempting API call
+                google_calendar = conflict_calendar.google_calendar
+                if not google_calendar.connection or not google_calendar.connection.access_token:
+                    logger.warning(f"Calendar {calendar_name} has no valid tokens - skipping availability check")
+                    token_issues.append(calendar_name)
+                    continue
+                
+                # Get GoogleCalendarService through existing factory
+                service = CalendarServiceFactory.get_service(conflict_calendar)
+                external_id = conflict_calendar.google_calendar.external_id
+                
+                # Get busy times for this calendar
+                calendar_busy = service.check_availability(external_id, start_datetime, end_datetime)
+                
+                # Format busy times
+                for busy_period in calendar_busy:
+                    busy_times.append({
+                        'start': busy_period.get('start'),
+                        'end': busy_period.get('end'),
+                        'calendar_name': calendar_name
+                    })
+                
+                successful_calendars.append(calendar_name)
+                logger.debug(f"Successfully checked availability for {calendar_name}: {len(calendar_busy)} busy periods")
+                    
+            except Calendar.DoesNotExist:
+                logger.warning(f"Conflict calendar {calendar_id} not found")
+                failed_calendars.append(calendar_name)
+                continue
+            except ValueError as e:
+                # Handle OAuth/token errors gracefully
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    logger.warning(f"Calendar {calendar_name} needs re-authorization - skipping for availability check: {error_msg}")
+                    token_issues.append(calendar_name)
+                else:
+                    logger.error(f"OAuth error for calendar {calendar_name}: {error_msg}")
+                    failed_calendars.append(calendar_name)
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error getting busy times for calendar {calendar_name}: {str(e)}")
+                failed_calendars.append(calendar_name)
+                continue
+        
+        # Determine overall health status
+        if len(successful_calendars) == total_calendars:
+            health_status = 'healthy'
+        elif len(successful_calendars) > 0:
+            health_status = 'partial'
+        else:
+            health_status = 'unhealthy'
+        
+        # Create comprehensive health report
+        health_info = {
+            'status': health_status,
+            'total_calendars': total_calendars,
+            'successful_calendars': len(successful_calendars),
+            'failed_calendars': failed_calendars,
+            'token_issues': token_issues,
+            'message': self._get_health_message(health_status, total_calendars, len(successful_calendars), token_issues, failed_calendars)
+        }
+        
+        logger.info(f"Calendar health check for config {config.id}: {health_status} - {len(successful_calendars)}/{total_calendars} calendars successful")
+        
+        return {
+            'busy_times': busy_times,
+            'health_status': health_info
+        }
+    
+    def _get_health_message(self, status: str, total: int, successful: int, token_issues: list, failed: list) -> str:
+        """Generate human-readable health status message"""
+        if status == 'healthy':
+            return f"All {total} calendars checked successfully"
+        elif status == 'partial':
+            issues = []
+            if token_issues:
+                issues.append(f"{len(token_issues)} need re-authorization")
+            if failed:
+                issues.append(f"{len(failed)} had other issues")
+            return f"{successful}/{total} calendars checked successfully. {', '.join(issues)}"
+        else:
+            return f"Could not check any calendars. {len(token_issues)} need re-authorization, {len(failed)} had other issues"
     
     def _calculate_available_slots(self, config: CalendarConfiguration, date, duration_minutes: int, busy_times: list) -> list:
         """Calculate available time slots"""
@@ -1057,10 +1261,15 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 busy_start = busy_period.get('start')
                 busy_end = busy_period.get('end')
                 
-                if isinstance(busy_start, str):
-                    busy_start = datetime.fromisoformat(busy_start.replace('Z', '+00:00'))
-                if isinstance(busy_end, str):
-                    busy_end = datetime.fromisoformat(busy_end.replace('Z', '+00:00'))
+                # Handle string datetime conversion more robustly
+                try:
+                    if isinstance(busy_start, str):
+                        busy_start = datetime.fromisoformat(busy_start.replace('Z', '+00:00'))
+                    if isinstance(busy_end, str):
+                        busy_end = datetime.fromisoformat(busy_end.replace('Z', '+00:00'))
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse busy time: {e}")
+                    continue
                 
                 # Check for overlap (including prep_time buffer)
                 buffer_start = slot_start_aware - timedelta(minutes=config.prep_time)
@@ -1277,3 +1486,6 @@ class GoogleCalendarMCPTokenViewSet(viewsets.ModelViewSet):
         
         response_serializer = GoogleCalendarMCPTokenResponseSerializer(agent)
         return Response(response_serializer.data, status=status.HTTP_201_CREATED) 
+
+# MOVED TO: /api/google-calendar-mcp/tokens/current-token/
+# See core.management_api.google_calendar_mcp_api.views for the new implementation 

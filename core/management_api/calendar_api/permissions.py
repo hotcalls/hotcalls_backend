@@ -73,58 +73,83 @@ class CalendarConfigurationPermission(permissions.BasePermission):
 
 class GoogleCalendarMCPPermission(permissions.BasePermission):
     """
-    Permission class for Google Calendar MCP agents using token-based authentication.
-    Similar to LiveKit agent authentication but for Google Calendar MCP.
+    Permission class for Google Calendar MCP agents using PURE token-based authentication.
+    
+    **🔑 MCP Authentication (Primary):**
+    - Uses HTTP_X_GOOGLE_MCP_TOKEN header for authentication
+    - Validates token against core_google_calendar_mcp_agent table
+    - NO Django user authentication required for MCP requests
+    - Grants full access when valid MCP token is provided
+    
+    **👤 Fallback Authentication (Secondary):**
+    - Falls back to normal Django authentication for non-MCP requests
+    - Maintains backward compatibility for regular users
     """
     
     def has_permission(self, request, view):
-        # Check for MCP token header first
+        # PRIMARY: Check for MCP token authentication first
         if self._is_valid_mcp_request(request):
+            # MCP token valid - grant full access, NO Django auth needed
             return True
         
-        # Fallback to regular authentication for other requests
+        # FALLBACK: Only check Django auth if NOT an MCP request
+        # This allows MCP to completely bypass Django authentication
         if not (request.user and request.user.is_authenticated):
             return False
         
-        # Read operations: authenticated users can access
+        # Regular Django auth logic for non-MCP requests
         if request.method in permissions.SAFE_METHODS:
             return True
         
-        # Write operations require appropriate permissions
         return request.user.is_staff
     
     def has_object_permission(self, request, view, obj):
-        # MCP requests don't get object-level permissions
+        # PRIMARY: MCP requests get full object-level permissions
         if self._is_valid_mcp_request(request):
+            # MCP token grants full access to all objects
             return True
             
-        # Regular authentication logic
+        # FALLBACK: Regular Django auth logic for non-MCP requests
         if request.method in permissions.SAFE_METHODS:
             return request.user and request.user.is_authenticated
         
-        # Write permissions for staff
         return request.user.is_staff
     
     def _is_valid_mcp_request(self, request):
-        """Check if request has valid Google Calendar MCP token header"""
+        """
+        Check if request has valid Google Calendar MCP token.
+        
+        **🔍 Token Validation Process:**
+        1. Extract HTTP_X_GOOGLE_MCP_TOKEN from headers
+        2. Query core_google_calendar_mcp_agent table for matching token
+        3. Verify token has not expired (expires_at > now)
+        4. Store agent info in request for potential logging
+        
+        **✅ Returns True:** Valid MCP token found and not expired
+        **❌ Returns False:** No token, invalid token, or expired token
+        """
         mcp_token = request.META.get('HTTP_X_GOOGLE_MCP_TOKEN')
         
         if not mcp_token:
             return False
         
         try:
-            # Find MCP agent with this token
+            from core.models import GoogleCalendarMCPAgent
+            
+            # Find MCP agent with this token (SQL query to core_google_calendar_mcp_agent)
             agent = GoogleCalendarMCPAgent.objects.get(token=mcp_token)
             
             # Check if token is still valid (not expired)
             if not agent.is_valid():
                 return False
             
-            # Store agent info in request for potential use
+            # Store agent info in request for potential use/logging
             request.google_mcp_agent = agent
             return True
             
         except GoogleCalendarMCPAgent.DoesNotExist:
+            return False
+        except Exception as e:
             return False
 
 
