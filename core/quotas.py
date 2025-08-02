@@ -391,7 +391,6 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
         if not usage_container:
             # No usage recorded yet for this period
             used = Decimal('0')
-            limit = None
         else:
             # Get feature usage
             feature_usage = FeatureUsage.objects.filter(
@@ -404,8 +403,16 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
             else:
                 used = feature_usage.used_amount
                 
-            # Get limit from plan
-            limit = feature_usage.limit if feature_usage else None
+        # FIXED: Always get limit from PlanFeature, not from FeatureUsage
+        from core.models import PlanFeature
+        try:
+            plan_feature = PlanFeature.objects.get(
+                plan=subscription.plan,
+                feature=feature
+            )
+            limit = plan_feature.limit
+        except PlanFeature.DoesNotExist:
+            limit = None
             
         remaining = None
         unlimited = limit is None

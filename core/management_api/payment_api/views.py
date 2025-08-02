@@ -1219,22 +1219,73 @@ def get_workspace_usage_status(request, workspace_id):
         feature_usage = {}
         
         for feature in features:
-            usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
-            
-            # Calculate percentage used if not unlimited
-            percentage_used = None
-            if not usage_info['unlimited'] and usage_info['limit'] and usage_info['limit'] > 0:
-                percentage_used = float((usage_info['used'] / usage_info['limit']) * 100)
-                percentage_used = round(percentage_used, 2)
-            
-            feature_usage[feature.feature_name] = {
-                'used': float(usage_info['used']),
-                'limit': float(usage_info['limit']) if usage_info['limit'] else None,
-                'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
-                'unlimited': usage_info['unlimited'],
-                'percentage_used': percentage_used,
-                'unit': feature.unit
-            }
+            # SPECIAL CASE: For max_users, count ACTUAL users in workspace, not quota usage
+            if feature.feature_name == 'max_users':
+                actual_user_count = workspace.users.count()
+                
+                # Get limit from plan
+                usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
+                limit = usage_info['limit']
+                unlimited = usage_info['unlimited']
+                
+                remaining = None
+                percentage_used = None
+                if not unlimited and limit and limit > 0:
+                    remaining = max(limit - actual_user_count, 0)
+                    percentage_used = float((actual_user_count / limit) * 100)
+                    percentage_used = round(percentage_used, 2)
+                
+                feature_usage[feature.feature_name] = {
+                    'used': float(actual_user_count),
+                    'limit': float(limit) if limit else None,
+                    'remaining': float(remaining) if remaining is not None else None,
+                    'unlimited': unlimited,
+                    'percentage_used': percentage_used,
+                    'unit': feature.unit
+                }
+            # SPECIAL CASE: For max_agents, count ACTUAL agents in workspace, not quota usage  
+            elif feature.feature_name == 'max_agents':
+                from core.models import Agent
+                actual_agent_count = Agent.objects.filter(workspace=workspace).count()
+                
+                # Get limit from plan
+                usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
+                limit = usage_info['limit']
+                unlimited = usage_info['unlimited']
+                
+                remaining = None
+                percentage_used = None
+                if not unlimited and limit and limit > 0:
+                    remaining = max(limit - actual_agent_count, 0)
+                    percentage_used = float((actual_agent_count / limit) * 100)
+                    percentage_used = round(percentage_used, 2)
+                
+                feature_usage[feature.feature_name] = {
+                    'used': float(actual_agent_count),
+                    'limit': float(limit) if limit else None,
+                    'remaining': float(remaining) if remaining is not None else None,
+                    'unlimited': unlimited,
+                    'percentage_used': percentage_used,
+                    'unit': feature.unit
+                }
+            else:
+                # For other features (like call_minutes), use quota tracking system
+                usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
+                
+                # Calculate percentage used if not unlimited
+                percentage_used = None
+                if not usage_info['unlimited'] and usage_info['limit'] and usage_info['limit'] > 0:
+                    percentage_used = float((usage_info['used'] / usage_info['limit']) * 100)
+                    percentage_used = round(percentage_used, 2)
+                
+                feature_usage[feature.feature_name] = {
+                    'used': float(usage_info['used']),
+                    'limit': float(usage_info['limit']) if usage_info['limit'] else None,
+                    'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
+                    'unlimited': usage_info['unlimited'],
+                    'percentage_used': percentage_used,
+                    'unit': feature.unit
+                }
         
         # Build response
         response_data = {
