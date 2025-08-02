@@ -33,3 +33,6 @@ data:
   # Service Discovery for Agent
   BACKEND_SERVICE_URL: "http://${PROJECT_PREFIX}-backend-service"
   BACKEND_API_PORT: "80"
+  
+  # PostgreSQL Configuration (Non-secret)
+  POSTGRES_ENABLED: "true"
