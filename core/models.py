@@ -1252,6 +1252,65 @@ class LiveKitAgent(models.Model):
         return f"LiveKitAgent {self.name} ({'valid' if self.is_valid() else 'expired'})"
 
 
+class GoogleCalendarMCPAgent(models.Model):
+    """
+    Google Calendar MCP Agent Token Management
+    
+    Completely independent table for managing Google Calendar MCP authentication tokens.
+    Each agent name can have only one active token with 1-year validity.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Agent identification
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Unique MCP agent name for Google Calendar authentication"
+    )
+    
+    # Token management
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        help_text="Random string token for MCP authentication"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(help_text="Token expiration date (1 year from creation)")
+    
+    class Meta:
+        db_table = 'core_google_calendar_mcp_agent'
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['name']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Set expiration to 1 year from now if not set
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timezone.timedelta(days=365)
+        
+        # Generate token if not set
+        if not self.token:
+            self.token = self.generate_token()
+        
+        super().save(*args, **kwargs)
+    
+    def is_valid(self):
+        """Check if token is still valid (not expired)"""
+        return timezone.now() < self.expires_at
+    
+    @staticmethod
+    def generate_token():
+        """Generate a secure random token"""
+        return secrets.token_urlsafe(48)  # 64 character URL-safe token
+    
+    def __str__(self):
+        return f"GoogleCalendarMCPAgent {self.name} ({'valid' if self.is_valid() else 'expired'})"
+
+
 class CallTask(models.Model):
     """Call tasks for managing scheduled and queued calls"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

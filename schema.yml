@@ -102,32 +102,6 @@ paths:
         '400':
           description: ❌ Registration failed - Validation errors
   /api/auth/login/:
-    get:
-      operationId: auth_login_retrieve
-      description: "\n    Login with email and password. **Email verification is mandatory**.\n\
-        \    \n    **\U0001F510 Requirements**:\n    - Valid email and password\n\
-        \    - Email MUST be verified (click link from registration email)\n    -\
-        \ Account must be active and not suspended\n    \n    **❌ Login Blocked If**:\n\
-        \    - Email is not verified\n    - Account is suspended or disabled\n   \
-        \ - Invalid credentials provided\n    \n    **✅ Success Response**:\n    -\
-        \ Auth token returned for API access\n    - User profile data returned\n \
-        \   - Use token in Authorization header for all API calls\n    \n    **\U0001F511\
-        \ Using the Token**:\n    ```\n    Authorization: Token <your-token-here>\n\
-        \    ```\n    \n    **\U0001F4E7 If Email Not Verified**:\n    - Use `/resend-verification/`\
-        \ to get new verification email\n    - Check spam/junk folders\n    - Verify\
-        \ email address is correct\n    "
-      summary: 🔑 Email-Based Login with Token Authentication
-      tags:
-      - Authentication
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      - {}
-      responses:
-        '200':
-          description: ✅ Login successful - Token and user data returned
-        '400':
-          description: ❌ Login failed - Validation or verification errors
     post:
       operationId: auth_login_create
       description: "\n    Login with email and password. **Email verification is mandatory**.\n\
@@ -160,6 +134,32 @@ paths:
           description: ✅ Login successful - Token and user data returned
         '400':
           description: ❌ Login failed - Validation or verification errors
+    get:
+      operationId: auth_login_retrieve
+      description: "\n    Login with email and password. **Email verification is mandatory**.\n\
+        \    \n    **\U0001F510 Requirements**:\n    - Valid email and password\n\
+        \    - Email MUST be verified (click link from registration email)\n    -\
+        \ Account must be active and not suspended\n    \n    **❌ Login Blocked If**:\n\
+        \    - Email is not verified\n    - Account is suspended or disabled\n   \
+        \ - Invalid credentials provided\n    \n    **✅ Success Response**:\n    -\
+        \ Auth token returned for API access\n    - User profile data returned\n \
+        \   - Use token in Authorization header for all API calls\n    \n    **\U0001F511\
+        \ Using the Token**:\n    ```\n    Authorization: Token <your-token-here>\n\
+        \    ```\n    \n    **\U0001F4E7 If Email Not Verified**:\n    - Use `/resend-verification/`\
+        \ to get new verification email\n    - Check spam/junk folders\n    - Verify\
+        \ email address is correct\n    "
+      summary: 🔑 Email-Based Login with Token Authentication
+      tags:
+      - Authentication
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      - {}
+      responses:
+        '200':
+          description: ✅ Login successful - Token and user data returned
+        '400':
+          description: ❌ Login failed - Validation or verification errors
   /api/auth/logout/:
     post:
       operationId: auth_logout_create
@@ -180,8 +180,8 @@ paths:
         '401':
           description: 🚫 Authentication required - Invalid or missing token
   /api/auth/verify-email/{token}/:
-    get:
-      operationId: auth_verify_email_retrieve
+    post:
+      operationId: auth_verify_email_create
       description: "\n    Verify user's email address using verification token.\n\
         \    \n    **\U0001F4E7 How to Get Token**:\n    - Token is sent in registration\
         \ email\n    - Also available via `/resend-verification/` endpoint\n    -\
@@ -208,8 +208,8 @@ paths:
           description: ✅ Email verified successfully
         '400':
           description: ❌ Verification failed
-    post:
-      operationId: auth_verify_email_create
+    get:
+      operationId: auth_verify_email_retrieve
       description: "\n    Verify user's email address using verification token.\n\
         \    \n    **\U0001F4E7 How to Get Token**:\n    - Token is sent in registration\
         \ email\n    - Also available via `/resend-verification/` endpoint\n    -\
@@ -798,6 +798,91 @@ paths:
         '401':
           description: 🚫 Authentication required or email not verified
   /api/users/users/{id}/:
+    delete:
+      operationId: users_users_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a user\
+        \ account.**\n        \n        **\U0001F510 Permission Requirements**: \n\
+        \        - **❌ Regular Users**: No access to delete operations\n        -\
+        \ **❌ Staff Members**: Cannot delete user accounts\n        - **✅ Superuser\
+        \ ONLY**: Can delete any user account\n        - **⚠️ Email Verification Required**:\
+        \ Superuser must have verified email\n        \n        **\U0001F4A5 Consequences**:\n\
+        \        - User account permanently removed\n        - All associated data\
+        \ may be affected\n        - Cannot be undone - consider deactivation instead\n\
+        \        \n        **\U0001F6E1️ Safety Recommendations**:\n        - Use\
+        \ status change to 'suspended' instead of deletion\n        - Ensure data\
+        \ backup before deletion\n        - Consider impact on related workspace/agent\
+        \ data\n        "
+      summary: 🗑️ Delete user
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this User.
+        required: true
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ User deleted successfully
+        '401':
+          description: 🚫 Authentication required or email not verified
+        '403':
+          description: 🚫 Permission denied - Only superusers can delete users
+        '404':
+          description: 🚫 User not found
+    put:
+      operationId: users_users_update
+      description: "\n        Update all fields of a user account.\n        \n   \
+        \     **\U0001F510 Permission Requirements**:\n        - **Regular Users**:\
+        \ Can only update their own profile\n        - **Staff Members**: Can update\
+        \ any user's profile\n        - **Superusers**: Can update any user's profile\n\
+        \        - **⚠️ Email Verification Required**: Must have verified email\n\
+        \        \n        **\U0001F504 Update Scope**:\n        - Replaces all editable\
+        \ fields with new values\n        - Cannot modify: `id`, `email`, `date_joined`,\
+        \ `last_login`, `is_email_verified`\n        - Staff can modify: `status`,\
+        \ admin flags\n        - Users can modify: personal information only\n   \
+        \     \n        **\U0001F4E7 Email Changes**: Email addresses cannot be changed\
+        \ after registration for security\n        "
+      summary: ✏️ Update user (full)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this User.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ✅ User updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required or email not verified
+        '403':
+          description: 🚫 Permission denied - Cannot edit other user's profile
+        '404':
+          description: 🚫 User not found
     get:
       operationId: users_users_retrieve
       description: "\n        Retrieve detailed information about a specific user.\n\
@@ -877,91 +962,6 @@ paths:
           description: 🚫 Authentication required or email not verified
         '403':
           description: 🚫 Permission denied
-        '404':
-          description: 🚫 User not found
-    put:
-      operationId: users_users_update
-      description: "\n        Update all fields of a user account.\n        \n   \
-        \     **\U0001F510 Permission Requirements**:\n        - **Regular Users**:\
-        \ Can only update their own profile\n        - **Staff Members**: Can update\
-        \ any user's profile\n        - **Superusers**: Can update any user's profile\n\
-        \        - **⚠️ Email Verification Required**: Must have verified email\n\
-        \        \n        **\U0001F504 Update Scope**:\n        - Replaces all editable\
-        \ fields with new values\n        - Cannot modify: `id`, `email`, `date_joined`,\
-        \ `last_login`, `is_email_verified`\n        - Staff can modify: `status`,\
-        \ admin flags\n        - Users can modify: personal information only\n   \
-        \     \n        **\U0001F4E7 Email Changes**: Email addresses cannot be changed\
-        \ after registration for security\n        "
-      summary: ✏️ Update user (full)
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this User.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UserUpdateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-          description: ✅ User updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required or email not verified
-        '403':
-          description: 🚫 Permission denied - Cannot edit other user's profile
-        '404':
-          description: 🚫 User not found
-    delete:
-      operationId: users_users_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a user\
-        \ account.**\n        \n        **\U0001F510 Permission Requirements**: \n\
-        \        - **❌ Regular Users**: No access to delete operations\n        -\
-        \ **❌ Staff Members**: Cannot delete user accounts\n        - **✅ Superuser\
-        \ ONLY**: Can delete any user account\n        - **⚠️ Email Verification Required**:\
-        \ Superuser must have verified email\n        \n        **\U0001F4A5 Consequences**:\n\
-        \        - User account permanently removed\n        - All associated data\
-        \ may be affected\n        - Cannot be undone - consider deactivation instead\n\
-        \        \n        **\U0001F6E1️ Safety Recommendations**:\n        - Use\
-        \ status change to 'suspended' instead of deletion\n        - Ensure data\
-        \ backup before deletion\n        - Consider impact on related workspace/agent\
-        \ data\n        "
-      summary: 🗑️ Delete user
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this User.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ User deleted successfully
-        '401':
-          description: 🚫 Authentication required or email not verified
-        '403':
-          description: 🚫 Permission denied - Only superusers can delete users
         '404':
           description: 🚫 User not found
   /api/users/users/{id}/change_status/:
@@ -1236,6 +1236,80 @@ paths:
         '403':
           description: 🚫 Permission denied - Staff access required
   /api/users/blacklist/{id}/:
+    delete:
+      operationId: users_blacklist_destroy
+      description: "\n        Remove a user from the blacklist (Staff only).\n   \
+        \     \n        **\U0001F510 Permission Requirements**: \n        - **❌ Regular\
+        \ Users**: No access\n        - **✅ Staff/Superuser**: Can remove blacklist\
+        \ entries\n        - **⚠️ Email Verification Required**: Staff must have verified\
+        \ email\n        \n        **\U0001F4CB Use Cases**:\n        - User appeal\
+        \ approved\n        - Temporary restriction expired\n        - Policy change\
+        \ or error correction\n        "
+      summary: 🗑️ Remove from blacklist
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this blacklist.
+        required: true
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ User removed from blacklist
+        '401':
+          description: 🚫 Authentication required or email not verified
+        '403':
+          description: 🚫 Permission denied - Staff access required
+        '404':
+          description: 🚫 Blacklist entry not found
+    put:
+      operationId: users_blacklist_update
+      description: "\n        Update blacklist entry details (Staff only).\n     \
+        \   \n        **\U0001F510 Permission Requirements**: \n        - **❌ Regular\
+        \ Users**: No access\n        - **✅ Staff/Superuser**: Can modify blacklist\
+        \ entries\n        - **⚠️ Email Verification Required**: Staff must have verified\
+        \ email\n        "
+      summary: ✏️ Update blacklist entry
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this blacklist.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BlacklistRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Blacklist'
+          description: ✅ Blacklist entry updated
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required or email not verified
+        '403':
+          description: 🚫 Permission denied - Staff access required
+        '404':
+          description: 🚫 Blacklist entry not found
     get:
       operationId: users_blacklist_retrieve
       description: "\n        Retrieve detailed information about a specific blacklist\
@@ -1305,80 +1379,6 @@ paths:
           description: 🚫 Authentication required or email not verified
         '403':
           description: 🚫 Permission denied
-        '404':
-          description: 🚫 Blacklist entry not found
-    put:
-      operationId: users_blacklist_update
-      description: "\n        Update blacklist entry details (Staff only).\n     \
-        \   \n        **\U0001F510 Permission Requirements**: \n        - **❌ Regular\
-        \ Users**: No access\n        - **✅ Staff/Superuser**: Can modify blacklist\
-        \ entries\n        - **⚠️ Email Verification Required**: Staff must have verified\
-        \ email\n        "
-      summary: ✏️ Update blacklist entry
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this blacklist.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/BlacklistRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Blacklist'
-          description: ✅ Blacklist entry updated
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required or email not verified
-        '403':
-          description: 🚫 Permission denied - Staff access required
-        '404':
-          description: 🚫 Blacklist entry not found
-    delete:
-      operationId: users_blacklist_destroy
-      description: "\n        Remove a user from the blacklist (Staff only).\n   \
-        \     \n        **\U0001F510 Permission Requirements**: \n        - **❌ Regular\
-        \ Users**: No access\n        - **✅ Staff/Superuser**: Can remove blacklist\
-        \ entries\n        - **⚠️ Email Verification Required**: Staff must have verified\
-        \ email\n        \n        **\U0001F4CB Use Cases**:\n        - User appeal\
-        \ approved\n        - Temporary restriction expired\n        - Policy change\
-        \ or error correction\n        "
-      summary: 🗑️ Remove from blacklist
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this blacklist.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ User removed from blacklist
-        '401':
-          description: 🚫 Authentication required or email not verified
-        '403':
-          description: 🚫 Permission denied - Staff access required
         '404':
           description: 🚫 Blacklist entry not found
   /api/payments/workspaces/{workspace_id}/stripe-info/:
@@ -1852,6 +1852,70 @@ paths:
                 $ref: '#/components/schemas/PlanSummary'
           description: ''
   /api/plans/{id}/:
+    delete:
+      operationId: plans_destroy
+      description: |-
+        ViewSet für Subscription Pläne
+
+        Stellt Endpunkte bereit für:
+        - Liste aller Pläne
+        - Einzelplan-Details
+        - Plan-Vergleich
+        - Öffentliche Plan-Info
+        - Plan erstellen/bearbeiten/löschen (Admin only)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this plan.
+        required: true
+      tags:
+      - plans
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: plans_update
+      description: |-
+        ViewSet für Subscription Pläne
+
+        Stellt Endpunkte bereit für:
+        - Liste aller Pläne
+        - Einzelplan-Details
+        - Plan-Vergleich
+        - Öffentliche Plan-Info
+        - Plan erstellen/bearbeiten/löschen (Admin only)
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this plan.
+        required: true
+      tags:
+      - plans
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Plan'
+          description: ''
     get:
       operationId: plans_retrieve
       description: |-
@@ -1919,70 +1983,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Plan'
           description: ''
-    put:
-      operationId: plans_update
-      description: |-
-        ViewSet für Subscription Pläne
-
-        Stellt Endpunkte bereit für:
-        - Liste aller Pläne
-        - Einzelplan-Details
-        - Plan-Vergleich
-        - Öffentliche Plan-Info
-        - Plan erstellen/bearbeiten/löschen (Admin only)
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this plan.
-        required: true
-      tags:
-      - plans
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PlanRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Plan'
-          description: ''
-    delete:
-      operationId: plans_destroy
-      description: |-
-        ViewSet für Subscription Pläne
-
-        Stellt Endpunkte bereit für:
-        - Liste aller Pläne
-        - Einzelplan-Details
-        - Plan-Vergleich
-        - Öffentliche Plan-Info
-        - Plan erstellen/bearbeiten/löschen (Admin only)
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this plan.
-        required: true
-      tags:
-      - plans
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/plans/{id}/features/:
     get:
       operationId: plans_features_retrieve_2
@@ -2088,6 +2088,58 @@ paths:
                 $ref: '#/components/schemas/Feature'
           description: ''
   /api/plans/features/{id}/:
+    delete:
+      operationId: plans_features_destroy
+      description: |-
+        ViewSet für Features
+        Ermöglicht CRUD-Operationen für Features
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this feature.
+        required: true
+      tags:
+      - plans
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: plans_features_update
+      description: |-
+        ViewSet für Features
+        Ermöglicht CRUD-Operationen für Features
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this feature.
+        required: true
+      tags:
+      - plans
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeatureRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Feature'
+          description: ''
     get:
       operationId: plans_features_retrieve
       description: |-
@@ -2143,58 +2195,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Feature'
           description: ''
-    put:
-      operationId: plans_features_update
-      description: |-
-        ViewSet für Features
-        Ermöglicht CRUD-Operationen für Features
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this feature.
-        required: true
-      tags:
-      - plans
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FeatureRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Feature'
-          description: ''
-    delete:
-      operationId: plans_features_destroy
-      description: |-
-        ViewSet für Features
-        Ermöglicht CRUD-Operationen für Features
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this feature.
-        required: true
-      tags:
-      - plans
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/plans/plan-features/:
     get:
       operationId: plans_plan_features_list
@@ -2250,6 +2250,58 @@ paths:
                 $ref: '#/components/schemas/PlanFeature'
           description: ''
   /api/plans/plan-features/{id}/:
+    delete:
+      operationId: plans_plan_features_destroy
+      description: |-
+        ViewSet für Plan-Feature Zuordnungen
+        Ermöglicht CRUD-Operationen für Plan-Feature-Relationships
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this plan feature.
+        required: true
+      tags:
+      - plans
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: plans_plan_features_update
+      description: |-
+        ViewSet für Plan-Feature Zuordnungen
+        Ermöglicht CRUD-Operationen für Plan-Feature-Relationships
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this plan feature.
+        required: true
+      tags:
+      - plans
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanFeatureRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanFeature'
+          description: ''
     get:
       operationId: plans_plan_features_retrieve
       description: |-
@@ -2305,58 +2357,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/PlanFeature'
           description: ''
-    put:
-      operationId: plans_plan_features_update
-      description: |-
-        ViewSet für Plan-Feature Zuordnungen
-        Ermöglicht CRUD-Operationen für Plan-Feature-Relationships
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this plan feature.
-        required: true
-      tags:
-      - plans
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PlanFeatureRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PlanFeature'
-          description: ''
-    delete:
-      operationId: plans_plan_features_destroy
-      description: |-
-        ViewSet für Plan-Feature Zuordnungen
-        Ermöglicht CRUD-Operationen für Plan-Feature-Relationships
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this plan feature.
-        required: true
-      tags:
-      - plans
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/workspaces/workspaces/:
     get:
       operationId: workspaces_workspaces_list
@@ -2574,6 +2574,86 @@ paths:
         '401':
           description: 🚫 Authentication required - Please login to access workspaces
   /api/workspaces/workspaces/{id}/:
+    delete:
+      operationId: workspaces_workspaces_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a workspace.**\n\
+        \        \n        **\U0001F510 Permission Requirements**:\n        - **❌\
+        \ Regular Users**: No access to workspace deletion\n        - **❌ Staff Members**:\
+        \ Cannot delete workspaces\n        - **✅ Superuser ONLY**: Can delete workspaces\n\
+        \        \n        **\U0001F4A5 Critical Impact**:\n        - Removes all\
+        \ workspace data and relationships\n        - Affects all workspace members\
+        \ and agents\n        - Cannot be undone - ensure data backup\n        \n\
+        \        **\U0001F6E1️ Safety Considerations**:\n        - Ensure all agents\
+        \ and resources are reassigned\n        - Communicate with affected users\n\
+        \        - Consider workspace archival instead\n        "
+      summary: 🗑️ Delete workspace
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this workspace.
+        required: true
+      tags:
+      - Workspace Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Workspace deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Only superusers can delete workspaces
+        '404':
+          description: 🚫 Workspace not found
+    put:
+      operationId: workspaces_workspaces_update
+      description: "\n        Update workspace information.\n        \n        **\U0001F510\
+        \ Permission Requirements**:\n        - **✅ Regular Users**: Can update workspaces\
+        \ they belong to\n        - **✅ Staff Members**: Can update any workspace\
+        \ details\n        - **✅ Superusers**: Can update any workspace details\n\
+        \        \n        **⚠️ Organizational Impact**:\n        - May affect all\
+        \ workspace members\n        - Consider communication for major changes\n\
+        \        - Affects resource organization and access\n        "
+      summary: ✏️ Update workspace
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this workspace.
+        required: true
+      tags:
+      - Workspace Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceCreateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Workspace'
+          description: ✅ Workspace updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - You can only update workspaces you belong
+            to
+        '404':
+          description: 🚫 Workspace not found
     get:
       operationId: workspaces_workspaces_retrieve
       description: "\n        Retrieve detailed information about a specific workspace.\n\
@@ -2651,86 +2731,6 @@ paths:
         '403':
           description: 🚫 Permission denied - You can only update workspaces you belong
             to
-        '404':
-          description: 🚫 Workspace not found
-    put:
-      operationId: workspaces_workspaces_update
-      description: "\n        Update workspace information.\n        \n        **\U0001F510\
-        \ Permission Requirements**:\n        - **✅ Regular Users**: Can update workspaces\
-        \ they belong to\n        - **✅ Staff Members**: Can update any workspace\
-        \ details\n        - **✅ Superusers**: Can update any workspace details\n\
-        \        \n        **⚠️ Organizational Impact**:\n        - May affect all\
-        \ workspace members\n        - Consider communication for major changes\n\
-        \        - Affects resource organization and access\n        "
-      summary: ✏️ Update workspace
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - Workspace Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/WorkspaceCreateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workspace'
-          description: ✅ Workspace updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - You can only update workspaces you belong
-            to
-        '404':
-          description: 🚫 Workspace not found
-    delete:
-      operationId: workspaces_workspaces_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a workspace.**\n\
-        \        \n        **\U0001F510 Permission Requirements**:\n        - **❌\
-        \ Regular Users**: No access to workspace deletion\n        - **❌ Staff Members**:\
-        \ Cannot delete workspaces\n        - **✅ Superuser ONLY**: Can delete workspaces\n\
-        \        \n        **\U0001F4A5 Critical Impact**:\n        - Removes all\
-        \ workspace data and relationships\n        - Affects all workspace members\
-        \ and agents\n        - Cannot be undone - ensure data backup\n        \n\
-        \        **\U0001F6E1️ Safety Considerations**:\n        - Ensure all agents\
-        \ and resources are reassigned\n        - Communicate with affected users\n\
-        \        - Consider workspace archival instead\n        "
-      summary: 🗑️ Delete workspace
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - Workspace Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Workspace deleted successfully
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Only superusers can delete workspaces
         '404':
           description: 🚫 Workspace not found
   /api/workspaces/workspaces/{id}/add_users/:
@@ -3182,6 +3182,88 @@ paths:
           description: 🚫 Permission denied - You can only create agents in workspaces
             you belong to
   /api/agents/agents/{agent_id}/:
+    delete:
+      operationId: agents_agents_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete an AI\
+        \ agent.**\n        \n        **\U0001F510 Permission Requirements**:\n  \
+        \      - **✅ Regular Users**: Can delete agents in workspaces they belong\
+        \ to\n        - **✅ Staff Members**: Can delete any agent\n        - **✅ Superusers**:\
+        \ Can delete any agent\n        \n        **\U0001F4A5 Critical Impact**:\n\
+        \        - Removes agent and all configurations\n        - Affects phone number\
+        \ assignments\n        - Disrupts ongoing call operations\n        - Cannot\
+        \ be undone\n        \n        **\U0001F6E1️ Safety Considerations**:\n  \
+        \      - Ensure no active calls using this agent\n        - Reassign phone\
+        \ numbers before deletion\n        - Consider agent deactivation instead\n\
+        \        "
+      summary: 🗑️ Delete AI agent
+      parameters:
+      - in: path
+        name: agent_id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this agent.
+        required: true
+      tags:
+      - Agent Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Agent deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - You can only delete agents in workspaces
+            you belong to
+        '404':
+          description: 🚫 Agent not found
+    put:
+      operationId: agents_agents_update
+      description: "\n        Update AI agent configuration.\n        \n        **\U0001F510\
+        \ Permission Requirements**:\n        - **✅ Regular Users**: Can update agents\
+        \ in workspaces they belong to\n        - **✅ Staff Members**: Can update\
+        \ any agent configuration\n        - **✅ Superusers**: Can update any agent\
+        \ configuration\n        \n        **⚠️ Configuration Impact**:\n        -\
+        \ May affect ongoing calls and interactions\n        - Changes voice, personality,\
+        \ and behavior\n        - Updates working hours and availability\n        "
+      summary: ✏️ Update AI agent
+      parameters:
+      - in: path
+        name: agent_id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this agent.
+        required: true
+      tags:
+      - Agent Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentCreateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+          description: ✅ Agent updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - You can only update agents in workspaces
+            you belong to
+        '404':
+          description: 🚫 Agent not found
     get:
       operationId: agents_agents_retrieve
       description: "\n        Retrieve detailed information about a specific AI agent.\n\
@@ -3258,88 +3340,6 @@ paths:
           description: 🚫 Authentication required
         '403':
           description: 🚫 Permission denied - You can only update agents in workspaces
-            you belong to
-        '404':
-          description: 🚫 Agent not found
-    put:
-      operationId: agents_agents_update
-      description: "\n        Update AI agent configuration.\n        \n        **\U0001F510\
-        \ Permission Requirements**:\n        - **✅ Regular Users**: Can update agents\
-        \ in workspaces they belong to\n        - **✅ Staff Members**: Can update\
-        \ any agent configuration\n        - **✅ Superusers**: Can update any agent\
-        \ configuration\n        \n        **⚠️ Configuration Impact**:\n        -\
-        \ May affect ongoing calls and interactions\n        - Changes voice, personality,\
-        \ and behavior\n        - Updates working hours and availability\n        "
-      summary: ✏️ Update AI agent
-      parameters:
-      - in: path
-        name: agent_id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this agent.
-        required: true
-      tags:
-      - Agent Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AgentCreateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Agent'
-          description: ✅ Agent updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - You can only update agents in workspaces
-            you belong to
-        '404':
-          description: 🚫 Agent not found
-    delete:
-      operationId: agents_agents_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete an AI\
-        \ agent.**\n        \n        **\U0001F510 Permission Requirements**:\n  \
-        \      - **✅ Regular Users**: Can delete agents in workspaces they belong\
-        \ to\n        - **✅ Staff Members**: Can delete any agent\n        - **✅ Superusers**:\
-        \ Can delete any agent\n        \n        **\U0001F4A5 Critical Impact**:\n\
-        \        - Removes agent and all configurations\n        - Affects phone number\
-        \ assignments\n        - Disrupts ongoing call operations\n        - Cannot\
-        \ be undone\n        \n        **\U0001F6E1️ Safety Considerations**:\n  \
-        \      - Ensure no active calls using this agent\n        - Reassign phone\
-        \ numbers before deletion\n        - Consider agent deactivation instead\n\
-        \        "
-      summary: 🗑️ Delete AI agent
-      parameters:
-      - in: path
-        name: agent_id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this agent.
-        required: true
-      tags:
-      - Agent Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Agent deleted successfully
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - You can only delete agents in workspaces
             you belong to
         '404':
           description: 🚫 Agent not found
@@ -3624,6 +3624,73 @@ paths:
         '403':
           description: 🚫 Permission denied - Staff access required
   /api/agents/phone-numbers/{id}/:
+    delete:
+      operationId: agents_phone_numbers_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a phone\
+        \ number.**\n        \n        **\U0001F510 Permission Requirements**: Superuser\
+        \ only\n        \n        **\U0001F4A5 Impact**: Removes phone number and\
+        \ all agent assignments\n        "
+      summary: 🗑️ Delete phone number
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this phone number.
+        required: true
+      tags:
+      - Agent Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Phone number deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Superuser access required
+        '404':
+          description: 🚫 Phone number not found
+    put:
+      operationId: agents_phone_numbers_update
+      description: Update phone number information (Staff only).
+      summary: ✏️ Update phone number
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this phone number.
+        required: true
+      tags:
+      - Agent Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PhoneNumberRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumber'
+          description: ✅ Phone number updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied
+        '404':
+          description: 🚫 Phone number not found
     get:
       operationId: agents_phone_numbers_retrieve
       description: Get detailed information about a specific phone number.
@@ -3687,73 +3754,6 @@ paths:
           description: 🚫 Authentication required
         '403':
           description: 🚫 Permission denied
-        '404':
-          description: 🚫 Phone number not found
-    put:
-      operationId: agents_phone_numbers_update
-      description: Update phone number information (Staff only).
-      summary: ✏️ Update phone number
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this phone number.
-        required: true
-      tags:
-      - Agent Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PhoneNumberRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PhoneNumber'
-          description: ✅ Phone number updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied
-        '404':
-          description: 🚫 Phone number not found
-    delete:
-      operationId: agents_phone_numbers_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a phone\
-        \ number.**\n        \n        **\U0001F510 Permission Requirements**: Superuser\
-        \ only\n        \n        **\U0001F4A5 Impact**: Removes phone number and\
-        \ all agent assignments\n        "
-      summary: 🗑️ Delete phone number
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this phone number.
-        required: true
-      tags:
-      - Agent Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Phone number deleted successfully
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Superuser access required
         '404':
           description: 🚫 Phone number not found
   /api/agents/phone-numbers/{id}/agents/:
@@ -4044,6 +4044,84 @@ paths:
         '401':
           description: 🚫 Authentication required
   /api/leads/leads/{id}/:
+    delete:
+      operationId: leads_leads_destroy
+      description: "\n        Delete a lead from the system (Staff only).\n      \
+        \  \n        **\U0001F510 Permission Requirements**:\n        - **❌ Regular\
+        \ Users**: Cannot delete leads\n        - **✅ Staff Members**: Can delete\
+        \ any lead\n        - **✅ Superusers**: Can delete any lead\n        \n  \
+        \      **⚠️ Data Impact**:\n        - Removes lead and associated call logs\n\
+        \        - May affect reporting and analytics\n        - Consider data archival\
+        \ for compliance\n        "
+      summary: 🗑️ Delete lead
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this lead.
+        required: true
+      tags:
+      - Lead Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Lead deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Staff access required
+        '404':
+          description: 🚫 Lead not found
+    put:
+      operationId: leads_leads_update
+      description: "\n        Update lead information (Staff only).\n        \n  \
+        \      **\U0001F510 Permission Requirements**:\n        - **❌ Regular Users**:\
+        \ Cannot modify existing leads\n        - **✅ Staff Members**: Can update\
+        \ any lead information\n        - **✅ Superusers**: Can update any lead information\n\
+        \        \n        **\U0001F4DD Data Modification**:\n        - Update contact\
+        \ information and metadata\n        - Modify lead qualification details\n\
+        \        - Correct data entry errors\n        \n        **⚠️ Data Quality**:\n\
+        \        - Ensures data consistency across the system\n        - Maintains\
+        \ lead database integrity\n        - Tracks modification history\n        "
+      summary: ✏️ Update lead
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this lead.
+        required: true
+      tags:
+      - Lead Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LeadCreateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lead'
+          description: ✅ Lead updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Staff access required for lead modification
+        '404':
+          description: 🚫 Lead not found
     get:
       operationId: leads_leads_retrieve
       description: "\n        Retrieve detailed information about a specific lead.\n\
@@ -4114,84 +4192,6 @@ paths:
           description: 🚫 Authentication required
         '403':
           description: 🚫 Permission denied
-        '404':
-          description: 🚫 Lead not found
-    put:
-      operationId: leads_leads_update
-      description: "\n        Update lead information (Staff only).\n        \n  \
-        \      **\U0001F510 Permission Requirements**:\n        - **❌ Regular Users**:\
-        \ Cannot modify existing leads\n        - **✅ Staff Members**: Can update\
-        \ any lead information\n        - **✅ Superusers**: Can update any lead information\n\
-        \        \n        **\U0001F4DD Data Modification**:\n        - Update contact\
-        \ information and metadata\n        - Modify lead qualification details\n\
-        \        - Correct data entry errors\n        \n        **⚠️ Data Quality**:\n\
-        \        - Ensures data consistency across the system\n        - Maintains\
-        \ lead database integrity\n        - Tracks modification history\n        "
-      summary: ✏️ Update lead
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this lead.
-        required: true
-      tags:
-      - Lead Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LeadCreateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Lead'
-          description: ✅ Lead updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Staff access required for lead modification
-        '404':
-          description: 🚫 Lead not found
-    delete:
-      operationId: leads_leads_destroy
-      description: "\n        Delete a lead from the system (Staff only).\n      \
-        \  \n        **\U0001F510 Permission Requirements**:\n        - **❌ Regular\
-        \ Users**: Cannot delete leads\n        - **✅ Staff Members**: Can delete\
-        \ any lead\n        - **✅ Superusers**: Can delete any lead\n        \n  \
-        \      **⚠️ Data Impact**:\n        - Removes lead and associated call logs\n\
-        \        - May affect reporting and analytics\n        - Consider data archival\
-        \ for compliance\n        "
-      summary: 🗑️ Delete lead
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this lead.
-        required: true
-      tags:
-      - Lead Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Lead deleted successfully
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Staff access required
         '404':
           description: 🚫 Lead not found
   /api/leads/leads/{id}/call_history/:
@@ -4774,6 +4774,88 @@ paths:
         '401':
           description: 🚫 Authentication required
   /api/calls/call-logs/{id}/:
+    delete:
+      operationId: calls_call_logs_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a call\
+        \ log.**\n        \n        **\U0001F510 Permission Requirements**:\n    \
+        \    - **❌ Regular Users**: Cannot delete call logs\n        - **❌ Staff Members**:\
+        \ Cannot delete call logs\n        - **✅ Superuser ONLY**: Can delete call\
+        \ logs\n        \n        **\U0001F4A5 Data Impact**:\n        - Removes call\
+        \ record permanently\n        - Affects reporting and analytics\n        -\
+        \ May impact compliance requirements\n        \n        **\U0001F6E1️ Compliance\
+        \ Considerations**:\n        - Check legal requirements for call record retention\n\
+        \        - Ensure proper data backup before deletion\n        - Consider data\
+        \ archival instead of deletion\n        "
+      summary: 🗑️ Delete call log
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this call log.
+        required: true
+      tags:
+      - Agent Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Call log deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Only superusers can delete call logs
+        '404':
+          description: 🚫 Call log not found
+    put:
+      operationId: calls_call_logs_update
+      description: "\n        Update call log information (Staff only).\n        \n\
+        \        **\U0001F510 Permission Requirements**:\n        - **❌ Regular Users**:\
+        \ Cannot modify call logs\n        - **✅ Staff Members**: Can update call\
+        \ log details\n        - **✅ Superusers**: Can update call log details\n \
+        \       \n        **\U0001F4DD Data Correction**:\n        - Fix incorrect\
+        \ call data\n        - Update missing information\n        - Correct system\
+        \ integration errors\n        - Update call status and appointments\n    \
+        \    \n        **⚠️ Data Integrity**:\n        - Maintains call history accuracy\n\
+        \        - Ensures reporting consistency\n        - Tracks modification history\n\
+        \        - Validates appointment logic\n        "
+      summary: ✏️ Update call log
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this call log.
+        required: true
+      tags:
+      - Agent Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallLogRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallLog'
+          description: ✅ Call log updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Permission denied - Staff access required
+        '404':
+          description: 🚫 Call log not found
     get:
       operationId: calls_call_logs_retrieve
       description: "\n        Retrieve detailed information about a specific call\
@@ -4845,88 +4927,6 @@ paths:
           description: 🚫 Authentication required
         '403':
           description: 🚫 Permission denied
-        '404':
-          description: 🚫 Call log not found
-    put:
-      operationId: calls_call_logs_update
-      description: "\n        Update call log information (Staff only).\n        \n\
-        \        **\U0001F510 Permission Requirements**:\n        - **❌ Regular Users**:\
-        \ Cannot modify call logs\n        - **✅ Staff Members**: Can update call\
-        \ log details\n        - **✅ Superusers**: Can update call log details\n \
-        \       \n        **\U0001F4DD Data Correction**:\n        - Fix incorrect\
-        \ call data\n        - Update missing information\n        - Correct system\
-        \ integration errors\n        - Update call status and appointments\n    \
-        \    \n        **⚠️ Data Integrity**:\n        - Maintains call history accuracy\n\
-        \        - Ensures reporting consistency\n        - Tracks modification history\n\
-        \        - Validates appointment logic\n        "
-      summary: ✏️ Update call log
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this call log.
-        required: true
-      tags:
-      - Agent Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CallLogRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CallLog'
-          description: ✅ Call log updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Staff access required
-        '404':
-          description: 🚫 Call log not found
-    delete:
-      operationId: calls_call_logs_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Permanently delete a call\
-        \ log.**\n        \n        **\U0001F510 Permission Requirements**:\n    \
-        \    - **❌ Regular Users**: Cannot delete call logs\n        - **❌ Staff Members**:\
-        \ Cannot delete call logs\n        - **✅ Superuser ONLY**: Can delete call\
-        \ logs\n        \n        **\U0001F4A5 Data Impact**:\n        - Removes call\
-        \ record permanently\n        - Affects reporting and analytics\n        -\
-        \ May impact compliance requirements\n        \n        **\U0001F6E1️ Compliance\
-        \ Considerations**:\n        - Check legal requirements for call record retention\n\
-        \        - Ensure proper data backup before deletion\n        - Consider data\
-        \ archival instead of deletion\n        "
-      summary: 🗑️ Delete call log
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this call log.
-        required: true
-      tags:
-      - Agent Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Call log deleted successfully
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Permission denied - Only superusers can delete call logs
         '404':
           description: 🚫 Call log not found
   /api/calls/call-tasks/:
@@ -5005,6 +5005,50 @@ paths:
         '403':
           description: 🚫 Permission denied
   /api/calls/call-tasks/{id}/:
+    delete:
+      operationId: calls_call_tasks_destroy
+      description: ViewSet for managing call tasks
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - calls
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: calls_call_tasks_update
+      description: ViewSet for managing call tasks
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - calls
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CallTaskRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CallTask'
+          description: ''
     get:
       operationId: calls_call_tasks_retrieve
       description: ViewSet for managing call tasks
@@ -5052,50 +5096,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/CallTask'
           description: ''
-    put:
-      operationId: calls_call_tasks_update
-      description: ViewSet for managing call tasks
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - calls
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CallTaskRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CallTask'
-          description: ''
-    delete:
-      operationId: calls_call_tasks_destroy
-      description: ViewSet for managing call tasks
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - calls
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/calls/call-tasks/{id}/trigger/:
     post:
       operationId: calls_call_tasks_trigger_create
@@ -5164,6 +5164,388 @@ paths:
           description: 🚫 Authentication required
         '403':
           description: 🚫 No access to specified agent
+  /api/calendars/configurations/:
+    get:
+      operationId: calendars_configurations_list
+      description: "\n        Retrieve calendar configurations based on your workspace\
+        \ access.\n        \n        **\U0001F510 Permission Requirements**:\n   \
+        \     - **Regular Users**: Can only see configurations for calendars in their\
+        \ workspaces\n        - **Staff Members**: Can view all configurations in\
+        \ the system\n        \n        **\U0001F4CA Response Filtering**:\n     \
+        \   - Regular users see only workspace-scoped configurations\n        - Staff\
+        \ see all configurations\n        "
+      summary: 📋 List calendar configurations
+      parameters:
+      - in: query
+        name: available_from
+        schema:
+          type: string
+          format: time
+      - in: query
+        name: available_to
+        schema:
+          type: string
+          format: time
+      - in: query
+        name: calendar
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: calendar__active
+        schema:
+          type: boolean
+      - in: query
+        name: calendar__google_calendar__access_role
+        schema:
+          type: string
+          enum:
+          - owner
+          - reader
+          - writer
+        description: |-
+          * `reader` - Reader
+          * `writer` - Writer
+          * `owner` - Owner
+      - in: query
+        name: calendar__google_calendar__connection__account_email
+        schema:
+          type: string
+      - in: query
+        name: calendar__google_calendar__primary
+        schema:
+          type: boolean
+      - in: query
+        name: calendar__name
+        schema:
+          type: string
+      - in: query
+        name: calendar__provider
+        schema:
+          type: string
+          enum:
+          - google
+          - outlook
+        description: |-
+          * `google` - Google Calendar
+          * `outlook` - Microsoft Outlook
+      - in: query
+        name: calendar__workspace__workspace_name
+        schema:
+          type: string
+      - in: query
+        name: conflict_calendars_count_max
+        schema:
+          type: number
+      - in: query
+        name: conflict_calendars_count_min
+        schema:
+          type: number
+      - in: query
+        name: created_after
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: created_before
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: days_buffer
+        schema:
+          type: integer
+      - in: query
+        name: days_buffer_max
+        schema:
+          type: integer
+      - in: query
+        name: days_buffer_min
+        schema:
+          type: integer
+      - in: query
+        name: duration
+        schema:
+          type: integer
+      - in: query
+        name: duration_max
+        schema:
+          type: integer
+      - in: query
+        name: duration_min
+        schema:
+          type: integer
+      - in: query
+        name: from_time
+        schema:
+          type: string
+          format: time
+      - in: query
+        name: has_conflict_calendars
+        schema:
+          type: boolean
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: prep_time
+        schema:
+          type: integer
+      - in: query
+        name: prep_time_max
+        schema:
+          type: integer
+      - in: query
+        name: prep_time_min
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: to_time
+        schema:
+          type: string
+          format: time
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedCalendarConfigurationList'
+          description: ✅ Successfully retrieved calendar configurations
+        '401':
+          description: 🚫 Authentication required
+    post:
+      operationId: calendars_configurations_create
+      description: Create a new calendar configuration for calendars in your workspace
+      summary: ➕ Create calendar configuration
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarConfigurationCreateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConfiguration'
+          description: ''
+  /api/calendars/configurations/{id}/:
+    delete:
+      operationId: calendars_configurations_destroy
+      description: Delete a calendar configuration in your workspace
+      summary: 🗑️ Delete configuration
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: calendars_configurations_update
+      description: Update calendar configuration for calendars in your workspace
+      summary: ✏️ Update configuration
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarConfigurationRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConfiguration'
+          description: ''
+    get:
+      operationId: calendars_configurations_retrieve
+      description: Retrieve detailed information about a specific calendar configuration
+      summary: 📄 Get configuration details
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConfiguration'
+          description: ''
+    patch:
+      operationId: calendars_configurations_partial_update
+      description: Update specific fields of a calendar configuration in your workspace
+      summary: 📝 Partially update configuration
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedCalendarConfigurationRequest'
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarConfiguration'
+          description: ''
+  /api/calendars/configurations/{id}/book-appointment/:
+    post:
+      operationId: calendars_configurations_book_appointment_create
+      description: "\n        Book an appointment based on calendar configuration.\n\
+        \        \n        **\U0001F4CB Process:**\n        - Double-checks availability\
+        \ (race condition prevention)\n        - Creates event in main calendar\n\
+        \        - Applies meeting type specific details (link/address)\n        -\
+        \ Sends calendar invitation to attendee\n        \n        **⚙️ Configuration\
+        \ Applied:**\n        - Meeting type (online/in_person/phone)\n        - Meeting\
+        \ link or address\n        - Calendar for event creation\n        "
+      summary: 📅 Book Appointment
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingRequestRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingResponse'
+          description: ✅ Appointment booked successfully
+        '400':
+          description: ❌ Invalid request data or time not available
+        '404':
+          description: ❌ Configuration not found
+        '403':
+          description: 🚫 No access to this configuration
+  /api/calendars/configurations/{id}/check-availability/:
+    post:
+      operationId: calendars_configurations_check_availability_create
+      description: "\n        Check availability for appointments based on calendar\
+        \ configuration rules.\n        \n        **\U0001F4CB Process:**\n      \
+        \  - Validates workdays and days_buffer\n        - Checks conflict_check_calendars\
+        \ for busy times\n        - Calculates available slots considering prep_time\n\
+        \        - Returns available time slots within working hours\n        \n \
+        \       **⚙️ Configuration Applied:**\n        - Working days and hours (from_time/to_time)\n\
+        \        - Preparation time buffer\n        - Days buffer for advance booking\n\
+        \        - Conflict calendar checking\n        "
+      summary: 🕐 Check Calendar Availability
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar configuration.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AvailabilityRequestRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+          description: ✅ Availability calculated successfully
+        '400':
+          description: ❌ Invalid request data
+        '404':
+          description: ❌ Configuration not found
+        '403':
+          description: 🚫 No access to this configuration
   /api/calendars/:
     get:
       operationId: calendars_list
@@ -5409,6 +5791,56 @@ paths:
                 $ref: '#/components/schemas/PaginatedGoogleCalendarConnectionList'
           description: ''
   /api/calendars/{id}/:
+    delete:
+      operationId: calendars_destroy
+      description: Delete a calendar in your workspace
+      summary: Delete calendar
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar.
+        required: true
+      tags:
+      - User Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: calendars_update
+      description: Update calendar information for calendars in your workspace
+      summary: Update calendar
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this calendar.
+        required: true
+      tags:
+      - User Management
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Calendar'
+          description: ''
     get:
       operationId: calendars_retrieve
       description: Retrieve detailed information about a specific calendar with provider
@@ -5453,112 +5885,6 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/PatchedCalendarRequest'
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Calendar'
-          description: ''
-    put:
-      operationId: calendars_update
-      description: Update calendar information for calendars in your workspace
-      summary: Update calendar
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CalendarRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Calendar'
-          description: ''
-    delete:
-      operationId: calendars_destroy
-      description: Delete a calendar in your workspace
-      summary: Delete calendar
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/calendars/{id}/configurations/:
-    get:
-      operationId: calendars_configurations_retrieve_2
-      description: Get all configurations for a specific calendar
-      summary: Get calendar configurations
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Calendar'
-          description: ''
-  /api/calendars/{id}/create-event/:
-    post:
-      operationId: calendars_create_event_create
-      description: Create an event in the calendar
-      summary: 🗓️ Create calendar event
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EventCreateRequest'
-        required: true
       security:
       - tokenAuth: []
       - TokenAuth: []
@@ -5661,327 +5987,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Calendar'
-          description: ''
-  /api/calendars/configurations/:
-    get:
-      operationId: calendars_configurations_list
-      description: Retrieve a list of all calendar configurations with filtering capabilities
-      summary: List calendar configurations
-      parameters:
-      - in: query
-        name: available_from
-        schema:
-          type: string
-          format: time
-      - in: query
-        name: available_to
-        schema:
-          type: string
-          format: time
-      - in: query
-        name: calendar
-        schema:
-          type: string
-          format: uuid
-      - in: query
-        name: calendar__active
-        schema:
-          type: boolean
-      - in: query
-        name: calendar__google_calendar__access_role
-        schema:
-          type: string
-          enum:
-          - owner
-          - reader
-          - writer
-        description: |-
-          * `reader` - Reader
-          * `writer` - Writer
-          * `owner` - Owner
-      - in: query
-        name: calendar__google_calendar__connection__account_email
-        schema:
-          type: string
-      - in: query
-        name: calendar__google_calendar__primary
-        schema:
-          type: boolean
-      - in: query
-        name: calendar__name
-        schema:
-          type: string
-      - in: query
-        name: calendar__provider
-        schema:
-          type: string
-          enum:
-          - google
-          - outlook
-        description: |-
-          * `google` - Google Calendar
-          * `outlook` - Microsoft Outlook
-      - in: query
-        name: calendar__workspace__workspace_name
-        schema:
-          type: string
-      - in: query
-        name: conflict_calendars_count_max
-        schema:
-          type: number
-      - in: query
-        name: conflict_calendars_count_min
-        schema:
-          type: number
-      - in: query
-        name: created_after
-        schema:
-          type: string
-          format: date-time
-      - in: query
-        name: created_before
-        schema:
-          type: string
-          format: date-time
-      - in: query
-        name: days_buffer
-        schema:
-          type: integer
-      - in: query
-        name: days_buffer_max
-        schema:
-          type: integer
-      - in: query
-        name: days_buffer_min
-        schema:
-          type: integer
-      - in: query
-        name: duration
-        schema:
-          type: integer
-      - in: query
-        name: duration_max
-        schema:
-          type: integer
-      - in: query
-        name: duration_min
-        schema:
-          type: integer
-      - in: query
-        name: from_time
-        schema:
-          type: string
-          format: time
-      - in: query
-        name: has_conflict_calendars
-        schema:
-          type: boolean
-      - name: ordering
-        required: false
-        in: query
-        description: Which field to use when ordering the results.
-        schema:
-          type: string
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - in: query
-        name: prep_time
-        schema:
-          type: integer
-      - in: query
-        name: prep_time_max
-        schema:
-          type: integer
-      - in: query
-        name: prep_time_min
-        schema:
-          type: integer
-      - name: search
-        required: false
-        in: query
-        description: A search term.
-        schema:
-          type: string
-      - in: query
-        name: to_time
-        schema:
-          type: string
-          format: time
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedCalendarConfigurationList'
-          description: ''
-    post:
-      operationId: calendars_configurations_create
-      description: Create a new calendar configuration for calendars in your workspace
-      summary: Create a new calendar configuration
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CalendarConfigurationCreateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalendarConfigurationCreate'
-          description: ''
-  /api/calendars/configurations/{id}/:
-    get:
-      operationId: calendars_configurations_retrieve
-      description: Retrieve detailed information about a specific calendar configuration
-      summary: Get configuration details
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar configuration.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalendarConfiguration'
-          description: ''
-    patch:
-      operationId: calendars_configurations_partial_update
-      description: Update specific fields of a calendar configuration for calendars
-        in your workspace
-      summary: Partially update configuration
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar configuration.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedCalendarConfigurationRequest'
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalendarConfiguration'
-          description: ''
-    put:
-      operationId: calendars_configurations_update
-      description: Update all fields of a calendar configuration for calendars in
-        your workspace
-      summary: Update configuration
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar configuration.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CalendarConfigurationRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalendarConfiguration'
-          description: ''
-    delete:
-      operationId: calendars_configurations_destroy
-      description: Delete a calendar configuration for calendars in your workspace
-      summary: Delete configuration
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar configuration.
-        required: true
-      tags:
-      - User Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/calendars/configurations/{id}/check_availability/:
-    post:
-      operationId: calendars_configurations_check_availability_create
-      description: Check available time slots for a specific date using real Google
-        Calendar data
-      summary: 🔍 Check availability
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this calendar configuration.
-        required: true
-      tags:
-      - User Management
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CalendarAvailabilityRequestRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CalendarAvailabilityResponse'
           description: ''
   /api/voices/voices/:
     get:
@@ -6222,6 +6227,91 @@ paths:
         '403':
           description: 🚫 Staff access required
   /api/voices/voices/{id}/:
+    delete:
+      operationId: voices_voices_destroy
+      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Delete a voice configuration.**\n\
+        \        \n        **\U0001F510 Permission Requirements**: Staff access required\n\
+        \        \n        **\U0001F4A5 Consequences**:\n        - Voice configuration\
+        \ permanently removed\n        - All agents using this voice will have voice\
+        \ set to NULL\n        - Cannot be undone - ensure no agents depend on this\
+        \ voice\n        \n        **\U0001F6E1️ Safety Recommendations**:\n     \
+        \   - Check agent_count before deletion\n        - Reassign agents to different\
+        \ voices first\n        - Consider impact on active call operations\n    \
+        \    "
+      summary: 🗑️ Delete voice configuration
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this voice.
+        required: true
+      tags:
+      - Voice Management
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: ✅ Voice deleted successfully
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Staff access required
+        '404':
+          description: 🚫 Voice not found
+    put:
+      operationId: voices_voices_update
+      description: "\n        Update voice configuration details (Staff only).\n \
+        \       \n        **\U0001F510 Permission Requirements**: Staff access required\n\
+        \        \n        **\U0001F4DD Updatable Fields**:\n        - `voice_external_id`:\
+        \ External voice ID from provider\n        - `provider`: Voice provider\n\
+        \        \n        **⚠️ Update Considerations**:\n        - Updating voice\
+        \ affects all agents using this voice\n        - Ensure new configuration\
+        \ is compatible with existing agents\n        - Combination of external ID\
+        \ + provider must remain unique\n        "
+      summary: ✏️ Update voice configuration
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this voice.
+        required: true
+      tags:
+      - Voice Management
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/VoiceUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/VoiceUpdateRequest'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceUpdateRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Voice'
+          description: ✅ Voice updated successfully
+        '400':
+          description: ❌ Validation error
+        '401':
+          description: 🚫 Authentication required
+        '403':
+          description: 🚫 Staff access required
+        '404':
+          description: 🚫 Voice not found
     get:
       operationId: voices_voices_retrieve
       description: "\n        Retrieve detailed information about a specific voice\
@@ -6297,91 +6387,6 @@ paths:
           description: ✅ Voice updated successfully
         '400':
           description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Staff access required
-        '404':
-          description: 🚫 Voice not found
-    put:
-      operationId: voices_voices_update
-      description: "\n        Update voice configuration details (Staff only).\n \
-        \       \n        **\U0001F510 Permission Requirements**: Staff access required\n\
-        \        \n        **\U0001F4DD Updatable Fields**:\n        - `voice_external_id`:\
-        \ External voice ID from provider\n        - `provider`: Voice provider\n\
-        \        \n        **⚠️ Update Considerations**:\n        - Updating voice\
-        \ affects all agents using this voice\n        - Ensure new configuration\
-        \ is compatible with existing agents\n        - Combination of external ID\
-        \ + provider must remain unique\n        "
-      summary: ✏️ Update voice configuration
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this voice.
-        required: true
-      tags:
-      - Voice Management
-      requestBody:
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/VoiceUpdateRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/VoiceUpdateRequest'
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VoiceUpdateRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Voice'
-          description: ✅ Voice updated successfully
-        '400':
-          description: ❌ Validation error
-        '401':
-          description: 🚫 Authentication required
-        '403':
-          description: 🚫 Staff access required
-        '404':
-          description: 🚫 Voice not found
-    delete:
-      operationId: voices_voices_destroy
-      description: "\n        **⚠️ DESTRUCTIVE OPERATION - Delete a voice configuration.**\n\
-        \        \n        **\U0001F510 Permission Requirements**: Staff access required\n\
-        \        \n        **\U0001F4A5 Consequences**:\n        - Voice configuration\
-        \ permanently removed\n        - All agents using this voice will have voice\
-        \ set to NULL\n        - Cannot be undone - ensure no agents depend on this\
-        \ voice\n        \n        **\U0001F6E1️ Safety Recommendations**:\n     \
-        \   - Check agent_count before deletion\n        - Reassign agents to different\
-        \ voices first\n        - Consider impact on active call operations\n    \
-        \    "
-      summary: 🗑️ Delete voice configuration
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this voice.
-        required: true
-      tags:
-      - Voice Management
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: ✅ Voice deleted successfully
         '401':
           description: 🚫 Authentication required
         '403':
@@ -6496,6 +6501,50 @@ paths:
                 $ref: '#/components/schemas/MetaIntegrationStats'
           description: ''
   /api/meta/integrations/{id}/:
+    delete:
+      operationId: meta_integrations_destroy
+      description: ViewSet for Meta integrations CRUD management
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - meta
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: meta_integrations_update
+      description: ViewSet for Meta integrations CRUD management
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - meta
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetaIntegrationRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaIntegration'
+          description: ''
     get:
       operationId: meta_integrations_retrieve
       description: ViewSet for Meta integrations CRUD management
@@ -6543,50 +6592,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/MetaIntegration'
           description: ''
-    put:
-      operationId: meta_integrations_update
-      description: ViewSet for Meta integrations CRUD management
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - meta
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MetaIntegrationRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MetaIntegration'
-          description: ''
-    delete:
-      operationId: meta_integrations_destroy
-      description: ViewSet for Meta integrations CRUD management
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - meta
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/meta/lead-forms/:
     get:
       operationId: meta_lead_forms_list
@@ -6646,6 +6651,50 @@ paths:
                 $ref: '#/components/schemas/MetaLeadFormCreate'
           description: ''
   /api/meta/lead-forms/{id}/:
+    delete:
+      operationId: meta_lead_forms_destroy
+      description: ViewSet for Meta lead forms
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - meta
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '204':
+          description: No response body
+    put:
+      operationId: meta_lead_forms_update
+      description: ViewSet for Meta lead forms
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+        required: true
+      tags:
+      - meta
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetaLeadFormRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaLeadForm'
+          description: ''
     get:
       operationId: meta_lead_forms_retrieve
       description: ViewSet for Meta lead forms
@@ -6693,50 +6742,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/MetaLeadForm'
           description: ''
-    put:
-      operationId: meta_lead_forms_update
-      description: ViewSet for Meta lead forms
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - meta
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MetaLeadFormRequest'
-        required: true
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/MetaLeadForm'
-          description: ''
-    delete:
-      operationId: meta_lead_forms_destroy
-      description: ViewSet for Meta lead forms
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-        required: true
-      tags:
-      - meta
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/livekit/tokens/:
     get:
       operationId: livekit_tokens_list
@@ -6830,34 +6835,6 @@ paths:
         '403':
           description: 🚫 Superuser access required
   /api/livekit/tokens/{id}/:
-    get:
-      operationId: livekit_tokens_retrieve
-      description: |-
-        🔐 **LiveKit Token Management (Superuser Only)**
-
-        Manages LiveKit authentication tokens with strict access control:
-        - **🚫 Staff and Regular Users**: No access
-        - **✅ Superuser Only**: Can generate and manage tokens
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this live kit agent.
-        required: true
-      tags:
-      - livekit
-      security:
-      - tokenAuth: []
-      - TokenAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LiveKitAgentList'
-          description: ''
     delete:
       operationId: livekit_tokens_destroy
       description: "\n        Delete a LiveKit agent token permanently.\n        \n\
@@ -6891,6 +6868,34 @@ paths:
           description: 🚫 Superuser access required
         '404':
           description: 🚫 Token not found
+    get:
+      operationId: livekit_tokens_retrieve
+      description: |-
+        🔐 **LiveKit Token Management (Superuser Only)**
+
+        Manages LiveKit authentication tokens with strict access control:
+        - **🚫 Staff and Regular Users**: No access
+        - **✅ Superuser Only**: Can generate and manage tokens
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this live kit agent.
+        required: true
+      tags:
+      - livekit
+      security:
+      - tokenAuth: []
+      - TokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LiveKitAgentList'
+          description: ''
   /api/integrations/meta/oauth_hook/:
     post:
       operationId: integrations_meta_oauth_hook_create
@@ -7366,6 +7371,51 @@ components:
           description: List of phone number IDs to assign/remove
       required:
       - phone_number_ids
+    AvailabilityRequestRequest:
+      type: object
+      description: Serializer for checking calendar availability
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date to check availability for (YYYY-MM-DD)
+        duration_minutes:
+          type: integer
+          maximum: 480
+          minimum: 1
+          description: Duration in minutes (1-480)
+      required:
+      - date
+      - duration_minutes
+    AvailabilityResponse:
+      type: object
+      description: Serializer for calendar availability response
+      properties:
+        date:
+          type: string
+          format: date
+        available_slots:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          description: List of available time slots with start_time and end_time
+        busy_periods:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+          description: List of busy time periods from conflict calendars
+        config_name:
+          type: string
+        total_slots_found:
+          type: integer
+      required:
+      - available_slots
+      - busy_periods
+      - config_name
+      - date
+      - total_slots_found
     Blacklist:
       type: object
       description: Serializer for Blacklist model
@@ -7463,6 +7513,74 @@ components:
     BlankEnum:
       enum:
       - ''
+    BookingRequestRequest:
+      type: object
+      description: Serializer for booking appointment requests
+      properties:
+        start_time:
+          type: string
+          format: date-time
+          description: Appointment start time (ISO format)
+        duration_minutes:
+          type: integer
+          maximum: 480
+          minimum: 1
+          description: Duration in minutes (1-480)
+        title:
+          type: string
+          minLength: 1
+          description: Appointment title
+          maxLength: 500
+        attendee_email:
+          type: string
+          format: email
+          minLength: 1
+          description: Attendee email address
+        attendee_name:
+          type: string
+          minLength: 1
+          description: Attendee name (optional)
+          maxLength: 255
+        description:
+          type: string
+          description: Additional description (optional)
+      required:
+      - attendee_email
+      - duration_minutes
+      - start_time
+      - title
+    BookingResponse:
+      type: object
+      description: Serializer for booking appointment response
+      properties:
+        event_id:
+          type: string
+        calendar_id:
+          type: string
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        title:
+          type: string
+        attendee_email:
+          type: string
+        meeting_details:
+          type: object
+          additionalProperties: {}
+        config_name:
+          type: string
+      required:
+      - attendee_email
+      - calendar_id
+      - config_name
+      - end_time
+      - event_id
+      - meeting_details
+      - start_time
+      - title
     Calendar:
       type: object
       description: Serializer for Calendar model with provider details
@@ -7515,48 +7633,6 @@ components:
       - updated_at
       - workspace
       - workspace_name
-    CalendarAvailabilityRequestRequest:
-      type: object
-      description: Serializer for checking calendar availability
-      properties:
-        date:
-          type: string
-          format: date
-          description: Date to check availability for
-        duration_minutes:
-          type: integer
-          minimum: 1
-          description: Duration in minutes
-      required:
-      - date
-      - duration_minutes
-    CalendarAvailabilityResponse:
-      type: object
-      description: Serializer for calendar availability response
-      properties:
-        date:
-          type: string
-          format: date
-        available_slots:
-          type: array
-          items:
-            type: object
-            additionalProperties: {}
-          description: List of available time slots
-        calendar_config_id:
-          type: string
-          format: uuid
-        busy_times:
-          type: array
-          items:
-            type: object
-            additionalProperties: {}
-          description: List of busy time periods from Google Calendar
-      required:
-      - available_slots
-      - busy_times
-      - calendar_config_id
-      - date
     CalendarConfiguration:
       type: object
       description: Serializer for CalendarConfiguration model
@@ -7577,6 +7653,29 @@ components:
         calendar_provider:
           type: string
           readOnly: true
+        name:
+          type: string
+          description: Name/title for this calendar configuration
+          maxLength: 255
+        meeting_type:
+          allOf:
+          - $ref: '#/components/schemas/MeetingTypeEnum'
+          description: |-
+            Type of meeting
+
+            * `online` - Online Meeting
+            * `in_person` - In Person
+            * `phone` - Phone Call
+        meeting_link:
+          type: string
+          format: uri
+          nullable: true
+          description: Meeting link for online meetings (optional)
+          maxLength: 200
+        meeting_address:
+          type: string
+          nullable: true
+          description: Meeting address for in-person meetings (optional)
         duration:
           type: integer
           maximum: 2147483647
@@ -7604,6 +7703,7 @@ components:
           description: List of working days, e.g., ['monday', 'tuesday', 'wednesday']
         conflict_check_calendars:
           description: List of calendar IDs to check for scheduling conflicts
+        conflict_calendars: {}
         created_at:
           type: string
           format: date-time
@@ -7621,49 +7721,10 @@ components:
       - duration
       - from_time
       - id
+      - name
       - prep_time
       - to_time
       - updated_at
-    CalendarConfigurationCreate:
-      type: object
-      description: Serializer for creating calendar configurations
-      properties:
-        calendar:
-          type: string
-          format: uuid
-        duration:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Duration of appointments in minutes
-        prep_time:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Preparation time in minutes before appointments
-        days_buffer:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Days buffer for scheduling (0 = same day)
-        from_time:
-          type: string
-          format: time
-          description: Start time for scheduling availability
-        to_time:
-          type: string
-          format: time
-          description: End time for scheduling availability
-        workdays:
-          description: List of working days, e.g., ['monday', 'tuesday', 'wednesday']
-        conflict_check_calendars:
-          description: List of calendar IDs to check for scheduling conflicts
-      required:
-      - calendar
-      - duration
-      - from_time
-      - prep_time
-      - to_time
     CalendarConfigurationCreateRequest:
       type: object
       description: Serializer for creating calendar configurations
@@ -7671,6 +7732,30 @@ components:
         calendar:
           type: string
           format: uuid
+        name:
+          type: string
+          minLength: 1
+          description: Name/title for this calendar configuration
+          maxLength: 255
+        meeting_type:
+          allOf:
+          - $ref: '#/components/schemas/MeetingTypeEnum'
+          description: |-
+            Type of meeting
+
+            * `online` - Online Meeting
+            * `in_person` - In Person
+            * `phone` - Phone Call
+        meeting_link:
+          type: string
+          format: uri
+          nullable: true
+          description: Meeting link for online meetings (optional)
+          maxLength: 200
+        meeting_address:
+          type: string
+          nullable: true
+          description: Meeting address for in-person meetings (optional)
         duration:
           type: integer
           maximum: 2147483647
@@ -7698,10 +7783,12 @@ components:
           description: List of working days, e.g., ['monday', 'tuesday', 'wednesday']
         conflict_check_calendars:
           description: List of calendar IDs to check for scheduling conflicts
+        conflict_calendars: {}
       required:
       - calendar
       - duration
       - from_time
+      - name
       - prep_time
       - to_time
     CalendarConfigurationRequest:
@@ -7711,6 +7798,30 @@ components:
         calendar:
           type: string
           format: uuid
+        name:
+          type: string
+          minLength: 1
+          description: Name/title for this calendar configuration
+          maxLength: 255
+        meeting_type:
+          allOf:
+          - $ref: '#/components/schemas/MeetingTypeEnum'
+          description: |-
+            Type of meeting
+
+            * `online` - Online Meeting
+            * `in_person` - In Person
+            * `phone` - Phone Call
+        meeting_link:
+          type: string
+          format: uri
+          nullable: true
+          description: Meeting link for online meetings (optional)
+          maxLength: 200
+        meeting_address:
+          type: string
+          nullable: true
+          description: Meeting address for in-person meetings (optional)
         duration:
           type: integer
           maximum: 2147483647
@@ -7738,10 +7849,12 @@ components:
           description: List of working days, e.g., ['monday', 'tuesday', 'wednesday']
         conflict_check_calendars:
           description: List of calendar IDs to check for scheduling conflicts
+        conflict_calendars: {}
       required:
       - calendar
       - duration
       - from_time
+      - name
       - prep_time
       - to_time
     CalendarRequest:
@@ -8288,42 +8401,6 @@ components:
       required:
       - email
       - password
-    EventCreateRequest:
-      type: object
-      description: Serializer for creating calendar events
-      properties:
-        calendar_id:
-          type: string
-          minLength: 1
-          description: External calendar ID (Google Calendar ID)
-        summary:
-          type: string
-          minLength: 1
-          description: Event title
-          maxLength: 500
-        description:
-          type: string
-          description: Event description
-        start_time:
-          type: string
-          format: date-time
-          description: Event start time
-        end_time:
-          type: string
-          format: date-time
-          description: Event end time
-        attendee_emails:
-          type: array
-          items:
-            type: string
-            format: email
-            minLength: 1
-          description: List of attendee email addresses
-      required:
-      - calendar_id
-      - end_time
-      - start_time
-      - summary
     Feature:
       type: object
       description: Serializer für Features
@@ -8656,6 +8733,16 @@ components:
       - id
       - name
       - token
+    MeetingTypeEnum:
+      enum:
+      - online
+      - in_person
+      - phone
+      type: string
+      description: |-
+        * `online` - Online Meeting
+        * `in_person` - In Person
+        * `phone` - Phone Call
     MetaIntegration:
       type: object
       description: Serializer for Meta Integration
@@ -9597,6 +9684,30 @@ components:
         calendar:
           type: string
           format: uuid
+        name:
+          type: string
+          minLength: 1
+          description: Name/title for this calendar configuration
+          maxLength: 255
+        meeting_type:
+          allOf:
+          - $ref: '#/components/schemas/MeetingTypeEnum'
+          description: |-
+            Type of meeting
+
+            * `online` - Online Meeting
+            * `in_person` - In Person
+            * `phone` - Phone Call
+        meeting_link:
+          type: string
+          format: uri
+          nullable: true
+          description: Meeting link for online meetings (optional)
+          maxLength: 200
+        meeting_address:
+          type: string
+          nullable: true
+          description: Meeting address for in-person meetings (optional)
         duration:
           type: integer
           maximum: 2147483647
@@ -9624,6 +9735,7 @@ components:
           description: List of working days, e.g., ['monday', 'tuesday', 'wednesday']
         conflict_check_calendars:
           description: List of calendar IDs to check for scheduling conflicts
+        conflict_calendars: {}
     PatchedCalendarRequest:
       type: object
       description: Serializer for Calendar model with provider details

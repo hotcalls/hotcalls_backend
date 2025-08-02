@@ -1,4 +1,5 @@
 from rest_framework import permissions
+from core.models import GoogleCalendarMCPAgent
 
 
 class CalendarPermission(permissions.BasePermission):
@@ -68,3 +69,78 @@ class CalendarConfigurationPermission(permissions.BasePermission):
             return request.user.is_staff
         
         return False 
+
+
+class GoogleCalendarMCPPermission(permissions.BasePermission):
+    """
+    Permission class for Google Calendar MCP agents using token-based authentication.
+    Similar to LiveKit agent authentication but for Google Calendar MCP.
+    """
+    
+    def has_permission(self, request, view):
+        # Check for MCP token header first
+        if self._is_valid_mcp_request(request):
+            return True
+        
+        # Fallback to regular authentication for other requests
+        if not (request.user and request.user.is_authenticated):
+            return False
+        
+        # Read operations: authenticated users can access
+        if request.method in permissions.SAFE_METHODS:
+            return True
+        
+        # Write operations require appropriate permissions
+        return request.user.is_staff
+    
+    def has_object_permission(self, request, view, obj):
+        # MCP requests don't get object-level permissions
+        if self._is_valid_mcp_request(request):
+            return True
+            
+        # Regular authentication logic
+        if request.method in permissions.SAFE_METHODS:
+            return request.user and request.user.is_authenticated
+        
+        # Write permissions for staff
+        return request.user.is_staff
+    
+    def _is_valid_mcp_request(self, request):
+        """Check if request has valid Google Calendar MCP token header"""
+        mcp_token = request.META.get('HTTP_X_GOOGLE_MCP_TOKEN')
+        
+        if not mcp_token:
+            return False
+        
+        try:
+            # Find MCP agent with this token
+            agent = GoogleCalendarMCPAgent.objects.get(token=mcp_token)
+            
+            # Check if token is still valid (not expired)
+            if not agent.is_valid():
+                return False
+            
+            # Store agent info in request for potential use
+            request.google_mcp_agent = agent
+            return True
+            
+        except GoogleCalendarMCPAgent.DoesNotExist:
+            return False
+
+
+class SuperuserOnlyPermission(permissions.BasePermission):
+    """
+    Permission class that only allows superusers to access the endpoint.
+    Used for MCP token management.
+    """
+    
+    def has_permission(self, request, view):
+        """
+        Only superusers can access MCP token generation
+        Staff members are NOT allowed
+        """
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.is_superuser
+        ) 

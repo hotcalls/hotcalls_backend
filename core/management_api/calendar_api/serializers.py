@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace, GoogleCalendarMCPAgent
 
 
 class GoogleCalendarDetailSerializer(serializers.ModelSerializer):
@@ -212,4 +212,105 @@ class EventCreateSerializer(serializers.Serializer):
         if data['end_time'] <= data['start_time']:
             raise serializers.ValidationError("End time must be after start time")
         
-        return data 
+        return data
+
+
+class AvailabilityRequestSerializer(serializers.Serializer):
+    """Serializer for checking calendar availability"""
+    date = serializers.DateField(help_text="Date to check availability for (YYYY-MM-DD)")
+    duration_minutes = serializers.IntegerField(
+        min_value=1, 
+        max_value=480,
+        help_text="Duration in minutes (1-480)"
+    )
+
+
+class AvailabilityResponseSerializer(serializers.Serializer):
+    """Serializer for calendar availability response"""
+    date = serializers.DateField()
+    available_slots = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of available time slots with start_time and end_time"
+    )
+    busy_periods = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of busy time periods from conflict calendars"
+    )
+    config_name = serializers.CharField()
+    total_slots_found = serializers.IntegerField()
+
+
+class BookingRequestSerializer(serializers.Serializer):
+    """Serializer for booking appointment requests"""
+    start_time = serializers.DateTimeField(help_text="Appointment start time (ISO format)")
+    duration_minutes = serializers.IntegerField(
+        min_value=1,
+        max_value=480,
+        help_text="Duration in minutes (1-480)"
+    )
+    title = serializers.CharField(max_length=500, help_text="Appointment title")
+    attendee_email = serializers.EmailField(help_text="Attendee email address")
+    attendee_name = serializers.CharField(
+        max_length=255,
+        required=False,
+        help_text="Attendee name (optional)"
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Additional description (optional)"
+    )
+
+
+class BookingResponseSerializer(serializers.Serializer):
+    """Serializer for booking appointment response"""
+    event_id = serializers.CharField()
+    calendar_id = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField()
+    title = serializers.CharField()
+    attendee_email = serializers.CharField()
+    meeting_details = serializers.DictField()
+    config_name = serializers.CharField() 
+
+
+# ===== GOOGLE CALENDAR MCP TOKEN MANAGEMENT =====
+
+class GoogleCalendarMCPTokenRequestSerializer(serializers.Serializer):
+    """Serializer for Google Calendar MCP token generation request"""
+    
+    agent_name = serializers.CharField(
+        max_length=255, 
+        help_text="Unique MCP agent name for Google Calendar authentication",
+        required=True
+    )
+    
+    def validate_agent_name(self, value):
+        """Ensure agent name is not empty and stripped"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Agent name cannot be empty")
+        return value.strip()
+
+
+class GoogleCalendarMCPTokenResponseSerializer(serializers.ModelSerializer):
+    """Serializer for Google Calendar MCP token response"""
+    
+    class Meta:
+        model = GoogleCalendarMCPAgent
+        fields = ['id', 'name', 'token', 'created_at', 'expires_at']
+        read_only_fields = ['id', 'token', 'created_at', 'expires_at']
+
+
+class GoogleCalendarMCPAgentListSerializer(serializers.ModelSerializer):
+    """Serializer for listing Google Calendar MCP agents (no token exposure)"""
+    
+    is_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = GoogleCalendarMCPAgent
+        fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
+        read_only_fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
+    
+    def get_is_valid(self, obj):
+        """Check if the MCP agent token is still valid"""
+        return obj.is_valid() 
