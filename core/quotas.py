@@ -177,7 +177,18 @@ def enforce_and_record(
         
         # Get limit from plan
         limit = feature_usage.limit
-        new_value = feature_usage.used_amount + amount
+        
+        # SPECIAL CASE: For capacity limits (max_users, max_agents), check actual entity count
+        if feature.feature_name == 'max_agents':
+            from core.models import Agent
+            current_count = Agent.objects.filter(workspace=workspace).count()
+            new_value = current_count + amount
+        elif feature.feature_name == 'max_users':
+            current_count = workspace.users.count()
+            new_value = current_count + amount
+        else:
+            # For consumption limits (call_minutes), use quota tracking
+            new_value = feature_usage.used_amount + amount
         
         # Check quota
         if limit is not None and new_value > limit:
@@ -185,9 +196,10 @@ def enforce_and_record(
                 f"{feature.feature_name}: {new_value} exceeds plan limit {limit}"
             )
         
-        # Record usage atomically
-        feature_usage.used_amount = models.F("used_amount") + amount
-        feature_usage.save(update_fields=["used_amount"])
+        # Record usage atomically (only for consumption-based features, not capacity limits)
+        if feature.feature_name not in ['max_agents', 'max_users']:
+            feature_usage.used_amount = models.F("used_amount") + amount
+            feature_usage.save(update_fields=["used_amount"])
 
 
 def get_feature_usage_status(workspace, feature_name: str) -> dict:
@@ -388,20 +400,28 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
             period_end=period_end,
         ).first()
         
-        if not usage_container:
-            # No usage recorded yet for this period
-            used = Decimal('0')
+        # SPECIAL CASE: For capacity limits (max_users, max_agents), count actual entities
+        if feature.feature_name == 'max_agents':
+            from core.models import Agent
+            used = Decimal(str(Agent.objects.filter(workspace=workspace).count()))
+        elif feature.feature_name == 'max_users':
+            used = Decimal(str(workspace.users.count()))
         else:
-            # Get feature usage
-            feature_usage = FeatureUsage.objects.filter(
-                usage_record=usage_container,
-                feature=feature
-            ).first()
-            
-            if not feature_usage:
+            # For consumption limits (call_minutes), use quota tracking
+            if not usage_container:
+                # No usage recorded yet for this period
                 used = Decimal('0')
             else:
-                used = feature_usage.used_amount
+                # Get feature usage
+                feature_usage = FeatureUsage.objects.filter(
+                    usage_record=usage_container,
+                    feature=feature
+                ).first()
+                
+                if not feature_usage:
+                    used = Decimal('0')
+                else:
+                    used = feature_usage.used_amount
                 
         # FIXED: Always get limit from PlanFeature, not from FeatureUsage
         from core.models import PlanFeature
