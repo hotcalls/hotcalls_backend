@@ -140,11 +140,15 @@ def cleanup_expired_tokens(self):
 def trigger_call(self, call_task_id):
     """
     Invoked **only** by `schedule_agent_call`.
-    Does:
-      1. Double‑checks the CallTask status is CALL_TRIGGERED.
-      2. Performs concurrency checks.
-      3. Launches the LiveKit outbound call (async).
-      4. Sets status → IN_PROGRESS and later → SCHEDULED/RETRY/WAITING.
+
+    Flow:
+      1. Double‑check status is CALL_TRIGGERED.
+      2. Move to IN_PROGRESS (inside atomic tx).
+      3. Check quotas (skip for test calls where lead is null).
+      4. Launch the LiveKit outbound call (async).
+      5. • If call launch succeeds → keep IN_PROGRESS (do NOT change status).
+         • If call launch fails     → RETRY / WAITING logic.
+      6. External webhook / feedback loop will delete or close the task.
     """
     # Local import to avoid circular dependencies
     from core.models import CallTask, CallStatus
@@ -225,34 +229,39 @@ def trigger_call(self, call_task_id):
         )
         campaign_id = str(workspace.id)
 
-        # 🎯 QUOTA ENFORCEMENT: Check quota with amount=0 (status check only)
-        try:
-            from core.quotas import enforce_and_record, QuotaExceeded
-            
-            # Check quota without recording usage (amount=0)
-            enforce_and_record(
-                workspace=workspace,
-                route_name="internal:outbound_call",
-                http_method="POST",
-                amount=0  # Just check status, don't pre-charge
-            )
-            
-        except QuotaExceeded as quota_err:
-            logger.warning(f"🚫 Call quota exceeded for workspace {workspace.id}: {quota_err}")
-            # DELETE this call task - quota exceeded
-            with transaction.atomic():
-                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
-                call_task.delete()
-            return {
-                "success": False,
-                "call_task_id": call_task_id,
-                "error": "quota_exceeded", 
-                "message": f"Call task deleted - {quota_err}",
-            }
-        except Exception as quota_err:
-            # Log error but don't block the call on quota system failures
-            logger.error(f"⚠️ Quota check failed for workspace {workspace.id}: {quota_err}")
-            # Allow call to proceed
+        # 🎯 QUOTA ENFORCEMENT: Skip quotas for test calls (lead is null)
+        if lead is not None:
+            # Only enforce quotas for real calls with leads
+            try:
+                from core.quotas import enforce_and_record, QuotaExceeded
+                
+                # Check quota without recording usage (amount=0)
+                enforce_and_record(
+                    workspace=workspace,
+                    route_name="internal:outbound_call",
+                    http_method="POST",
+                    amount=0  # Just check status, don't pre-charge
+                )
+                
+            except QuotaExceeded as quota_err:
+                logger.warning(f"🚫 Call quota exceeded for workspace {workspace.id}: {quota_err}")
+                # DELETE this call task - quota exceeded
+                with transaction.atomic():
+                    call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                    call_task.delete()
+                return {
+                    "success": False,
+                    "call_task_id": call_task_id,
+                    "error": "quota_exceeded", 
+                    "message": f"Call task deleted - {quota_err}",
+                }
+            except Exception as quota_err:
+                # Log error but don't block the call on quota system failures
+                logger.error(f"⚠️ Quota check failed for workspace {workspace.id}: {quota_err}")
+                # Allow call to proceed
+        else:
+            # Test call (lead is null) - skip quota enforcement
+            logger.info(f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}")
 
         # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
         call_result = asyncio.run(
@@ -270,12 +279,13 @@ def trigger_call(self, call_task_id):
         with transaction.atomic():
             call_task = CallTask.objects.select_for_update().get(id=call_task_id)
             if call_result.get("success"):
-                call_task.status = CallStatus.SCHEDULED  # Or COMPLETED, your choice
-                call_task.save(update_fields=["status", "updated_at"])
+                # SUCCESS: keep status as IN_PROGRESS until webhook cleans up
+                call_task.updated_at = timezone.now()
+                call_task.save(update_fields=["updated_at"])
                 return {
                     "success": True,
                     "call_task_id": call_task_id,
-                    "message": "Call initiated",
+                    "message": "Call launched; task remains IN_PROGRESS.",
                     "result": call_result,
                 }
             else:
