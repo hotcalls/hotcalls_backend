@@ -673,6 +673,35 @@ deploy_infrastructure() {
     export META_REDIRECT_URI
     export META_API_VERSION
     
+    # LiveKit Agent Configuration
+    export LIVEKIT_AGENT_NAME
+    export NUMBER_OF_LIVEKIT_AGENTS
+    export CONCURRENCY_PER_LIVEKIT_AGENT
+    
+    # Outbound Agent API Keys
+    export OPENAI_API_KEY
+    export DEEPGRAM_API_KEY
+    export ELEVEN_API_KEY
+    export ELEVEN_VOICE_ID
+    
+    # MCP Server Configuration
+    export MCP_SERVER_URL
+    
+    # Agent Configuration
+    export AGENT_NAME
+    export NAME
+    export RING_DURATION
+    export ENABLE_BACKGROUND_AUDIO
+    export OFFICE_AMBIENCE_VOLUME
+    export TYPING_SOUND_VOLUME
+    export SIP_PROVIDER
+    export TRUNK_ID
+    
+    # Call Log Configuration
+    export CALL_LOG_ENDPOINT_URL
+    export CALL_LOG_TIMEOUT
+    export CALL_LOG_MAX_RETRIES
+    
     export TF_VAR_app_email_host="$EMAIL_HOST"
     export TF_VAR_app_email_port="$EMAIL_PORT"
     export TF_VAR_app_email_use_tls="$EMAIL_USE_TLS"
@@ -1164,7 +1193,21 @@ setup_kubernetes_environment() {
     export DEEPGRAM_API_KEY_B64="$(echo -n "${DEEPGRAM_API_KEY}" | base64)"
     export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
     export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
+    
+    # Agent Configuration - Base64 encoded
+    export AGENT_NAME_B64="$(echo -n "${AGENT_NAME:-hotcalls_agent}" | base64)"
+    export NAME_B64="$(echo -n "${NAME:-hotcalls_agent}" | base64)"
+    export RING_DURATION_B64="$(echo -n "${RING_DURATION:-2.0}" | base64)"
+    export ENABLE_BACKGROUND_AUDIO_B64="$(echo -n "${ENABLE_BACKGROUND_AUDIO:-true}" | base64)"
+    export OFFICE_AMBIENCE_VOLUME_B64="$(echo -n "${OFFICE_AMBIENCE_VOLUME:-0.08}" | base64)"
+    export TYPING_SOUND_VOLUME_B64="$(echo -n "${TYPING_SOUND_VOLUME:-0.06}" | base64)"
+    export SIP_PROVIDER_B64="$(echo -n "${SIP_PROVIDER:-}" | base64)"
     export TRUNK_ID_B64="$(echo -n "${TRUNK_ID:-}" | base64)"
+    
+    # Call Log Configuration - Base64 encoded
+    export CALL_LOG_ENDPOINT_URL_B64="$(echo -n "${CALL_LOG_ENDPOINT_URL:-}" | base64)"
+    export CALL_LOG_TIMEOUT_B64="$(echo -n "${CALL_LOG_TIMEOUT:-10.0}" | base64)"
+    export CALL_LOG_MAX_RETRIES_B64="$(echo -n "${CALL_LOG_MAX_RETRIES:-3}" | base64)"
     export ELEVEN_VOICE_ID_B64="$(echo -n "${ELEVEN_VOICE_ID:-}" | base64)"
     
     log_success "Kubernetes environment variables configured!"
@@ -1329,8 +1372,12 @@ deploy_kubernetes() {
     # Set BASE_URL based on domain parameter
     if [[ -n "$DOMAIN" ]]; then
         export BASE_URL="https://${DOMAIN}"
+        # Set call log endpoint URL for staging/production
+        export CALL_LOG_ENDPOINT_URL="${BASE_URL}/api/calls/call-logs/"
     else
         export BASE_URL="http://localhost:8000"
+        # Set call log endpoint URL for development
+        export CALL_LOG_ENDPOINT_URL="${BASE_URL}/api/calls/call-logs/"
     fi
     # ALLOWED_HOSTS is ALWAYS * per user requirement - already set above
     
