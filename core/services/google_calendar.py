@@ -128,8 +128,8 @@ class GoogleCalendarService:
     def _create_or_update_calendar(self, calendar_data: Dict) -> Optional[Calendar]:
         """Create or update a calendar from Google API data"""
         try:
-            # Create or get the generic Calendar
-            calendar, created = Calendar.objects.get_or_create(
+            # Create or update the generic Calendar - always set active=True on sync
+            calendar, created = Calendar.objects.update_or_create(
                 workspace=self.connection.workspace,
                 name=calendar_data['summary'],
                 provider='google',
