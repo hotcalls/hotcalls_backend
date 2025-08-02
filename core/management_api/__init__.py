@@ -27,7 +27,6 @@ def api_root(request, format=None):
                 'calls': request.build_absolute_uri('/api/calls/'),
 
                 'voices': request.build_absolute_uri('/api/voices/'),
-                'subscriptions': request.build_absolute_uri('/api/subscriptions/'),
                 'payments': request.build_absolute_uri('/api/payments/'),
             },
             'documentation': {

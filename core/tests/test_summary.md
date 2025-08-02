@@ -57,11 +57,6 @@
 - ✅ Availability checking
 - **Status**: 75% coverage
 
-#### ⚠️ **Subscription API** - **PARTIAL COVERAGE**
-- ✅ Basic CRUD operations
-- ⚠️ Some validation vs permission edge cases
-- **Status**: 70% coverage
-
 #### ⚠️ **Call API** - **NEEDS ATTENTION**
 - ✅ Basic operations working
 - ❌ Analytics endpoints returning empty objects `{}`

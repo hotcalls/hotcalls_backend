@@ -16,18 +16,7 @@ The system is organized into 7 main API modules under `core/management_api/`:
   - `PATCH /users/{id}/change_status/` - Change user status
   - `GET/POST/PUT/PATCH/DELETE /blacklist/` - Blacklist operations
 
-### 2. Subscription Management API (`/api/subscriptions/`)
-- **Plan Management**: Subscription plans and features
-- **Feature Assignment**: Plan-feature relationships
-- **Endpoints**:
-  - `GET/POST/PUT/PATCH/DELETE /plans/` - Plan operations
-  - `GET /plans/{id}/features/` - Get plan features
-  - `POST /plans/{id}/add_feature/` - Assign feature to plan
-  - `DELETE /plans/{id}/remove_feature/` - Remove feature from plan
-  - `GET/POST/PUT/PATCH/DELETE /features/` - Feature operations
-  - `GET/POST/PUT/PATCH/DELETE /plan-features/` - Direct plan-feature management
-
-### 3. Workspace Management API (`/api/workspaces/`)
+### 2. Workspace Management API (`/api/workspaces/`)
 - **Workspace CRUD**: Workspace management
 - **User Assignment**: Add/remove users from workspaces
 - **Endpoints**:
@@ -37,7 +26,7 @@ The system is organized into 7 main API modules under `core/management_api/`:
   - `POST /workspaces/{id}/remove_users/` - Remove users from workspace
   - `GET /workspaces/{id}/stats/` - Workspace statistics
 
-### 4. Agent Management API (`/api/agents/`)
+### 3. Agent Management API (`/api/agents/`)
 - **Agent CRUD**: AI agent management
 - **Phone Number Management**: Phone number assignment
 - **Endpoints**:
@@ -48,7 +37,7 @@ The system is organized into 7 main API modules under `core/management_api/`:
   - `GET /agents/{id}/config/` - Get agent configuration
   - `GET/POST/PUT/PATCH/DELETE /phone-numbers/` - Phone number operations
 
-### 5. Lead Management API (`/api/leads/`)
+### 4. Lead Management API (`/api/leads/`)
 - **Lead CRUD**: Lead management with metadata
 - **Bulk Operations**: Bulk lead creation
 - **Call History**: Lead call tracking
@@ -59,7 +48,7 @@ The system is organized into 7 main API modules under `core/management_api/`:
   - `GET /leads/{id}/call_history/` - Get lead call history
   - `GET /leads/stats/` - Lead statistics
 
-### 6. Call Management API (`/api/calls/`)
+### 5. Call Management API (`/api/calls/`)
 - **Call Log CRUD**: Call tracking and management
 - **Analytics**: Call statistics and analytics
 - **Endpoints**:
@@ -68,7 +57,7 @@ The system is organized into 7 main API modules under `core/management_api/`:
   - `GET /call-logs/daily_stats/` - Daily call statistics
   - `GET /call-logs/duration_distribution/` - Call duration distribution
 
-### 7. Calendar Management API (`/api/calendars/`)
+### 6. Calendar Management API (`/api/calendars/`)
 - **Calendar Integration**: Google/Outlook calendar support
 - **Configuration Management**: Calendar scheduling settings
 - **Availability Checking**: Time slot availability

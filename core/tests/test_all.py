@@ -7,7 +7,6 @@ from django.test.runner import DiscoverRunner
 
 # Import all test cases
 from .test_user_api import UserAPITestCase
-from .test_subscription_api import SubscriptionAPITestCase
 from .test_workspace_api import WorkspaceAPITestCase
 from .test_agent_api import AgentAPITestCase
 from .test_lead_api import LeadAPITestCase
@@ -22,7 +21,6 @@ def suite():
     # Add all test classes
     test_classes = [
         UserAPITestCase,
-        SubscriptionAPITestCase,
         WorkspaceAPITestCase,
         AgentAPITestCase,
         LeadAPITestCase,

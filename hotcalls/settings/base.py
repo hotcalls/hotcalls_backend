@@ -288,7 +288,7 @@ SPECTACULAR_SETTINGS = {
 | **Edit User** | ✅ Own profile | ✅ Any user | ✅ Any user | ✅ Required |
 | **Delete User** | ❌ No access | ❌ No access | ✅ Any user | ✅ Required |
 
-### 📋 Other APIs (`/api/subscriptions/`, `/api/workspaces/`, etc.)
+### 📋 Other APIs (`/api/workspaces/`, `/api/agents/`, etc.)
 - **🔒 All protected APIs require**: Authentication + Email Verification
 - **📧 No verification = No access**: Unverified users cannot use any protected endpoints
 - **🎯 Same permissions as before**: Role-based access unchanged, just add email verification
