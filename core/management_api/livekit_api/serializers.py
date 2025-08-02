@@ -36,9 +36,39 @@ class LiveKitAgentListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = LiveKitAgent
-        fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
-        read_only_fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
+        fields = ['id', 'name', 'concurrency_per_agent', 'created_at', 'expires_at', 'is_valid']
+        read_only_fields = ['id', 'created_at', 'expires_at', 'is_valid']
     
     def get_is_valid(self, obj):
         """Return if token is still valid"""
-        return obj.is_valid() 
+        return obj.is_valid()
+
+
+class LiveKitAgentCreateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for creating new LiveKit agents
+    """
+    class Meta:
+        model = LiveKitAgent
+        fields = ['name', 'concurrency_per_agent']
+        
+    def validate_name(self, value):
+        """Ensure agent name is valid"""
+        if not value.strip():
+            raise serializers.ValidationError("Agent name cannot be empty")
+        return value.strip()
+
+
+class LiveKitAgentUpdateSerializer(serializers.ModelSerializer):
+    """
+    Serializer for updating LiveKit agent configuration
+    """
+    class Meta:
+        model = LiveKitAgent
+        fields = ['name', 'concurrency_per_agent']
+        
+    def validate_name(self, value):
+        """Ensure agent name is valid"""
+        if not value.strip():
+            raise serializers.ValidationError("Agent name cannot be empty")
+        return value.strip() 

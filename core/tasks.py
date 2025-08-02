@@ -157,7 +157,11 @@ def trigger_call(self, call_task_id):
                 
                 # 1. Check concurrency limit atomically
                 current_in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
-                concurrency_limit = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+                # Calculate concurrency limit from database
+                from core.models import LiveKitAgent
+                agents = LiveKitAgent.objects.filter(expires_at__gt=timezone.now())
+                total_concurrency = sum(agent.concurrency_per_agent for agent in agents)
+                concurrency_limit = max(total_concurrency, 1)  # At least 1 to prevent division by zero
                 
                 if current_in_progress >= concurrency_limit:
                     # Concurrency limit reached - set to WAITING atomically
@@ -393,8 +397,11 @@ def schedule_agent_call(self):
     try:
         now = timezone.now()
         
-        # Calculate concurrency limit
-        concurrency_limit = settings.NUMBER_OF_LIVEKIT_AGENTS * settings.CONCURRENCY_PER_LIVEKIT_AGENT
+        # Calculate concurrency limit from database
+        from core.models import LiveKitAgent
+        agents = LiveKitAgent.objects.filter(expires_at__gt=timezone.now())
+        total_concurrency = sum(agent.concurrency_per_agent for agent in agents)
+        concurrency_limit = max(total_concurrency, 1)  # At least 1 to prevent division by zero
         
         # 🔒 SINGLE ATOMIC TRANSACTION: ALL logic including concurrency check inside transaction
         scheduled_count = 0

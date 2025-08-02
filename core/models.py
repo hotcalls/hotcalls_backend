@@ -1127,11 +1127,17 @@ class LiveKitAgent(models.Model):
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    # Agent identification
+    # Agent identification and configuration
     name = models.CharField(
         max_length=255,
         unique=True,
         help_text="Unique agent name for LiveKit authentication"
+    )
+    
+    # Agent configuration
+    concurrency_per_agent = models.PositiveIntegerField(
+        default=100,
+        help_text="Concurrent calls per agent"
     )
     
     # Token management

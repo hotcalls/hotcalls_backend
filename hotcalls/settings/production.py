@@ -173,5 +173,4 @@ INSTALLED_APPS += [
 
 # LiveKit Concurrency Control for Production
 # Higher concurrency for production environment
-NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '5'))
-CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '90')) 
+# LiveKit Agent Configuration: Managed via database (LiveKitAgent model) 

@@ -512,6 +512,5 @@ LIVEKIT_AGENT_NAME = os.getenv('LIVEKIT_AGENT_NAME', 'hotcalls_agent')
 TRUNK_ID = os.getenv('TRUNK_ID', '')
 SIP_PROVIDER = os.getenv('SIP_PROVIDER', 'jambonz')
 
-# LiveKit Concurrency Control
-NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
-CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
+# LiveKit Agent Concurrency: Managed via database (LiveKitAgent model)
+# Agent count and concurrency are now dynamic - configured via API

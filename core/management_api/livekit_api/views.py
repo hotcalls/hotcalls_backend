@@ -9,7 +9,9 @@ from core.models import LiveKitAgent
 from .serializers import (
     LiveKitTokenRequestSerializer, 
     LiveKitTokenResponseSerializer,
-    LiveKitAgentListSerializer
+    LiveKitAgentListSerializer,
+    LiveKitAgentCreateSerializer,
+    LiveKitAgentUpdateSerializer
 )
 from .permissions import SuperuserOnlyPermission
 
@@ -67,9 +69,69 @@ from .permissions import SuperuserOnlyPermission
         },
         tags=["LiveKit Token Management"]
     ),
-    create=extend_schema(exclude=True),  # Hidden - use generate_token instead
-    update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
-    partial_update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
+    create=extend_schema(
+        summary="➕ Create LiveKit agent",
+        description="""
+        Create a new LiveKit agent with configuration.
+        
+        **🔐 Permission Requirements**:
+        - **✅ Superuser ONLY**: Can create agents
+        
+        **📝 Configuration**:
+        - Agent name (must be unique)
+        - Concurrency per agent (default: 100)
+        - Token is auto-generated
+        """,
+        request=LiveKitAgentCreateSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=LiveKitTokenResponseSerializer,
+                description="✅ Agent created successfully with token"
+            ),
+            400: OpenApiResponse(description="❌ Invalid data provided"),
+            403: OpenApiResponse(description="🚫 Superuser access required")
+        }
+    ),
+    update=extend_schema(
+        summary="✏️ Update LiveKit agent configuration",
+        description="""
+        Update LiveKit agent configuration (name, concurrency).
+        Token remains unchanged.
+        
+        **🔐 Permission Requirements**:
+        - **✅ Superuser ONLY**: Can update agents
+        
+        **📝 Updatable Fields**:
+        - Agent name
+        - Concurrency per agent
+        """,
+        request=LiveKitAgentUpdateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=LiveKitAgentListSerializer,
+                description="✅ Agent updated successfully"
+            ),
+            400: OpenApiResponse(description="❌ Invalid data provided"),
+            403: OpenApiResponse(description="🚫 Superuser access required")
+        }
+    ),
+    partial_update=extend_schema(
+        summary="✏️ Partially update LiveKit agent",
+        description="""
+        Partially update LiveKit agent configuration.
+        Only provided fields will be updated.
+        
+        **🔐 Permission Requirements**:
+        - **✅ Superuser ONLY**: Can update agents
+        """,
+        request=LiveKitAgentUpdateSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=LiveKitAgentListSerializer,
+                description="✅ Agent updated successfully"
+            )
+        }
+    )
 )
 class LiveKitTokenViewSet(viewsets.ModelViewSet):
     """
@@ -84,25 +146,44 @@ class LiveKitTokenViewSet(viewsets.ModelViewSet):
     permission_classes = [SuperuserOnlyPermission]
     
     def create(self, request, *args, **kwargs):
-        """Block direct creation - use generate_token action instead"""
-        return Response(
-            {'detail': 'Use /generate_token/ endpoint to create tokens'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
+        """Create new LiveKit agent with configuration"""
+        serializer = LiveKitAgentCreateSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            # Create agent (token will be auto-generated)
+            agent = serializer.save()
+            
+            # Return full agent data including token
+            response_serializer = LiveKitTokenResponseSerializer(agent)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def update(self, request, *args, **kwargs):
-        """Block updates - tokens should be replaced via generate_token"""
-        return Response(
-            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
+        """Allow updates to agent configuration (name, concurrency) but not token"""
+        instance = self.get_object()
+        serializer = LiveKitAgentUpdateSerializer(instance, data=request.data)
+        
+        if serializer.is_valid():
+            serializer.save()
+            # Return full agent data with updated info
+            response_serializer = LiveKitAgentListSerializer(instance)
+            return Response(response_serializer.data)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     def partial_update(self, request, *args, **kwargs):
-        """Block partial updates"""
-        return Response(
-            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
+        """Allow partial updates to agent configuration (name, concurrency) but not token"""
+        instance = self.get_object()
+        serializer = LiveKitAgentUpdateSerializer(instance, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            serializer.save()
+            # Return full agent data with updated info
+            response_serializer = LiveKitAgentListSerializer(instance)
+            return Response(response_serializer.data)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @extend_schema(
         summary="🔑 Generate LiveKit token",
