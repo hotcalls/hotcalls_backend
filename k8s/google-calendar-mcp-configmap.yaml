@@ -19,7 +19,7 @@ data:
   
   # Database Configuration (shared with backend)
   DB_HOST: "${DB_HOST}"
-  DB_PORT: "${DB_PORT:-5432}"
+  DB_PORT: "${DB_PORT}"
   DB_NAME: "${DB_NAME}"
   DB_USER: "${DB_USER}"
   

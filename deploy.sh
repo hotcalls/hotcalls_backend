@@ -693,6 +693,7 @@ deploy_infrastructure() {
     export DB_USER  
     export DB_PASSWORD
     export DB_HOST
+    export DB_PORT="${DB_PORT:-5432}"
     export EMAIL_BACKEND
     export EMAIL_HOST
     export EMAIL_PORT
@@ -1277,6 +1278,12 @@ setup_kubernetes_environment() {
     export REDIS_MEMORY_REQUEST="${REDIS_MEMORY_REQUEST:-256Mi}"
     export REDIS_MEMORY_LIMIT="${REDIS_MEMORY_LIMIT:-1Gi}"
     
+    # Google Calendar MCP Resources
+    export GOOGLE_CALENDAR_MCP_CPU_REQUEST="${GOOGLE_CALENDAR_MCP_CPU_REQUEST:-100m}"
+    export GOOGLE_CALENDAR_MCP_CPU_LIMIT="${GOOGLE_CALENDAR_MCP_CPU_LIMIT:-500m}"
+    export GOOGLE_CALENDAR_MCP_MEMORY_REQUEST="${GOOGLE_CALENDAR_MCP_MEMORY_REQUEST:-256Mi}"
+    export GOOGLE_CALENDAR_MCP_MEMORY_LIMIT="${GOOGLE_CALENDAR_MCP_MEMORY_LIMIT:-512Mi}"
+    
     # Export HPA configuration
     export BACKEND_HPA_ENABLED="${BACKEND_HPA_ENABLED:-true}"
     export BACKEND_HPA_MIN_REPLICAS="${BACKEND_HPA_MIN_REPLICAS:-2}"
@@ -1319,6 +1326,13 @@ setup_kubernetes_environment() {
     export DEEPGRAM_API_KEY_B64="$(echo -n "${DEEPGRAM_API_KEY}" | base64)"
     export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
     export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
+    
+    # Base64 encode Google Calendar MCP secrets for Kubernetes
+    export DB_PASSWORD_B64="$(echo -n "${DB_PASSWORD}" | base64)"
+    export DB_HOST_B64="$(echo -n "${DB_HOST}" | base64)"
+    export DB_PORT_B64="$(echo -n "${DB_PORT:-5432}" | base64)"
+    export DB_NAME_B64="$(echo -n "${DB_NAME}" | base64)"
+    export DB_USER_B64="$(echo -n "${DB_USER}" | base64)"
     
     # LiveKit Agent Configuration: Managed via database (no setup needed)
     

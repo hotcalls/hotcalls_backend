@@ -46,8 +46,30 @@ spec:
           limits:
             memory: ${GOOGLE_CALENDAR_MCP_MEMORY_LIMIT}
             cpu: ${GOOGLE_CALENDAR_MCP_CPU_LIMIT}
-        # Health checks disabled - FastMCP doesn't provide health endpoints
-        # The server is monitored via application logs and container status
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 15
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
       restartPolicy: Always
   strategy:
     type: RollingUpdate
