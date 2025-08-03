@@ -1018,6 +1018,14 @@ class GoogleCalendar(models.Model):
         on_delete=models.CASCADE, 
         related_name='google_calendar'
     )
+    connection = models.ForeignKey(
+        'GoogleCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='calendars',
+        null=True,
+        blank=True,
+        help_text="OAuth connection that provides access to this calendar"
+    )
     # Google Calendar API fields
     external_id = models.CharField(
         max_length=255, 
@@ -1027,13 +1035,26 @@ class GoogleCalendar(models.Model):
     # Calendar properties
     primary = models.BooleanField(default=False)
     time_zone = models.CharField(max_length=50)
+    access_role = models.CharField(
+        max_length=20,
+        choices=[
+            ('freeBusyReader', 'Free/Busy Reader'),
+            ('reader', 'Reader'),
+            ('writer', 'Writer'),
+            ('owner', 'Owner'),
+        ],
+        default='reader',
+        help_text="Access level for this calendar"
+    )
     
-    refresh_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API refresh token (encrypted at rest)")
-    access_token = models.CharField(max_length=255, editable=False, help_text="Google Calendar API access token (encrypted at rest)")
-    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    # Legacy fields - kept for compatibility but tokens come from connection
+    refresh_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.refresh_token")
+    access_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.access_token")
+    token_expires_at = models.DateTimeField(null=True, blank=True, help_text="DEPRECATED: Use connection.token_expires_at")
     scopes = models.JSONField(
         default=list,
-        help_text="Granted OAuth scopes"
+        blank=True,
+        help_text="DEPRECATED: Use connection.scopes"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1052,6 +1073,32 @@ class CalendarConfiguration(models.Model):
         related_name='configurations'
     )
     
+    # Configuration name and meeting details
+    name = models.CharField(
+        max_length=255, 
+        help_text="Name/title for this calendar configuration"
+    )
+    meeting_type = models.CharField(
+        max_length=20,
+        choices=[
+            ('online', 'Online Meeting'),
+            ('in_person', 'In Person'),
+            ('phone', 'Phone Call'),
+        ],
+        default='online',
+        help_text="Type of meeting"
+    )
+    meeting_link = models.URLField(
+        blank=True,
+        null=True,
+        help_text="Meeting link for online meetings (optional)"
+    )
+    meeting_address = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Meeting address for in-person meetings (optional)"
+    )
+    
     # Scheduling settings
     duration = models.IntegerField(help_text="Duration of appointments in minutes")
     prep_time = models.IntegerField(help_text="Preparation time in minutes before appointments")
@@ -1064,6 +1111,12 @@ class CalendarConfiguration(models.Model):
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']"
+    )
+    
+    # Conflict checking settings
+    conflict_check_calendars = models.JSONField(
+        default=list,
+        help_text="List of calendar IDs to check for scheduling conflicts"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1232,6 +1285,65 @@ class LiveKitAgent(models.Model):
     
     def __str__(self):
         return f"LiveKitAgent {self.name} ({'valid' if self.is_valid() else 'expired'})"
+
+
+class GoogleCalendarMCPAgent(models.Model):
+    """
+    Google Calendar MCP Agent Token Management
+    
+    Completely independent table for managing Google Calendar MCP authentication tokens.
+    Each agent name can have only one active token with 1-year validity.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Agent identification
+    name = models.CharField(
+        max_length=255,
+        unique=True,
+        help_text="Unique MCP agent name for Google Calendar authentication"
+    )
+    
+    # Token management
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        help_text="Random string token for MCP authentication"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(help_text="Token expiration date (1 year from creation)")
+    
+    class Meta:
+        db_table = 'core_google_calendar_mcp_agent'
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['name']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Set expiration to 1 year from now if not set
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timezone.timedelta(days=365)
+        
+        # Generate token if not set
+        if not self.token:
+            self.token = self.generate_token()
+        
+        super().save(*args, **kwargs)
+    
+    def is_valid(self):
+        """Check if token is still valid (not expired)"""
+        return timezone.now() < self.expires_at
+    
+    @staticmethod
+    def generate_token():
+        """Generate a secure random token"""
+        return secrets.token_urlsafe(48)  # 64 character URL-safe token
+    
+    def __str__(self):
+        return f"GoogleCalendarMCPAgent {self.name} ({'valid' if self.is_valid() else 'expired'})"
 
 
 class CallTask(models.Model):

@@ -1,19 +1,17 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace, GoogleCalendarMCPAgent
 
 
 class GoogleCalendarDetailSerializer(serializers.ModelSerializer):
     """Google-specific calendar details"""
-    connection_email = serializers.CharField(source='connection.account_email', read_only=True)
-    connection_id = serializers.UUIDField(source='connection.id', read_only=True)
+    # Note: GoogleCalendar model doesn't have connection field anymore
+    # Connection info is handled separately through GoogleCalendarConnection
     
     class Meta:
         model = GoogleCalendar
         fields = [
-            'external_id', 'summary', 'description', 'primary', 'access_role', 
-            'time_zone', 'background_color', 'foreground_color', 'selected',
-            'connection_email', 'connection_id'
+            'external_id', 'primary', 'time_zone', 'created_at', 'updated_at'
         ]
 
 
@@ -49,13 +47,24 @@ class CalendarSerializer(serializers.ModelSerializer):
     def get_connection_status(self, obj):
         """Get connection status"""
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
-            connection = obj.google_calendar.connection
-            if not connection.active:
-                return 'disconnected'
-            elif connection.sync_errors:
-                return 'error'
-            else:
-                return 'connected'
+            # Find the connection through workspace since GoogleCalendar doesn't have connection field
+            try:
+                connections = GoogleCalendarConnection.objects.filter(
+                    workspace=obj.workspace,
+                    active=True
+                )
+                if connections.exists():
+                    connection = connections.first()
+                    if not connection.active:
+                        return 'disconnected'
+                    elif connection.sync_errors:
+                        return 'error'
+                    else:
+                        return 'connected'
+                else:
+                    return 'disconnected'
+            except Exception:
+                return 'unknown'
         return 'unknown'
 
 
@@ -80,7 +89,8 @@ class GoogleCalendarConnectionSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.IntegerField)
     def get_calendar_count(self, obj) -> int:
         """Get number of calendars for this connection"""
-        return obj.calendars.count()
+        # Count calendars in the workspace since there's no direct connection->calendars relationship
+        return Calendar.objects.filter(workspace=obj.workspace, provider='google', active=True).count()
     
     @extend_schema_field(serializers.CharField)
     def get_status(self, obj):
@@ -99,12 +109,16 @@ class CalendarConfigurationSerializer(serializers.ModelSerializer):
     calendar_name = serializers.CharField(source='calendar.name', read_only=True)
     calendar_provider = serializers.CharField(source='calendar.provider', read_only=True)
     
+    # Support both field names for backward compatibility
+    conflict_calendars = serializers.JSONField(source='conflict_check_calendars', required=False)
+    
     class Meta:
         model = CalendarConfiguration
         fields = [
             'id', 'calendar', 'calendar_workspace_name', 'calendar_name', 
-            'calendar_provider', 'duration', 'prep_time', 'days_buffer', 
-            'from_time', 'to_time', 'workdays', 'created_at', 'updated_at'
+            'calendar_provider', 'name', 'meeting_type', 'meeting_link', 'meeting_address',
+            'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'workdays', 
+            'conflict_check_calendars', 'conflict_calendars', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -112,24 +126,44 @@ class CalendarConfigurationSerializer(serializers.ModelSerializer):
 class CalendarConfigurationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating calendar configurations"""
     
+    # Support both field names for backward compatibility
+    conflict_calendars = serializers.JSONField(source='conflict_check_calendars', required=False)
+    
     class Meta:
         model = CalendarConfiguration
         fields = [
-            'calendar', 'duration', 'prep_time', 'days_buffer', 
-            'from_time', 'to_time', 'workdays'
+            'calendar', 'name', 'meeting_type', 'meeting_link', 'meeting_address',
+            'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'workdays', 
+            'conflict_check_calendars', 'conflict_calendars'
         ]
     
-    def validate_calendar(self, value):
-        """Validate that calendar is active and belongs to user's workspace"""
-        user = self.context['request'].user
+    def validate_workdays(self, value):
+        """Validate workdays format"""
+        valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Workdays must be a list")
         
-        if not value.active:
-            raise serializers.ValidationError("Cannot create configuration for inactive calendar")
-        
-        if not user.is_staff and value.workspace not in user.workspaces.all():
-            raise serializers.ValidationError("Calendar must belong to your workspace")
+        for day in value:
+            if day.lower() not in valid_days:
+                raise serializers.ValidationError(f"Invalid workday: {day}")
         
         return value
+    
+    def validate_conflict_check_calendars(self, value):
+        """Validate conflict_check_calendars format"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("conflict_check_calendars must be a list")
+        
+        # Optional: Validate that calendar IDs exist (can be added later if needed)
+        # for calendar_id in value:
+        #     if not Calendar.objects.filter(id=calendar_id).exists():
+        #         raise serializers.ValidationError(f"Calendar with ID {calendar_id} does not exist")
+        
+        return value
+    
+    def validate_conflict_calendars(self, value):
+        """Validate conflict_calendars format (alias for conflict_check_calendars)"""
+        return self.validate_conflict_check_calendars(value)
 
 
 class CalendarAvailabilityRequestSerializer(serializers.Serializer):
@@ -178,4 +212,105 @@ class EventCreateSerializer(serializers.Serializer):
         if data['end_time'] <= data['start_time']:
             raise serializers.ValidationError("End time must be after start time")
         
-        return data 
+        return data
+
+
+class AvailabilityRequestSerializer(serializers.Serializer):
+    """Serializer for checking calendar availability"""
+    date = serializers.DateField(help_text="Date to check availability for (YYYY-MM-DD)")
+    duration_minutes = serializers.IntegerField(
+        min_value=1, 
+        max_value=480,
+        help_text="Duration in minutes (1-480)"
+    )
+
+
+class AvailabilityResponseSerializer(serializers.Serializer):
+    """Serializer for calendar availability response"""
+    date = serializers.DateField()
+    available_slots = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of available time slots with start_time and end_time"
+    )
+    busy_periods = serializers.ListField(
+        child=serializers.DictField(),
+        help_text="List of busy time periods from conflict calendars"
+    )
+    config_name = serializers.CharField()
+    total_slots_found = serializers.IntegerField()
+
+
+class BookingRequestSerializer(serializers.Serializer):
+    """Serializer for booking appointment requests"""
+    start_time = serializers.DateTimeField(help_text="Appointment start time (ISO format)")
+    duration_minutes = serializers.IntegerField(
+        min_value=1,
+        max_value=480,
+        help_text="Duration in minutes (1-480)"
+    )
+    title = serializers.CharField(max_length=500, help_text="Appointment title")
+    attendee_email = serializers.EmailField(help_text="Attendee email address")
+    attendee_name = serializers.CharField(
+        max_length=255,
+        required=False,
+        help_text="Attendee name (optional)"
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Additional description (optional)"
+    )
+
+
+class BookingResponseSerializer(serializers.Serializer):
+    """Serializer for booking appointment response"""
+    event_id = serializers.CharField()
+    calendar_id = serializers.CharField()
+    start_time = serializers.DateTimeField()
+    end_time = serializers.DateTimeField()
+    title = serializers.CharField()
+    attendee_email = serializers.CharField()
+    meeting_details = serializers.DictField()
+    config_name = serializers.CharField() 
+
+
+# ===== GOOGLE CALENDAR MCP TOKEN MANAGEMENT =====
+
+class GoogleCalendarMCPTokenRequestSerializer(serializers.Serializer):
+    """Serializer for Google Calendar MCP token generation request"""
+    
+    agent_name = serializers.CharField(
+        max_length=255, 
+        help_text="Unique MCP agent name for Google Calendar authentication",
+        required=True
+    )
+    
+    def validate_agent_name(self, value):
+        """Ensure agent name is not empty and stripped"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Agent name cannot be empty")
+        return value.strip()
+
+
+class GoogleCalendarMCPTokenResponseSerializer(serializers.ModelSerializer):
+    """Serializer for Google Calendar MCP token response"""
+    
+    class Meta:
+        model = GoogleCalendarMCPAgent
+        fields = ['id', 'name', 'token', 'created_at', 'expires_at']
+        read_only_fields = ['id', 'token', 'created_at', 'expires_at']
+
+
+class GoogleCalendarMCPAgentListSerializer(serializers.ModelSerializer):
+    """Serializer for listing Google Calendar MCP agents (no token exposure)"""
+    
+    is_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = GoogleCalendarMCPAgent
+        fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
+        read_only_fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
+    
+    def get_is_valid(self, obj):
+        """Check if the MCP agent token is still valid"""
+        return obj.is_valid() 

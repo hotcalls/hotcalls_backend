@@ -1,24 +1,27 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import viewsets, status, filters
-from rest_framework.decorators import action, permission_classes
+from rest_framework.decorators import action, permission_classes, api_view
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
+from django.db import transaction
 
-from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace, GoogleCalendarMCPAgent
 from core.services.google_calendar import GoogleCalendarService, GoogleOAuthService, CalendarServiceFactory
 from .serializers import (
     CalendarSerializer, GoogleCalendarConnectionSerializer,
     CalendarConfigurationSerializer, CalendarConfigurationCreateSerializer,
-    CalendarAvailabilityRequestSerializer, CalendarAvailabilityResponseSerializer,
-    GoogleOAuthCallbackSerializer, EventCreateSerializer
+    GoogleOAuthCallbackSerializer, AvailabilityRequestSerializer,
+    AvailabilityResponseSerializer, BookingRequestSerializer,
+    BookingResponseSerializer, GoogleCalendarMCPAgentListSerializer,
+    GoogleCalendarMCPTokenRequestSerializer, GoogleCalendarMCPTokenResponseSerializer
 )
 from .filters import CalendarFilter, CalendarConfigurationFilter
-from .permissions import CalendarPermission, CalendarConfigurationPermission
+from .permissions import CalendarPermission, CalendarConfigurationPermission, GoogleCalendarMCPPermission, SuperuserOnlyPermission, GoogleCalendarMCPPermission
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +62,17 @@ logger = logging.getLogger(__name__)
     ),
     update=extend_schema(
         summary="Update calendar",
-        description="Update calendar information (staff only)",
+        description="Update calendar information for calendars in your workspace",
         tags=["User Management"]
     ),
     partial_update=extend_schema(
         summary="Partially update calendar",
-        description="Update specific fields of a calendar (staff only)",
+        description="Update specific fields of a calendar in your workspace",
         tags=["User Management"]
     ),
     destroy=extend_schema(
         summary="Delete calendar",
-        description="Delete a calendar (superuser only)",
+        description="Delete a calendar in your workspace",
         tags=["User Management"]
     ),
 )
@@ -78,9 +81,9 @@ class CalendarViewSet(viewsets.ModelViewSet):
     📅 **Calendar Integration Management with Google Calendar Support**
     
     Manages calendar integrations with workspace-filtered access:
-    - **👤 Regular Users**: Access only calendars in their workspaces
+    - **👤 Regular Users**: Can view, create, update, and delete calendars in their workspaces
     - **👔 Staff**: Full calendar administration across all workspaces
-    - **🔧 Superusers**: Complete calendar control including deletion
+    - **🔧 Superusers**: Complete calendar control across all workspaces
     
     **🆕 Google Calendar Integration:**
     - OAuth authentication flow
@@ -89,7 +92,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
     - Event creation capabilities
     """
     queryset = Calendar.objects.all()
-    permission_classes = [CalendarPermission]
+    permission_classes = [GoogleCalendarMCPPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarFilter
     search_fields = ['name', 'workspace__workspace_name']
@@ -102,13 +105,19 @@ class CalendarViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter queryset based on user permissions"""
+        # Check if this is an MCP request
+        if hasattr(self.request, 'google_mcp_agent'):
+            # MCP agents can see all active calendars
+            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar')
+            
         user = self.request.user
         if user.is_staff:
-            return Calendar.objects.all().select_related('workspace').prefetch_related('google_calendar')
+            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar')
         else:
-            # Regular users can only see calendars in their workspaces
+            # Regular users can only see calendars in their workspaces and only active calendars
             return Calendar.objects.filter(
-                workspace__users=user
+                workspace__users=user,
+                active=True
             ).select_related('workspace').prefetch_related('google_calendar')
     
     # 🎯 GOOGLE OAUTH ENDPOINTS
@@ -153,19 +162,18 @@ class CalendarViewSet(viewsets.ModelViewSet):
         🎯 OAUTH START POINT - Generate Google OAuth authorization URL
         """
         try:
-            # Get optional state parameter from request
-            state = request.data.get('state')
+            # Generate state with user ID for callback identification
+            import secrets
+            state = secrets.token_urlsafe(32)
             
-            # If no state provided, generate one for CSRF protection
-            if not state:
-                import secrets
-                state = secrets.token_urlsafe(32)
+            # Store user ID in state for callback lookup
+            request.session[f'google_oauth_state_{state}'] = {
+                'user_id': str(request.user.id),  # Convert UUID to string for JSON serialization
+                'created_at': timezone.now().isoformat()
+            }
             
             # Generate authorization URL
             authorization_url = GoogleOAuthService.get_authorization_url(state=state)
-            
-            # Store state in session for verification (optional)
-            request.session[f'google_oauth_state'] = state
             
             logger.info(f"Generated Google OAuth URL for user {request.user.email}")
             
@@ -213,13 +221,14 @@ class CalendarViewSet(viewsets.ModelViewSet):
         },
         tags=["Google Calendar"]
     )
-    @action(detail=False, methods=['get'], url_path='google_callback')
+    @action(detail=False, methods=['get'], url_path='google_callback', permission_classes=[AllowAny])
     def google_oauth_callback(self, request):
         """
         🎯 MAIN ENTRY POINT - Handle Google OAuth callback
         This is where our backend picks up the OAuth flow
         """
         code = request.GET.get('code')
+        state = request.GET.get('state')
         error = request.GET.get('error')
         
         if error:
@@ -229,6 +238,29 @@ class CalendarViewSet(viewsets.ModelViewSet):
         if not code:
             logger.warning("No authorization code received in OAuth callback")
             return Response({'error': 'No authorization code received'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        if not state:
+            logger.warning("No state parameter received in OAuth callback")
+            return Response({'error': 'No state parameter received'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get user from state
+        state_key = f'google_oauth_state_{state}'
+        state_data = request.session.get(state_key)
+        
+        if not state_data:
+            logger.warning(f"Invalid or expired state parameter: {state}")
+            return Response({'error': 'Invalid or expired OAuth session'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get user from state data
+        try:
+            from core.models import User
+            user = User.objects.get(id=state_data['user_id'])
+        except User.DoesNotExist:
+            logger.error(f"User not found for OAuth callback: {state_data['user_id']}")
+            return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Clean up state from session
+        del request.session[state_key]
         
         try:
             # 1. Exchange code for tokens
@@ -237,8 +269,8 @@ class CalendarViewSet(viewsets.ModelViewSet):
             # 2. Get user info from Google
             user_info = GoogleOAuthService.get_user_info(credentials)
             
-            # 3. Get user's workspace (assuming users belong to workspaces)
-            user_workspace = self._get_user_workspace(request.user)
+            # 3. Get user's workspace
+            user_workspace = self._get_user_workspace(user)
             if not user_workspace:
                 return Response({
                     'error': 'User must belong to a workspace to connect Google Calendar'
@@ -249,10 +281,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 workspace=user_workspace,
                 account_email=user_info['email'],
                 defaults={
-                    'user': request.user,
+                    'user': user,
                     'refresh_token': credentials.refresh_token,
                     'access_token': credentials.token,
-                    'token_expires_at': credentials.expiry,
+                    'token_expires_at': self._make_timezone_aware(credentials.expiry),
                     'scopes': list(credentials.scopes),
                     'active': True
                 }
@@ -264,18 +296,12 @@ class CalendarViewSet(viewsets.ModelViewSet):
             
             logger.info(f"{'Created' if created else 'Updated'} Google Calendar connection for {user_info['email']}")
             
-            # 6. Return success with calendar data
-            return Response({
-                'success': True,
-                'connection': {
-                    'id': connection.id,
-                    'account_email': connection.account_email,
-                    'calendars_count': len(synced_calendars),
-                    'created': created
-                },
-                'calendars': CalendarSerializer(synced_calendars, many=True).data,
-                'message': f'Successfully connected {connection.account_email}'
-            })
+            # 6. Redirect to frontend after successful OAuth
+            from django.shortcuts import redirect
+            
+            # Redirect to frontend calendar dashboard with success parameters
+            success_url = f"http://localhost:5173/dashboard/calendar?oauth_success=true&calendars={len(synced_calendars)}&email={connection.account_email}"
+            return redirect(success_url)
             
         except Exception as e:
             logger.error(f"Google OAuth callback failed: {str(e)}")
@@ -285,20 +311,25 @@ class CalendarViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _get_user_workspace(self, user):
-        """Get user's workspace (customize based on your user-workspace relationship)"""
-        # Assuming users have a default workspace or belong to one workspace
-        # Adjust this logic based on your actual user-workspace relationship
-        if hasattr(user, 'workspaces'):
-            return user.workspaces.first()
-        elif hasattr(user, 'workspace'):
-            return user.workspace
+        """Get user's workspace - PRODUCTION VERSION"""
+        # Get user's workspace via ManyToMany relationship
+        user_workspaces = user.mapping_user_workspaces.all()
+        
+        if user_workspaces.exists():
+            return user_workspaces.first()
         else:
-            # If user doesn't have workspace, try to get or create one
-            workspace, _ = Workspace.objects.get_or_create(
-                workspace_name=f"{user.username}_workspace",
-                defaults={'description': f'Default workspace for {user.username}'}
-            )
-            return workspace
+            # PRODUCTION: User MUSS ein Workspace haben
+            logger.error(f"User {user.email} has no workspace - this should not happen in production")
+            raise ValueError(f"User {user.email} has no workspace assigned. Please contact support.")
+    
+    def _make_timezone_aware(self, dt):
+        """Convert timezone-naive datetime to timezone-aware UTC datetime"""
+        if dt is None:
+            return None
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is None:
+            # Assume UTC if no timezone info
+            return dt.replace(tzinfo=dt_timezone.utc)
+        return dt
     
     # 🔗 GOOGLE CONNECTION MANAGEMENT
     
@@ -313,10 +344,13 @@ class CalendarViewSet(viewsets.ModelViewSet):
         """List Google Calendar connections for workspace"""
         user = request.user
         if user.is_staff:
-            connections = GoogleCalendarConnection.objects.all()
+            connections = GoogleCalendarConnection.objects.filter(active=True)
         else:
             user_workspace = self._get_user_workspace(user)
-            connections = GoogleCalendarConnection.objects.filter(workspace=user_workspace)
+            connections = GoogleCalendarConnection.objects.filter(
+                workspace=user_workspace, 
+                active=True
+            )
         
         serializer = GoogleCalendarConnectionSerializer(connections, many=True)
         return Response(serializer.data)
@@ -388,9 +422,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             connection.active = False
             connection.save()
             
-            # Deactivate related calendars
+            # Deactivate related calendars in the same workspace
             Calendar.objects.filter(
-                google_calendar__connection=connection
+                workspace=connection.workspace,
+                provider='google'
             ).update(active=False)
             
             logger.info(f"Disconnected Google Calendar for {connection.account_email}")
@@ -411,19 +446,6 @@ class CalendarViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     # 📊 CALENDAR FUNCTIONALITY
-    
-    @extend_schema(
-        summary="Get calendar configurations",
-        description="Get all configurations for a specific calendar",
-        tags=["User Management"]
-    )
-    @action(detail=True, methods=['get'])
-    def configurations(self, request, pk=None):
-        """Get all configurations for a specific calendar"""
-        calendar = self.get_object()
-        configurations = calendar.configurations.all()
-        serializer = CalendarConfigurationSerializer(configurations, many=True)
-        return Response(serializer.data)
     
     @extend_schema(
         summary="🧪 Test calendar connection",
@@ -458,114 +480,240 @@ class CalendarViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
-        summary="🗓️ Create calendar event",
-        description="Create an event in the calendar",
-        request=EventCreateSerializer,
-        tags=["User Management"]
-    )
-    @action(detail=True, methods=['post'], url_path='create-event')
-    def create_event(self, request, pk=None):
-        """Create an event in the calendar"""
-        calendar = self.get_object()
-        serializer = EventCreateSerializer(data=request.data)
+        summary="📊 Google Calendar Health Status",
+        description="""
+        Get comprehensive health status of all Google Calendar connections.
         
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot access
+        - **❌ Staff Members**: Cannot access  
+        - **✅ Superuser ONLY**: Can view health status
+        
+        **📊 Information Provided**:
+        - Token expiry status for all calendars
+        - Health statistics and summary
+        - Calendars requiring attention
+        - Automatic recommendations
+        """,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Health status retrieved successfully"
+            ),
+            403: OpenApiResponse(description="🚫 Access denied - Superuser required")
+        },
+        tags=["System Health"]
+    )
+    @action(detail=False, methods=['get'], url_path='google_health')
+    def google_calendar_health(self, request):
+        """Get Google Calendar health status (Superuser only)"""
+        # Superuser only check
+        if not request.user.is_superuser:
+            return Response({
+                'error': 'Access denied',
+                'details': 'Superuser access required for health monitoring'
+            }, status=status.HTTP_403_FORBIDDEN)
         
         try:
-            service = CalendarServiceFactory.get_service(calendar)
+            from core.models import GoogleCalendar
+            from datetime import timedelta
             
-            # Prepare event data for Google Calendar API
-            event_data = {
-                'summary': serializer.validated_data['summary'],
-                'description': serializer.validated_data.get('description', ''),
-                'start': {
-                    'dateTime': serializer.validated_data['start_time'].isoformat(),
-                    'timeZone': 'UTC'
-                },
-                'end': {
-                    'dateTime': serializer.validated_data['end_time'].isoformat(),
-                    'timeZone': 'UTC'
-                }
+            now = timezone.now()
+            all_calendars = GoogleCalendar.objects.all()
+            
+            health_data = {
+                'timestamp': now.isoformat(),
+                'total_calendars': all_calendars.count(),
+                'healthy': 0,
+                'expiring_soon': 0,  # Within 24 hours
+                'expired': 0,
+                'missing_tokens': 0,
+                'calendar_details': [],
+                'recommendations': []
             }
             
-            # Add attendees if provided
-            if serializer.validated_data.get('attendee_emails'):
-                event_data['attendees'] = [
-                    {'email': email} for email in serializer.validated_data['attendee_emails']
-                ]
+            for calendar in all_calendars:
+                details = self._analyze_calendar_health(calendar, now)
+                health_data['calendar_details'].append(details)
+                health_data[details['status']] += 1
             
-            event = service.create_event(
-                serializer.validated_data['calendar_id'],
-                event_data
-            )
+            # Generate recommendations
+            health_data['recommendations'] = self._generate_health_recommendations(health_data)
             
-            return Response({
-                'success': True,
-                'event': {
-                    'id': event['id'],
-                    'summary': event['summary'],
-                    'start': event['start'],
-                    'end': event['end'],
-                    'html_link': event.get('htmlLink')
-                },
-                'message': 'Event created successfully'
-            })
+            logger.info(f"Google Calendar health check completed: {health_data['healthy']}/{health_data['total_calendars']} healthy")
+            
+            return Response(health_data)
             
         except Exception as e:
-            logger.error(f"Failed to create event in calendar {calendar.id}: {str(e)}")
+            logger.error(f"Google Calendar health check failed: {str(e)}")
             return Response({
-                'error': 'Failed to create event',
-                'details': str(e)
+                'error': 'Health check failed',
+                'details': str(e),
+                'timestamp': timezone.now().isoformat()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _analyze_calendar_health(self, calendar, now):
+        """Analyze the health of a single Google Calendar"""
+        details = {
+            'calendar_id': str(calendar.calendar.id),
+            'calendar_name': calendar.calendar.name,
+            'external_id': calendar.external_id,
+            'status': 'healthy',
+            'issue': None,
+            'expires_at': calendar.token_expires_at.isoformat() if calendar.token_expires_at else None,
+            'time_until_expiry': None,
+            'needs_action': False
+        }
+        
+        # Check for missing tokens
+        if not calendar.access_token or not calendar.refresh_token:
+            details['status'] = 'missing_tokens'
+            details['issue'] = 'Missing access or refresh token - requires re-authorization'
+            details['needs_action'] = True
+            return details
+        
+        # Check expiry status
+        if not calendar.token_expires_at:
+            details['status'] = 'missing_tokens'
+            details['issue'] = 'No token expiry time set'
+            details['needs_action'] = True
+            return details
+        
+        time_diff = calendar.token_expires_at - now
+        
+        if calendar.token_expires_at < now:
+            details['status'] = 'expired'
+            details['issue'] = f'Token expired {abs(time_diff)} ago'
+            details['needs_action'] = True
+        elif calendar.token_expires_at < now + timedelta(hours=24):
+            details['status'] = 'expiring_soon'
+            details['issue'] = f'Token expires in {time_diff}'
+            details['time_until_expiry'] = str(time_diff)
+            details['needs_action'] = True
+        else:
+            details['time_until_expiry'] = str(time_diff)
+        
+        return details
+    
+    def _generate_health_recommendations(self, health_data):
+        """Generate actionable recommendations based on health data"""
+        recommendations = []
+        
+        if health_data['expired'] > 0:
+            recommendations.append({
+                'priority': 'high',
+                'action': 'refresh_expired_tokens',
+                'message': f"{health_data['expired']} calendars have expired tokens",
+                'command': 'python manage.py google_calendar_health --refresh-tokens'
+            })
+        
+        if health_data['missing_tokens'] > 0:
+            recommendations.append({
+                'priority': 'high', 
+                'action': 'reauthorize_calendars',
+                'message': f"{health_data['missing_tokens']} calendars need re-authorization",
+                'command': 'Users must reconnect their Google Calendar accounts'
+            })
+        
+        if health_data['expiring_soon'] > 0:
+            recommendations.append({
+                'priority': 'medium',
+                'action': 'proactive_refresh',
+                'message': f"{health_data['expiring_soon']} calendars expire within 24 hours",
+                'command': 'Automatic refresh should handle these, monitor closely'
+            })
+        
+        unhealthy_count = health_data['expired'] + health_data['missing_tokens']
+        total_count = health_data['total_calendars']
+        
+        if unhealthy_count == 0:
+            recommendations.append({
+                'priority': 'info',
+                'action': 'all_healthy',
+                'message': f"✅ All {total_count} Google Calendar connections are healthy",
+                'command': None
+            })
+        elif unhealthy_count > total_count * 0.5:  # More than 50% unhealthy
+            recommendations.append({
+                'priority': 'critical',
+                'action': 'system_wide_issue',
+                'message': f"⚠️ {unhealthy_count}/{total_count} calendars are unhealthy - investigate system-wide issues",
+                'command': 'Check Google API credentials and quotas'
+            })
+        
+        return recommendations 
 
 
 @extend_schema_view(
     list=extend_schema(
-        summary="List calendar configurations",
-        description="Retrieve a list of all calendar configurations with filtering capabilities",
+        summary="📋 List calendar configurations",
+        description="""
+        Retrieve calendar configurations based on your workspace access.
+        
+        **🔐 Permission Requirements**:
+        - **Regular Users**: Can only see configurations for calendars in their workspaces
+        - **Staff Members**: Can view all configurations in the system
+        
+        **📊 Response Filtering**:
+        - Regular users see only workspace-scoped configurations
+        - Staff see all configurations
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=CalendarConfigurationSerializer(many=True),
+                description="✅ Successfully retrieved calendar configurations"
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required")
+        },
         tags=["User Management"]
     ),
     create=extend_schema(
-        summary="Create a new calendar configuration",
-        description="Create a new calendar configuration (staff only)",
-        tags=["User Management"]
+        summary="➕ Create calendar configuration",
+    description="Create a new calendar configuration for calendars in your workspace",
+    request=CalendarConfigurationCreateSerializer,
+    responses={201: CalendarConfigurationSerializer},
+    tags=["User Management"]
     ),
     retrieve=extend_schema(
-        summary="Get configuration details",
+        summary="📄 Get configuration details",
         description="Retrieve detailed information about a specific calendar configuration",
         tags=["User Management"]
     ),
     update=extend_schema(
-        summary="Update configuration",
-        description="Update all fields of a calendar configuration (staff only)",
+        summary="✏️ Update configuration",
+        description="Update calendar configuration for calendars in your workspace",
         tags=["User Management"]
     ),
     partial_update=extend_schema(
-        summary="Partially update configuration",
-        description="Update specific fields of a calendar configuration (staff only)",
+        summary="📝 Partially update configuration",
+        description="Update specific fields of a calendar configuration in your workspace",
         tags=["User Management"]
     ),
     destroy=extend_schema(
-        summary="Delete configuration",
-        description="Delete a calendar configuration (staff only)",
+        summary="🗑️ Delete configuration",
+        description="Delete a calendar configuration in your workspace",
         tags=["User Management"]
     ),
 )
 class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for CalendarConfiguration model operations
+    📋 **Calendar Configuration Management**
     
-    Provides CRUD operations for calendar configurations:
-    - Users can view configurations for calendars in their workspaces
-    - Staff can create/modify/delete configurations
+    Manages calendar configurations with workspace-filtered access:
+    - **👤 Regular Users**: Can view, create, update, and delete configurations for calendars in their workspaces
+    - **👔 Staff**: Full configuration administration across all workspaces
+    
+    **⚙️ Configuration Features:**
+    - Meeting duration settings
+    - Preparation time buffer
+    - Working days and hours
+    - Calendar conflict checking
     """
     queryset = CalendarConfiguration.objects.all()
-    permission_classes = [CalendarConfigurationPermission]
+    permission_classes = [GoogleCalendarMCPPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarConfigurationFilter
     search_fields = ['calendar__name', 'calendar__workspace__workspace_name']
-    ordering_fields = ['duration', 'prep_time', 'created_at', 'updated_at']
+    ordering_fields = ['duration', 'created_at', 'updated_at']
     ordering = ['-created_at']
     
     def get_serializer_class(self):
@@ -576,6 +724,11 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filter queryset based on user permissions"""
+        # Check if this is an MCP request
+        if hasattr(self.request, 'google_mcp_agent'):
+            # MCP agents can see all calendar configurations
+            return CalendarConfiguration.objects.all().select_related('calendar__workspace')
+            
         user = self.request.user
         if user.is_staff:
             return CalendarConfiguration.objects.all().select_related('calendar__workspace')
@@ -585,101 +738,754 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 calendar__workspace__users=user
             ).select_related('calendar__workspace')
     
+    def perform_create(self, serializer):
+        """Handle creation with workspace permission check"""
+        calendar = serializer.validated_data['calendar']
+        user = self.request.user
+        
+        # Staff can create configurations for any calendar
+        if user.is_staff:
+            serializer.save()
+        else:
+            # Regular users can only create configurations for calendars in their workspaces
+            if calendar.workspace and user in calendar.workspace.users.all():
+                serializer.save()
+            else:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You can only create configurations for calendars in your workspace")
+        
     @extend_schema(
-        summary="🔍 Check availability",
-        description="Check available time slots for a specific date using real Google Calendar data",
-        request=CalendarAvailabilityRequestSerializer,
-        responses={200: OpenApiResponse(response=CalendarAvailabilityResponseSerializer)},
+        summary="🕐 Check Calendar Availability",
+        description="""
+        Check availability for appointments based on calendar configuration rules.
+        
+        **📋 Process:**
+        - Validates workdays and days_buffer
+        - Checks conflict_check_calendars for busy times
+        - Calculates available slots considering prep_time
+        - Returns available time slots within working hours
+        
+        **⚙️ Configuration Applied:**
+        - Working days and hours (from_time/to_time)
+        - Preparation time buffer
+        - Days buffer for advance booking
+        - Conflict calendar checking
+        """,
+        request=AvailabilityRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=AvailabilityResponseSerializer,
+                description="✅ Availability calculated successfully"
+            ),
+            400: OpenApiResponse(description="❌ Invalid request data"),
+            404: OpenApiResponse(description="❌ Configuration not found"),
+            403: OpenApiResponse(description="🚫 No access to this configuration")
+        },
         tags=["User Management"]
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='check-availability')
     def check_availability(self, request, pk=None):
-        """Check availability for a specific configuration and date using real Google Calendar API"""
-        configuration = self.get_object()
-        serializer = CalendarAvailabilityRequestSerializer(data=request.data)
+        """Check availability for appointments based on calendar configuration"""
+        config = self.get_object()  # This handles permissions automatically
         
+        # Validate request data
+        serializer = AvailabilityRequestSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
+        date = serializer.validated_data['date']
+        duration_minutes = serializer.validated_data['duration_minutes']
+        
         try:
-            date = serializer.validated_data['date']
-            duration_minutes = serializer.validated_data['duration_minutes']
-            
-            # Get calendar service
-            calendar = configuration.calendar
-            service = CalendarServiceFactory.get_service(calendar)
-            
-            # Check if it's a Google calendar and get the external ID
-            if calendar.provider == 'google':
-                google_calendar = calendar.google_calendar
-                calendar_id = google_calendar.external_id
-            else:
+            # Validate booking rules (workdays, buffer)
+            validation = self._validate_booking_rules(config, date)
+            if not validation['valid']:
                 return Response({
-                    'error': 'Real availability checking only supported for Google Calendar'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                    'date': date,
+                    'available_slots': [],
+                    'busy_periods': [],
+                    'config_name': config.name,
+                    'total_slots_found': 0,
+                    'message': validation['reason'],
+                    'calendar_health': {'status': 'rules_violation', 'message': validation['reason']}
+                })
             
-            # Define time window for the day
-            start_datetime = datetime.combine(date, configuration.from_time)
-            end_datetime = datetime.combine(date, configuration.to_time)
-            
-            # Get busy times from Google Calendar
-            busy_times = service.check_availability(calendar_id, start_datetime, end_datetime)
+            # Get busy times from conflict calendars with enhanced error tracking
+            busy_times_result = self._get_busy_times_from_conflicts_with_health(config, date)
+            busy_times = busy_times_result['busy_times']
+            calendar_health = busy_times_result['health_status']
             
             # Calculate available slots
-            available_slots = self._calculate_available_slots(
-                start_datetime, end_datetime, busy_times, duration_minutes
-            )
+            available_slots = self._calculate_available_slots(config, date, duration_minutes, busy_times)
             
+            # Prepare response with health information
             response_data = {
                 'date': date,
                 'available_slots': available_slots,
-                'calendar_config_id': configuration.id,
-                'busy_times': busy_times
+                'busy_periods': busy_times,
+                'config_name': config.name,
+                'total_slots_found': len(available_slots),
+                'calendar_health': calendar_health
             }
             
-            response_serializer = CalendarAvailabilityResponseSerializer(response_data)
-            return Response(response_serializer.data)
+            # Add warnings if some calendars failed
+            if calendar_health['failed_calendars']:
+                response_data['warnings'] = [
+                    f"Could not check availability for {len(calendar_health['failed_calendars'])} calendars: {', '.join(calendar_health['failed_calendars'])}"
+                ]
+            
+            return Response(response_data, status=status.HTTP_200_OK)
             
         except Exception as e:
-            logger.error(f"Failed to check availability for config {configuration.id}: {str(e)}")
-            return Response({
-                'error': 'Failed to check availability',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    def _calculate_available_slots(self, start_time, end_time, busy_times, duration_minutes):
-        """Calculate available time slots based on busy times"""
-        available_slots = []
-        current_time = start_time
-        slot_duration = timedelta(minutes=duration_minutes)
-        
-        # Convert busy times to datetime objects
-        busy_periods = []
-        for busy in busy_times:
-            busy_start = datetime.fromisoformat(busy['start'].replace('Z', '+00:00'))
-            busy_end = datetime.fromisoformat(busy['end'].replace('Z', '+00:00'))
-            busy_periods.append((busy_start, busy_end))
-        
-        # Sort busy periods
-        busy_periods.sort(key=lambda x: x[0])
-        
-        while current_time + slot_duration <= end_time:
-            slot_end = current_time + slot_duration
+            logger.error(f"Error checking availability for config {config.id}: {str(e)}")
             
-            # Check if this slot conflicts with any busy period
+            # Provide more specific error information
+            error_response = {
+                'error': 'Failed to check availability',
+                'details': str(e),
+                'config_name': config.name,
+                'date': date,
+                'calendar_health': {
+                    'status': 'system_error',
+                    'message': 'Unexpected system error occurred'
+                }
+            }
+            
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @extend_schema(
+        summary="📅 Book Appointment",
+        description="""
+        Book an appointment based on calendar configuration.
+        
+        **📋 Process:**
+        - Double-checks availability (race condition prevention)
+        - Creates event in main calendar
+        - Applies meeting type specific details (link/address)
+        - Sends calendar invitation to attendee
+        
+        **⚙️ Configuration Applied:**
+        - Meeting type (online/in_person/phone)
+        - Meeting link or address
+        - Calendar for event creation
+        """,
+        request=BookingRequestSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=BookingResponseSerializer,
+                description="✅ Appointment booked successfully"
+            ),
+            400: OpenApiResponse(description="❌ Invalid request data or time not available"),
+            404: OpenApiResponse(description="❌ Configuration not found"),
+            403: OpenApiResponse(description="🚫 No access to this configuration")
+        },
+        tags=["User Management"]
+    )
+    @action(detail=True, methods=['post'], url_path='book-appointment')
+    def book_appointment(self, request, pk=None):
+        """Book an appointment based on calendar configuration"""
+        config = self.get_object()  # This handles permissions automatically
+        
+        # Validate request data
+        serializer = BookingRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        start_time = serializer.validated_data['start_time']
+        duration_minutes = serializer.validated_data['duration_minutes']
+        title = serializer.validated_data['title']
+        attendee_email = serializer.validated_data['attendee_email']
+        attendee_name = serializer.validated_data.get('attendee_name')
+        description = serializer.validated_data.get('description')
+        
+        try:
+            # Double-check availability (race condition prevention)
+            date = start_time.date()
+            
+            # Validate booking rules
+            validation = self._validate_booking_rules(config, date)
+            if not validation['valid']:
+                return Response({
+                    'error': 'Booking rules validation failed',
+                    'details': validation['reason'],
+                    'config_name': config.name
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Get current busy times and check if slot is still available
+            busy_times_result = self._get_busy_times_from_conflicts_with_health(config, date)
+            busy_times = busy_times_result['busy_times']
+            calendar_health = busy_times_result['health_status']
+            
+            available_slots = self._calculate_available_slots(config, date, duration_minutes, busy_times)
+            
+            # Check if requested time slot is available
+            requested_time = start_time.strftime('%H:%M:%S')
+            slot_available = any(
+                slot['start_time'] <= requested_time < slot['end_time'] 
+                for slot in available_slots
+            )
+            
+            if not slot_available:
+                return Response({
+                    'error': 'Time slot no longer available',
+                    'details': f'Requested time {requested_time} is not available',
+                    'calendar_health': calendar_health,
+                    'config_name': config.name
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check main calendar health before attempting to book
+            main_calendar = config.calendar
+            if not hasattr(main_calendar, 'google_calendar'):
+                return Response({
+                    'error': 'Calendar configuration error',
+                    'details': 'Main calendar has no Google Calendar connection',
+                    'config_name': config.name
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Verify main calendar has valid tokens
+            google_calendar = main_calendar.google_calendar
+            if not google_calendar.connection or not google_calendar.connection.access_token:
+                return Response({
+                    'error': 'Main calendar authentication required',
+                    'details': f'Calendar "{main_calendar.name}" needs re-authorization',
+                    'config_name': config.name,
+                    'requires_reauth': True
+                }, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Build event data
+            event_data = self._build_event_data(
+                config, start_time, duration_minutes, title, 
+                attendee_email, attendee_name, description
+            )
+            
+            # Create event in main calendar
+            try:
+                service = CalendarServiceFactory.get_service(main_calendar)
+                external_id = main_calendar.google_calendar.external_id
+                
+                # Create the event
+                created_event = service.create_event(external_id, event_data)
+                
+            except ValueError as e:
+                # Handle OAuth/token errors for main calendar
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    return Response({
+                        'error': 'Main calendar authentication required',
+                        'details': f'Calendar "{main_calendar.name}" needs re-authorization: {error_msg}',
+                        'config_name': config.name,
+                        'requires_reauth': True
+                    }, status=status.HTTP_401_UNAUTHORIZED)
+                else:
+                    raise  # Re-raise other ValueError types
+            
+            # Prepare meeting details for response
+            meeting_details = {
+                'type': config.meeting_type,
+                'duration_minutes': duration_minutes
+            }
+            
+            if config.meeting_type == 'online' and config.meeting_link:
+                meeting_details['meeting_link'] = config.meeting_link
+            elif config.meeting_type == 'in_person' and config.meeting_address:
+                meeting_details['address'] = config.meeting_address
+            
+            # Prepare response
+            end_time = start_time + timedelta(minutes=duration_minutes)
+            response_data = {
+                'event_id': created_event['id'],
+                'calendar_id': external_id,
+                'start_time': start_time,
+                'end_time': end_time,
+                'title': title,
+                'attendee_email': attendee_email,
+                'meeting_details': meeting_details,
+                'config_name': config.name,
+                'calendar_health': calendar_health
+            }
+            
+            # Add warnings if some conflict calendars failed during availability check
+            if calendar_health['failed_calendars']:
+                response_data['warnings'] = [
+                    f"Appointment booked successfully, but {len(calendar_health['failed_calendars'])} conflict calendars could not be checked: {', '.join(calendar_health['failed_calendars'])}"
+                ]
+            
+            logger.info(f"✅ Successfully booked appointment for config {config.id}: {title} at {start_time}")
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
+        
+        except Exception as e:
+            logger.error(f"❌ Error booking appointment for config {config.id}: {str(e)}")
+            
+            # Provide detailed error response
+            error_response = {
+                'error': 'Failed to book appointment',
+                'details': str(e),
+                'config_name': config.name,
+                'start_time': start_time.isoformat() if start_time else None,
+                'title': title
+            }
+            
+            return Response(error_response, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    def _validate_booking_rules(self, config: CalendarConfiguration, date) -> dict:
+        """Validate booking rules (workdays, days_buffer)"""
+        # Check if date is in workdays
+        weekday = date.strftime('%A').lower()
+        if weekday not in [day.lower() for day in config.workdays]:
+            return {
+                'valid': False,
+                'reason': f'Not a working day. Working days: {", ".join(config.workdays)}'
+            }
+        
+        # Check days_buffer
+        days_until = (date - timezone.now().date()).days
+        if days_until < config.days_buffer:
+            return {
+                'valid': False,
+                'reason': f'Booking must be at least {config.days_buffer} days in advance'
+            }
+        
+        return {'valid': True}
+    
+    def _get_busy_times_from_conflicts(self, config: CalendarConfiguration, date) -> list:
+        """Get busy times from all conflict_check_calendars with robust error handling"""
+        busy_times = []
+        
+        start_datetime = datetime.combine(date, config.from_time)
+        end_datetime = datetime.combine(date, config.to_time)
+        
+        # Make timezone aware
+        start_datetime = timezone.make_aware(start_datetime)
+        end_datetime = timezone.make_aware(end_datetime)
+        
+        failed_calendars = []
+        
+        for calendar_id in config.conflict_check_calendars:
+            try:
+                conflict_calendar = Calendar.objects.select_related(
+                    'google_calendar__connection'
+                ).get(id=calendar_id)
+                
+                if not hasattr(conflict_calendar, 'google_calendar'):
+                    logger.warning(f"Calendar {calendar_id} has no google_calendar data")
+                    failed_calendars.append(conflict_calendar.name if hasattr(conflict_calendar, 'name') else str(calendar_id))
+                    continue
+                
+                # Check if calendar has valid tokens before attempting API call
+                google_calendar = conflict_calendar.google_calendar
+                if not google_calendar.connection or not google_calendar.connection.access_token:
+                    logger.warning(f"Calendar {conflict_calendar.name} has no valid tokens - skipping availability check")
+                    failed_calendars.append(conflict_calendar.name)
+                    continue
+                
+                # Get GoogleCalendarService through existing factory
+                service = CalendarServiceFactory.get_service(conflict_calendar)
+                external_id = conflict_calendar.google_calendar.external_id
+                
+                # Get busy times for this calendar
+                calendar_busy = service.check_availability(external_id, start_datetime, end_datetime)
+                
+                # Format busy times
+                for busy_period in calendar_busy:
+                    busy_times.append({
+                        'start': busy_period.get('start'),
+                        'end': busy_period.get('end'),
+                        'calendar_name': conflict_calendar.name
+                    })
+                    
+            except Calendar.DoesNotExist:
+                logger.warning(f"Conflict calendar {calendar_id} not found")
+                failed_calendars.append(str(calendar_id))
+                continue
+            except ValueError as e:
+                # Handle OAuth/token errors gracefully
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    logger.warning(f"Calendar {calendar_id} needs re-authorization - skipping for availability check: {error_msg}")
+                    failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
+                else:
+                    logger.error(f"OAuth error for calendar {calendar_id}: {error_msg}")
+                    failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error getting busy times for calendar {calendar_id}: {str(e)}")
+                failed_calendars.append(conflict_calendar.name if 'conflict_calendar' in locals() else str(calendar_id))
+                continue
+        
+        # Log summary of failed calendars for monitoring
+        if failed_calendars:
+            logger.warning(f"Failed to check availability for {len(failed_calendars)} calendars: {', '.join(failed_calendars)}")
+        
+        return busy_times
+    
+    def _get_busy_times_from_conflicts_with_health(self, config: CalendarConfiguration, date) -> dict:
+        """Get busy times with comprehensive health status tracking"""
+        busy_times = []
+        failed_calendars = []
+        token_issues = []
+        successful_calendars = []
+        
+        start_datetime = datetime.combine(date, config.from_time)
+        end_datetime = datetime.combine(date, config.to_time)
+        
+        # Make timezone aware
+        start_datetime = timezone.make_aware(start_datetime)
+        end_datetime = timezone.make_aware(end_datetime)
+        
+        total_calendars = len(config.conflict_check_calendars)
+        
+        for calendar_id in config.conflict_check_calendars:
+            calendar_name = f"Calendar-{calendar_id}"
+            
+            try:
+                conflict_calendar = Calendar.objects.select_related(
+                    'google_calendar__connection'
+                ).get(id=calendar_id)
+                
+                calendar_name = conflict_calendar.name
+                
+                if not hasattr(conflict_calendar, 'google_calendar'):
+                    logger.warning(f"Calendar {calendar_name} has no google_calendar data")
+                    failed_calendars.append(calendar_name)
+                    continue
+                
+                # Check if calendar has valid tokens before attempting API call
+                google_calendar = conflict_calendar.google_calendar
+                if not google_calendar.connection or not google_calendar.connection.access_token:
+                    logger.warning(f"Calendar {calendar_name} has no valid tokens - skipping availability check")
+                    token_issues.append(calendar_name)
+                    continue
+                
+                # Get GoogleCalendarService through existing factory
+                service = CalendarServiceFactory.get_service(conflict_calendar)
+                external_id = conflict_calendar.google_calendar.external_id
+                
+                # Get busy times for this calendar
+                calendar_busy = service.check_availability(external_id, start_datetime, end_datetime)
+                
+                # Format busy times
+                for busy_period in calendar_busy:
+                    busy_times.append({
+                        'start': busy_period.get('start'),
+                        'end': busy_period.get('end'),
+                        'calendar_name': calendar_name
+                    })
+                
+                successful_calendars.append(calendar_name)
+                logger.debug(f"Successfully checked availability for {calendar_name}: {len(calendar_busy)} busy periods")
+                    
+            except Calendar.DoesNotExist:
+                logger.warning(f"Conflict calendar {calendar_id} not found")
+                failed_calendars.append(calendar_name)
+                continue
+            except ValueError as e:
+                # Handle OAuth/token errors gracefully
+                error_msg = str(e)
+                if "Missing tokens" in error_msg or "Re-authorization required" in error_msg:
+                    logger.warning(f"Calendar {calendar_name} needs re-authorization - skipping for availability check: {error_msg}")
+                    token_issues.append(calendar_name)
+                else:
+                    logger.error(f"OAuth error for calendar {calendar_name}: {error_msg}")
+                    failed_calendars.append(calendar_name)
+                continue
+            except Exception as e:
+                logger.error(f"Unexpected error getting busy times for calendar {calendar_name}: {str(e)}")
+                failed_calendars.append(calendar_name)
+                continue
+        
+        # Determine overall health status
+        if len(successful_calendars) == total_calendars:
+            health_status = 'healthy'
+        elif len(successful_calendars) > 0:
+            health_status = 'partial'
+        else:
+            health_status = 'unhealthy'
+        
+        # Create comprehensive health report
+        health_info = {
+            'status': health_status,
+            'total_calendars': total_calendars,
+            'successful_calendars': len(successful_calendars),
+            'failed_calendars': failed_calendars,
+            'token_issues': token_issues,
+            'message': self._get_health_message(health_status, total_calendars, len(successful_calendars), token_issues, failed_calendars)
+        }
+        
+        logger.info(f"Calendar health check for config {config.id}: {health_status} - {len(successful_calendars)}/{total_calendars} calendars successful")
+        
+        return {
+            'busy_times': busy_times,
+            'health_status': health_info
+        }
+    
+    def _get_health_message(self, status: str, total: int, successful: int, token_issues: list, failed: list) -> str:
+        """Generate human-readable health status message"""
+        if status == 'healthy':
+            return f"All {total} calendars checked successfully"
+        elif status == 'partial':
+            issues = []
+            if token_issues:
+                issues.append(f"{len(token_issues)} need re-authorization")
+            if failed:
+                issues.append(f"{len(failed)} had other issues")
+            return f"{successful}/{total} calendars checked successfully. {', '.join(issues)}"
+        else:
+            return f"Could not check any calendars. {len(token_issues)} need re-authorization, {len(failed)} had other issues"
+    
+    def _calculate_available_slots(self, config: CalendarConfiguration, date, duration_minutes: int, busy_times: list) -> list:
+        """Calculate available time slots"""
+        from datetime import time, timedelta
+        
+        slots = []
+        current_time = config.from_time
+        end_time = config.to_time
+        
+        while True:
+            # Create potential slot
+            slot_start = datetime.combine(date, current_time)
+            slot_end = slot_start + timedelta(minutes=duration_minutes)
+            
+            # Check if slot fits within working hours
+            if slot_end.time() > end_time:
+                break
+            
+            # Make timezone aware (do this before checking conflicts)
+            slot_start_aware = timezone.make_aware(slot_start)
+            slot_end_aware = timezone.make_aware(slot_end)
+            
+            # Check if slot conflicts with busy times
             is_available = True
-            for busy_start, busy_end in busy_periods:
-                if (current_time < busy_end and slot_end > busy_start):
+            
+            for busy_period in busy_times:
+                busy_start = busy_period.get('start')
+                busy_end = busy_period.get('end')
+                
+                # Handle string datetime conversion more robustly
+                try:
+                    if isinstance(busy_start, str):
+                        busy_start = datetime.fromisoformat(busy_start.replace('Z', '+00:00'))
+                    if isinstance(busy_end, str):
+                        busy_end = datetime.fromisoformat(busy_end.replace('Z', '+00:00'))
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Failed to parse busy time: {e}")
+                    continue
+                
+                # Check for overlap (including prep_time buffer)
+                buffer_start = slot_start_aware - timedelta(minutes=config.prep_time)
+                
+                if (buffer_start < busy_end and slot_end_aware > busy_start):
                     is_available = False
                     break
             
             if is_available:
-                available_slots.append({
-                    'start_time': current_time.time().isoformat(),
-                    'end_time': slot_end.time().isoformat(),
-                    'available': True
+                slots.append({
+                    'start_time': slot_start.strftime('%H:%M:%S'),
+                    'end_time': slot_end.strftime('%H:%M:%S'),
+                    'start_datetime': slot_start_aware.isoformat(),
+                    'end_datetime': slot_end_aware.isoformat()
                 })
             
-            current_time += timedelta(minutes=30)  # 30-minute intervals
+            # Move to next 15-minute interval
+            current_time = (datetime.combine(date, current_time) + timedelta(minutes=15)).time()
         
-        return available_slots 
+        return slots
+    
+    def _build_event_data(self, config: CalendarConfiguration, start_time, duration_minutes: int, title: str, attendee_email: str, attendee_name: str = None, description: str = None) -> dict:
+        """Build Google Calendar event data from config"""
+        end_time = start_time + timedelta(minutes=duration_minutes)
+        
+        # Base event data
+        event_data = {
+            'summary': title,
+            'start': {
+                'dateTime': start_time.isoformat(),
+                'timeZone': 'UTC'
+            },
+            'end': {
+                'dateTime': end_time.isoformat(), 
+                'timeZone': 'UTC'
+            },
+            'attendees': [{'email': attendee_email}]
+        }
+        
+        # Add attendee name if provided
+        if attendee_name:
+            event_data['attendees'][0]['displayName'] = attendee_name
+        
+        # Build description based on config and meeting type
+        event_description = f"Booking via {config.name}"
+        
+        if description:
+            event_description += f"\n\n{description}"
+        
+        # Add meeting type specific details
+        if config.meeting_type == 'online' and config.meeting_link:
+            event_description += f"\n\nJoin meeting: {config.meeting_link}"
+        elif config.meeting_type == 'in_person' and config.meeting_address:
+            event_data['location'] = config.meeting_address
+            event_description += f"\n\nLocation: {config.meeting_address}"
+        elif config.meeting_type == 'phone':
+            event_description += "\n\nMeeting Type: Phone Call"
+        
+        event_data['description'] = event_description
+        
+        return event_data 
+
+
+# ===== GOOGLE CALENDAR MCP TOKEN MANAGEMENT =====
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📋 List Google Calendar MCP agents",
+        description="""
+        List all Google Calendar MCP agents (without exposing tokens).
+        
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot access
+        - **❌ Staff Members**: Cannot access
+        - **✅ Superuser ONLY**: Can view agent list
+        
+        **📊 Information Shown**:
+        - Agent ID and name
+        - Creation and expiration dates
+        - Token validity status
+        - **NO token values exposed**
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=GoogleCalendarMCPAgentListSerializer(many=True),
+                description="✅ Google Calendar MCP agents retrieved successfully"
+            ),
+            403: OpenApiResponse(description="🚫 Superuser access required")
+        },
+        tags=["Google Calendar MCP Token Management"]
+    ),
+    destroy=extend_schema(
+        summary="🗑️ Delete Google Calendar MCP token",
+        description="""
+        Delete a Google Calendar MCP agent token permanently.
+        
+        **🔐 Permission Requirements**:
+        - **❌ Regular Users**: Cannot access
+        - **❌ Staff Members**: Cannot access
+        - **✅ Superuser ONLY**: Can delete tokens
+        
+        **⚠️ Warning**:
+        - This permanently deletes the agent token
+        - Any MCP systems using this token will lose authentication
+        - Cannot be undone - token must be regenerated if needed
+        """,
+        responses={
+            204: OpenApiResponse(description="✅ Token deleted successfully"),
+            403: OpenApiResponse(description="🚫 Superuser access required"),
+            404: OpenApiResponse(description="🚫 Token not found")
+        },
+        tags=["Google Calendar MCP Token Management"]
+    ),
+    create=extend_schema(exclude=True),  # Hidden - use generate_token instead
+    update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
+    partial_update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
+)
+class GoogleCalendarMCPTokenViewSet(viewsets.ModelViewSet):
+    """
+    🔐 **Google Calendar MCP Token Management (Superuser Only)**
+    
+    Manages Google Calendar MCP authentication tokens with strict access control:
+    - **🚫 Staff and Regular Users**: No access
+    - **✅ Superuser Only**: Can generate and manage tokens
+    """
+    queryset = GoogleCalendarMCPAgent.objects.all().order_by('-created_at')
+    serializer_class = GoogleCalendarMCPAgentListSerializer
+    permission_classes = [SuperuserOnlyPermission]
+    
+    def create(self, request, *args, **kwargs):
+        """Block direct creation - use generate_token action instead"""
+        return Response(
+            {'detail': 'Use /generate_token/ endpoint to create tokens'}, 
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def update(self, request, *args, **kwargs):
+        """Block updates - tokens should be replaced via generate_token"""
+        return Response(
+            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Block partial updates"""
+        return Response(
+            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+    
+    @extend_schema(
+        summary="🔑 Generate Google Calendar MCP token",
+        description="""
+        Generate a new Google Calendar MCP authentication token for an agent.
+        
+        **🔐 Access Control**:
+        - **❌ Regular Users**: Cannot access
+        - **❌ Staff Members**: Cannot access  
+        - **✅ Superuser ONLY**: Can generate tokens
+        
+        **📝 Token Management**:
+        - Each agent name can have only ONE active token
+        - If agent already exists, old token is replaced
+        - Token expires after 1 year
+        - Secure random string generation
+        
+        **🔄 Replacement Logic**:
+        - Existing agent → Replace token, extend expiration
+        - New agent → Create new record with fresh token
+        
+        **🛡️ Security Features**:
+        - 64-character URL-safe random tokens
+        - Automatic expiration handling
+        - Unique constraints on agent names and tokens
+        """,
+        request=GoogleCalendarMCPTokenRequestSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=GoogleCalendarMCPTokenResponseSerializer,
+                description="✅ Token generated successfully"
+            ),
+            400: OpenApiResponse(description="❌ Validation error"),
+            403: OpenApiResponse(description="🚫 Superuser access required")
+        },
+        tags=["Google Calendar MCP Token Management"]
+    )
+    @action(detail=False, methods=['post'])
+    def generate_token(self, request):
+        """
+        Generate or replace a Google Calendar MCP authentication token for an agent.
+        
+        Only superusers can access this endpoint.
+        Each agent name can have only one active token.
+        """
+        serializer = GoogleCalendarMCPTokenRequestSerializer(data=request.data)
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        agent_name = serializer.validated_data['agent_name']
+        
+        with transaction.atomic():
+            # Check if agent already exists
+            try:
+                agent = GoogleCalendarMCPAgent.objects.get(name=agent_name)
+                # Replace existing token
+                agent.token = GoogleCalendarMCPAgent.generate_token()
+                agent.expires_at = timezone.now() + timezone.timedelta(days=365)
+                agent.save(update_fields=['token', 'expires_at'])
+                
+            except GoogleCalendarMCPAgent.DoesNotExist:
+                # Create new agent
+                agent = GoogleCalendarMCPAgent.objects.create(name=agent_name)
+        
+        response_serializer = GoogleCalendarMCPTokenResponseSerializer(agent)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED) 
+
+# MOVED TO: /api/google-calendar-mcp/tokens/current-token/
+# See core.management_api.google_calendar_mcp_api.views for the new implementation 

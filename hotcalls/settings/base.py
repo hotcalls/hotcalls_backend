@@ -514,3 +514,20 @@ SIP_PROVIDER = os.getenv('SIP_PROVIDER', 'jambonz')
 
 # LiveKit Agent Concurrency: Managed via database (LiveKitAgent model)
 # Agent count and concurrency are now dynamic - configured via API
+# But keep environment fallbacks for backward compatibility
+NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
+CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
+
+# Site URL for absolute URL generation (used by multiple services)
+SITE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
+
+# Google Calendar OAuth Configuration
+GOOGLE_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
+GOOGLE_REDIRECT_URI = f"{SITE_URL}/api/calendars/google_callback/"
+GOOGLE_SCOPES = [
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/calendar.events',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'openid'  # Required by Google OAuth for user identification
+]

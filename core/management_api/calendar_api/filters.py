@@ -100,6 +100,11 @@ class CalendarConfigurationFilter(django_filters.FilterSet):
     created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
     created_before = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='lte')
     
+    # Conflict checking filters
+    has_conflict_calendars = django_filters.BooleanFilter(method='filter_has_conflict_calendars')
+    conflict_calendars_count_min = django_filters.NumberFilter(method='filter_conflict_calendars_count_min')
+    conflict_calendars_count_max = django_filters.NumberFilter(method='filter_conflict_calendars_count_max')
+    
     class Meta:
         model = CalendarConfiguration
         fields = [
@@ -114,4 +119,27 @@ class CalendarConfigurationFilter(django_filters.FilterSet):
             models.Q(calendar__workspace__workspace_name__icontains=value) |
             models.Q(calendar__google_calendar__summary__icontains=value) |
             models.Q(calendar__google_calendar__connection__account_email__icontains=value)
+        ) 
+    
+    def filter_has_conflict_calendars(self, queryset, name, value):
+        """Filter configurations with/without conflict calendars"""
+        if value:
+            # Has conflict calendars (non-empty list)
+            return queryset.exclude(conflict_check_calendars__exact=[])
+        else:
+            # No conflict calendars (empty list)
+            return queryset.filter(conflict_check_calendars__exact=[])
+    
+    def filter_conflict_calendars_count_min(self, queryset, name, value):
+        """Filter by minimum number of conflict calendars"""
+        return queryset.extra(
+            where=["jsonb_array_length(conflict_check_calendars) >= %s"],
+            params=[value]
+        )
+    
+    def filter_conflict_calendars_count_max(self, queryset, name, value):
+        """Filter by maximum number of conflict calendars"""
+        return queryset.extra(
+            where=["jsonb_array_length(conflict_check_calendars) <= %s"],
+            params=[value]
         ) 

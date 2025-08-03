@@ -493,6 +493,224 @@ def cleanup_stuck_call_tasks(self):
         }
 
     except Exception as e:
-        logger.error(f"❌ cleanup_stuck_call_tasks failed: {e}")
-        traceback.print_exc()
-        return {"success": False, "error": str(e)}
+        logger.error(f"❌ Cleanup stuck call tasks failed: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'deleted_triggered': 0,
+            'deleted_progress': 0,
+            'total_deleted': 0,
+            'timestamp': timezone.now().isoformat()
+        }
+
+# ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====
+
+@shared_task(bind=True, max_retries=3)
+def refresh_google_calendar_tokens(self):
+    """
+    Production-ready Google Calendar token refresh task.
+    
+    Runs every 30 minutes to proactively refresh tokens before they expire.
+    Handles errors gracefully and notifies users when re-auth is needed.
+    """
+    from core.models import GoogleCalendar
+    from core.services.google_calendar import GoogleCalendarService
+    from django.utils import timezone
+    from datetime import timedelta
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Get all Google Calendars that need token refresh
+    now = timezone.now()
+    refresh_threshold = now + timedelta(minutes=30)  # Refresh 30 min before expiry
+    
+    calendars_to_refresh = GoogleCalendar.objects.filter(
+        token_expires_at__lt=refresh_threshold,
+        token_expires_at__isnull=False,
+        refresh_token__isnull=False
+    ).exclude(refresh_token='')
+    
+    results = {
+        'total_checked': calendars_to_refresh.count(),
+        'refreshed_successfully': 0,
+        'failed_refresh': 0,
+        'needs_reauth': [],
+        'errors': []
+    }
+    
+    logger.info(f"🔄 Starting token refresh for {results['total_checked']} calendars")
+    
+    for google_calendar in calendars_to_refresh:
+        try:
+            service = GoogleCalendarService(google_calendar)
+            
+            # This will automatically refresh the token if needed
+            credentials = service.get_credentials()
+            
+            if credentials:
+                results['refreshed_successfully'] += 1
+                logger.info(f"✅ Refreshed token for {google_calendar.calendar.name}")
+            else:
+                results['failed_refresh'] += 1
+                logger.warning(f"⚠️ Failed to refresh token for {google_calendar.calendar.name}")
+                
+        except Exception as e:
+            error_msg = str(e)
+            results['failed_refresh'] += 1
+            results['errors'].append({
+                'calendar': google_calendar.calendar.name,
+                'error': error_msg
+            })
+            
+            # Check if this is a re-auth required error
+            if any(keyword in error_msg.lower() for keyword in ['invalid_grant', 'refresh_token', 'authorization']):
+                results['needs_reauth'].append(google_calendar.calendar.name)
+                logger.error(f"🚨 Re-authorization needed for {google_calendar.calendar.name}: {error_msg}")
+                
+                # Mark calendar as needing re-auth
+                google_calendar.refresh_token = None
+                google_calendar.access_token = None
+                google_calendar.save(update_fields=['refresh_token', 'access_token', 'updated_at'])
+                
+            else:
+                logger.error(f"❌ Unexpected error refreshing {google_calendar.calendar.name}: {error_msg}")
+    
+    # Log summary
+    logger.info(f"""
+    🔄 Token Refresh Summary:
+    ✅ Successfully refreshed: {results['refreshed_successfully']}
+    ❌ Failed to refresh: {results['failed_refresh']}
+    🚨 Need re-authorization: {len(results['needs_reauth'])}
+    """)
+    
+    # TODO: Send notifications to users who need re-auth
+    if results['needs_reauth']:
+        # Here you can add email notifications, webhook calls, etc.
+        pass
+    
+    return results
+
+
+@shared_task(bind=True)
+def check_google_calendar_health(self):
+    """
+    Health check task for Google Calendar integrations.
+    
+    Runs daily to check the overall health of Google Calendar connections.
+    """
+    from core.models import GoogleCalendar
+    from django.utils import timezone
+    from datetime import timedelta
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    now = timezone.now()
+    
+    health_report = {
+        'total_calendars': 0,
+        'healthy': 0,
+        'expiring_soon': 0,  # Within 24 hours
+        'expired': 0,
+        'missing_tokens': 0,
+        'needs_attention': []
+    }
+    
+    all_calendars = GoogleCalendar.objects.all()
+    health_report['total_calendars'] = all_calendars.count()
+    
+    for google_calendar in all_calendars:
+        # Check if tokens are missing
+        if not google_calendar.access_token or not google_calendar.refresh_token:
+            health_report['missing_tokens'] += 1
+            health_report['needs_attention'].append({
+                'calendar': google_calendar.calendar.name,
+                'issue': 'Missing tokens - needs authorization'
+            })
+            continue
+        
+        # Check expiry status
+        if not google_calendar.token_expires_at:
+            health_report['missing_tokens'] += 1
+            health_report['needs_attention'].append({
+                'calendar': google_calendar.calendar.name,
+                'issue': 'No expiry time set'
+            })
+            continue
+        
+        if google_calendar.token_expires_at < now:
+            health_report['expired'] += 1
+            health_report['needs_attention'].append({
+                'calendar': google_calendar.calendar.name,
+                'issue': f'Token expired {now - google_calendar.token_expires_at} ago'
+            })
+        elif google_calendar.token_expires_at < now + timedelta(hours=24):
+            health_report['expiring_soon'] += 1
+            health_report['needs_attention'].append({
+                'calendar': google_calendar.calendar.name,
+                'issue': f'Token expires in {google_calendar.token_expires_at - now}'
+            })
+        else:
+            health_report['healthy'] += 1
+    
+    # Log health report
+    logger.info(f"""
+    📊 Google Calendar Health Report:
+    📅 Total calendars: {health_report['total_calendars']}
+    ✅ Healthy: {health_report['healthy']}
+    ⚠️ Expiring soon: {health_report['expiring_soon']}
+    ❌ Expired: {health_report['expired']}
+    🚫 Missing tokens: {health_report['missing_tokens']}
+    """)
+    
+    if health_report['needs_attention']:
+        logger.warning(f"🚨 {len(health_report['needs_attention'])} calendars need attention")
+        for item in health_report['needs_attention']:
+            logger.warning(f"  - {item['calendar']}: {item['issue']}")
+    
+    return health_report
+
+
+@shared_task(bind=True)
+def cleanup_expired_google_tokens(self):
+    """
+    Cleanup task to remove expired tokens and mark calendars for re-auth.
+    
+    Runs weekly to clean up the database and maintain data hygiene.
+    """
+    from core.models import GoogleCalendar
+    from django.utils import timezone
+    from datetime import timedelta
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    now = timezone.now()
+    # Consider tokens expired if they've been expired for more than 7 days
+    cleanup_threshold = now - timedelta(days=7)
+    
+    expired_calendars = GoogleCalendar.objects.filter(
+        token_expires_at__lt=cleanup_threshold
+    ).exclude(
+        access_token__isnull=True,
+        refresh_token__isnull=True
+    )
+    
+    cleaned_count = 0
+    
+    for google_calendar in expired_calendars:
+        # Clear expired tokens
+        google_calendar.access_token = None
+        google_calendar.refresh_token = None
+        google_calendar.save(update_fields=['access_token', 'refresh_token', 'updated_at'])
+        
+        cleaned_count += 1
+        logger.info(f"🧹 Cleaned expired tokens for {google_calendar.calendar.name}")
+    
+    logger.info(f"🧹 Cleanup completed: {cleaned_count} calendars cleaned")
+    
+    return {
+        'cleaned_calendars': cleaned_count,
+        'cleanup_threshold': cleanup_threshold.isoformat()
+    }

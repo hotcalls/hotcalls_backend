@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
     GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
@@ -324,17 +325,26 @@ class CalendarAdmin(admin.ModelAdmin):
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
             # Check if the Google calendar has valid tokens
             google_cal = obj.google_calendar
-            if google_cal.token_expires_at and google_cal.token_expires_at > timezone.now():
-                return '✅ Connected'
+            if google_cal.token_expires_at:
+                # Make timezone-aware comparison
+                token_expiry = google_cal.token_expires_at
+                if token_expiry.tzinfo is None:
+                    # Convert naive datetime to timezone-aware
+                    token_expiry = token_expiry.replace(tzinfo=dt_timezone.utc)
+                
+                if token_expiry > timezone.now():
+                    return '✅ Connected'
+                else:
+                    return '⚠️ Token Expired'
             else:
-                return '⚠️ Token Expired'
+                return '⚠️ No Token'
         return '❓ Unknown'
     get_connection_status.short_description = 'Status'
 
 
 @admin.register(CalendarConfiguration)
 class CalendarConfigurationAdmin(admin.ModelAdmin):
-    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'get_conflict_calendars_count')
     list_filter = ('calendar__provider', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
     search_fields = ('calendar__workspace__workspace_name', 'calendar__name')
     ordering = ('-created_at',)
@@ -349,6 +359,10 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
         }),
         ('Availability Window', {
             'fields': ('from_time', 'to_time', 'workdays')
+        }),
+        ('Conflict Checking', {
+            'fields': ('conflict_check_calendars',),
+            'description': 'List of calendar IDs to check for scheduling conflicts'
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -367,6 +381,13 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
     def get_provider(self, obj):
         return obj.calendar.provider.title()
     get_provider.short_description = 'Provider'
+    
+    def get_conflict_calendars_count(self, obj):
+        """Show number of calendars configured for conflict checking"""
+        if obj.conflict_check_calendars:
+            return f"{len(obj.conflict_check_calendars)} calendars"
+        return "None"
+    get_conflict_calendars_count.short_description = 'Conflict Check'
 
 
 @admin.register(WorkspaceSubscription)

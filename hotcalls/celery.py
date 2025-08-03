@@ -50,6 +50,36 @@ app.conf.beat_schedule = {
             'expires': 2.5,  # Task expires after 2.5 seconds (aggressive backpressure)
         }
     },
+    
+    # ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====
+    
+    # Refresh Google Calendar tokens every 30 minutes (production-critical)
+    'refresh-google-calendar-tokens': {
+        'task': 'core.tasks.refresh_google_calendar_tokens',
+        'schedule': crontab(minute='*/30'),  # Every 30 minutes
+        'options': {
+            'queue': 'celery',
+            'expires': 1800,  # Task expires after 30 minutes
+        }
+    },
+    
+    # Daily health check for Google Calendar connections
+    'check-google-calendar-health': {
+        'task': 'core.tasks.check_google_calendar_health',
+        'schedule': crontab(hour=8, minute=0),  # Daily at 08:00
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
+    # Weekly cleanup of expired Google Calendar tokens
+    'cleanup-expired-google-tokens': {
+        'task': 'core.tasks.cleanup_expired_google_tokens',
+        'schedule': crontab(hour=2, minute=0, day_of_week=1),  # Weekly Monday at 02:00
+        'options': {
+            'queue': 'celery'
+        }
+    },
     # Clean up stuck call tasks every minute
     'cleanup-stuck-call-tasks': {
         'task': 'core.tasks.cleanup_stuck_call_tasks',
