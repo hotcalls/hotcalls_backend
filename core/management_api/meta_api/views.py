@@ -141,20 +141,12 @@ class MetaIntegrationViewSet(viewsets.ModelViewSet):
             from core.services.meta_integration import MetaIntegrationService
             meta_service = MetaIntegrationService()
             
-            # Generate state parameter for CSRF protection
-            import secrets
-            state = secrets.token_urlsafe(32)
-            
             # Get OAuth URL
-            oauth_url = meta_service.get_oauth_url(workspace_id, state)
-            
-            # Store state in session for validation (optional)
-            request.session[f'meta_oauth_state_{workspace_id}'] = state
+            oauth_url = meta_service.get_oauth_url(workspace_id)
             
             return Response({
                 'oauth_url': oauth_url,
                 'workspace_id': workspace_id,
-                'state': state,
                 'instructions': [
                     '1. Redirect user to oauth_url',
                     '2. User authorizes on Meta',

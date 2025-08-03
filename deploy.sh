@@ -2008,12 +2008,22 @@ wait_for_deployment() {
         exit 1
     fi
     
-    # Wait for celery deployments (non-critical, with shorter timeouts)
-    log_info "Waiting for celery deployments (non-critical)..."
-    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-worker \
-        -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1 || log_warning "Celery worker timeout (non-critical)"
-    kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-beat \
-        -n "$NAMESPACE" --timeout=60s >/dev/null 2>&1 || log_warning "Celery beat timeout (non-critical)"
+    # Wait for Celery deployments if they were deployed (CRITICAL ASYNC INFRASTRUCTURE)
+    if [[ "${REDEPLOY_CELERY_WORKER:-true}" == "true" ]] || [[ "${REDEPLOY_CELERY_BEAT:-true}" == "true" ]]; then
+        log_info "Waiting for Celery deployments (CRITICAL async infrastructure)..."
+        
+        if [[ "${REDEPLOY_CELERY_WORKER:-true}" == "true" ]]; then
+            kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-worker \
+                -n "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || log_warning "⚠️  Celery worker deployment timeout - async tasks may be affected!"
+        fi
+        
+        if [[ "${REDEPLOY_CELERY_BEAT:-true}" == "true" ]]; then
+            kubectl wait --for=condition=available deployment/${PROJECT_NAME}-celery-beat \
+                -n "$NAMESPACE" --timeout=120s >/dev/null 2>&1 || log_warning "⚠️  Celery beat deployment timeout - scheduled tasks may be affected!"
+        fi
+    else
+        log_info "Skipping Celery deployment checks (REDEPLOY_CELERY_WORKER=false, REDEPLOY_CELERY_BEAT=false)"
+    fi
     
     # Wait for frontend if it exists
     if kubectl get deployment ${PROJECT_NAME}-frontend -n "$NAMESPACE" >/dev/null 2>&1; then
