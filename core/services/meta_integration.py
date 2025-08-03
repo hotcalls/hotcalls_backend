@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlencode
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
@@ -41,7 +42,8 @@ class MetaIntegrationService:
             'state': state or workspace_id,
         }
         
-        query_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        # Properly URL-encode all parameters
+        query_string = urlencode(params)
         return f"https://www.facebook.com/v{self.api_version}/dialog/oauth?{query_string}"
     
     def exchange_code_for_token(self, code: str) -> Dict:

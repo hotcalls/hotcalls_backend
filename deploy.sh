@@ -717,6 +717,8 @@ deploy_infrastructure() {
     export META_REDIRECT_URI
     export META_API_VERSION
     export META_WEBHOOK_VERIFY_TOKEN
+    export GOOGLE_OAUTH_CLIENT_ID
+    export GOOGLE_OAUTH_CLIENT_SECRET
     
     # LiveKit Agent Configuration
     export LIVEKIT_AGENT_NAME

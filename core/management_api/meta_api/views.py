@@ -203,9 +203,14 @@ class MetaWebhookView(viewsets.ViewSet):
     )
     def oauth_hook(self, request):
         """Handle Meta OAuth callback - FULLY AUTOMATED"""
-        # OAuth callbacks now come as POST body
-        code = request.data.get('code')
-        state = request.data.get('state')
+        # Facebook sends GET requests with query parameters
+        if request.method == 'GET':
+            code = request.query_params.get('code')
+            state = request.query_params.get('state')
+        else:
+            # Fallback for POST requests (legacy)
+            code = request.data.get('code')
+            state = request.data.get('state')
         
         if not code:
             return Response(
@@ -238,18 +243,9 @@ class MetaWebhookView(viewsets.ViewSet):
             
             logger.info(f"Successfully created Meta integration {integration.id}")
             
-            return Response({
-                'success': True,
-                'message': 'Meta integration created successfully!',
-                'integration': {
-                    'id': str(integration.id),
-                    'workspace_id': str(workspace_id),
-                    'page_id': integration.page_id,
-                    'status': integration.status,
-                    'webhook_url': f"https://app.hotcalls.de/api/integrations/meta/lead_in/",
-                    'lead_webhook_url': f"https://app.hotcalls.de/api/integrations/meta/lead_in/"
-                }
-            })
+            # Redirect user back to frontend after successful OAuth
+            from django.shortcuts import redirect
+            return redirect('https://app.hotcalls.de/dashboard/lead-sources?connected=true')
             
         except Workspace.DoesNotExist:
             return Response(
