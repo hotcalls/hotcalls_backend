@@ -203,6 +203,7 @@ load_environment() {
     BRANCH_BACKEND=${BRANCH_BACKEND:-${BRANCH_FALLBACK:-main}}
     BRANCH_FRONTEND=${BRANCH_FRONTEND:-${BRANCH_FALLBACK:-main}}
     BRANCH_AGENT=${BRANCH_AGENT:-${BRANCH_FALLBACK:-main}}
+    BRANCH_MCP=${BRANCH_MCP:-${BRANCH_FALLBACK:-main}}
     
     # Override command line flags from .env if not already set
     UPDATE_ONLY=${UPDATE_ONLY:-false}
@@ -329,6 +330,13 @@ checkout_and_pull_repositories() {
         log_info "OUTBOUNDAGENT_REPO_URL not set, skipping agent repository"
     fi
     
+    # 4. Handle GOOGLE CALENDAR MCP repository
+    if [[ -n "${GOOGLE_CALENDAR_MCP_REPO_URL:-}" ]]; then
+        manage_google_calendar_mcp_repository "$BRANCH_MCP"
+    else
+        log_info "GOOGLE_CALENDAR_MCP_REPO_URL not set, skipping Google Calendar MCP repository"
+    fi
+    
     log_success "All repositories updated successfully!"
 }
 
@@ -426,6 +434,41 @@ manage_agent_repository() {
     
     cd ..
     log_success "Outbound agent repository updated to branch: $(cd outboundagent && git branch --show-current)"
+}
+
+# Google Calendar MCP repository management
+manage_google_calendar_mcp_repository() {
+    local target_branch="$1"
+    
+    log_info "📅 Managing Google Calendar MCP Repository (branch: $target_branch)..."
+    
+    # Clone or update Google Calendar MCP repository
+    if [[ ! -d "google-calendar-mcp" ]]; then
+        log_info "Cloning Google Calendar MCP repository: $GOOGLE_CALENDAR_MCP_REPO_URL"
+        git clone "$GOOGLE_CALENDAR_MCP_REPO_URL" google-calendar-mcp
+        cd google-calendar-mcp
+    else
+        log_info "Google Calendar MCP repository exists, updating..."
+        cd google-calendar-mcp
+        git fetch origin
+    fi
+    
+    # Branch management
+    if git show-ref --verify --quiet refs/heads/$target_branch; then
+        log_info "Local branch '$target_branch' exists, checking out and pulling..."
+        git checkout "$target_branch"
+        git pull origin "$target_branch" || log_warning "Failed to pull $target_branch from origin"
+    elif git show-ref --verify --quiet refs/remotes/origin/$target_branch; then
+        log_info "Remote branch 'origin/$target_branch' exists, creating local tracking branch..."
+        git checkout -b "$target_branch" "origin/$target_branch"
+    else
+        log_warning "Branch '$target_branch' not found, staying on current branch"
+        local current_branch=$(git branch --show-current)
+        git pull origin "$current_branch" || log_warning "Failed to pull current branch"
+    fi
+    
+    cd ..
+    log_success "Google Calendar MCP repository updated to branch: $(cd google-calendar-mcp && git branch --show-current)"
 }
 
 # Clone and build frontend if needed
@@ -1016,6 +1059,47 @@ build_and_push_images() {
         export HAS_OUTBOUNDAGENT=false
     fi
     
+    # Build Google Calendar MCP image if enabled and directory exists
+    if [[ "${BUILD_GOOGLE_CALENDAR_MCP:-true}" == "true" ]] && [[ -d "google-calendar-mcp" ]]; then
+        log_info "Building Google Calendar MCP image for AMD64 architecture..."
+        
+        cd google-calendar-mcp
+        
+        # Create Dockerfile if it doesn't exist
+        if [[ ! -f "Dockerfile" ]]; then
+            log_info "Creating Dockerfile for Google Calendar MCP..."
+            create_google_calendar_mcp_dockerfile
+        fi
+        
+        if [[ "$NO_CACHE" == "true" ]]; then
+            log_info "Building Google Calendar MCP WITHOUT cache (--no-cache flag enabled)..."
+            docker buildx build --platform linux/amd64 \
+                --no-cache \
+                -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:${IMAGE_TAG}" . --push
+        else
+            # Optimize for new projects - skip cache lookup on first build
+            if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:cache" >/dev/null 2>&1; then
+                log_info "Using existing Google Calendar MCP cache for faster build..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:cache" \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:${IMAGE_TAG}" . --push
+            else
+                log_info "First Google Calendar MCP build - no cache available, building fresh..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-google-calendar-mcp:${IMAGE_TAG}" . --push
+            fi
+        fi
+        
+        cd ..
+        export HAS_GOOGLE_CALENDAR_MCP=true
+        log_success "Google Calendar MCP image built and pushed!"
+    else
+        log_info "Skipping Google Calendar MCP build (BUILD_GOOGLE_CALENDAR_MCP=false or directory not found)"
+        export HAS_GOOGLE_CALENDAR_MCP=false
+    fi
+    
     log_success "Docker images built and pushed!"
 }
 
@@ -1056,6 +1140,49 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
 
 # Run the agent
 CMD ["python", "agent.py", "start"]
+EOF
+}
+
+# Create Dockerfile for Google Calendar MCP if it doesn't exist
+create_google_calendar_mcp_dockerfile() {
+    cat > Dockerfile << 'EOF'
+FROM python:3.12-slim
+
+# Install system dependencies including uv
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+RUN pip install uv
+
+WORKDIR /app
+
+# Copy project files
+COPY . .
+
+# Create virtual environment and install dependencies
+RUN uv venv .venv
+RUN . .venv/bin/activate && uv pip install -e .
+
+# Create non-root user
+RUN groupadd -r mcp && useradd -r -g mcp mcp
+RUN chown -R mcp:mcp /app && \
+    mkdir -p /tmp /app/tmp && \
+    chown -R mcp:mcp /tmp /app/tmp
+USER mcp
+
+# Expose port for MCP server
+EXPOSE 8000
+
+# Health check endpoint (simple HTTP check)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/ || exit 1
+
+# Run the MCP server
+CMD ["/bin/bash", "-c", "source .venv/bin/activate && python server.py"]
 EOF
 }
 
@@ -1483,6 +1610,16 @@ deploy_kubernetes() {
         envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
+    fi
+    
+    # Deploy Google Calendar MCP if available (parallel with services)
+    if [[ "${HAS_GOOGLE_CALENDAR_MCP:-false}" == "true" ]] && [[ -f "google-calendar-mcp-deployment.yaml" ]]; then
+        log_info "Deploying Google Calendar MCP..."
+        envsubst < google-calendar-mcp-configmap.yaml | kubectl apply -f - &
+        envsubst < google-calendar-mcp-secrets.yaml | kubectl apply -f - &
+        envsubst < google-calendar-mcp-deployment.yaml | kubectl apply -f - &
+        envsubst < google-calendar-mcp-service.yaml | kubectl apply -f - &
+        envsubst < google-calendar-mcp-ingress.yaml | kubectl apply -f - &
     fi
     
     wait  # Wait for services to be created

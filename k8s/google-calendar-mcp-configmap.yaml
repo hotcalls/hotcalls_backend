@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${PROJECT_PREFIX}-google-calendar-mcp-config
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: google-calendar-mcp
+    environment: ${ENVIRONMENT}
+data:
+  # MCP Server Configuration
+  MCP_HOST: "${MCP_HOST}"
+  MCP_PORT: "${MCP_PORT}"
+  MCP_TRANSPORT: "${MCP_TRANSPORT}"
+  MCP_AGENT_NAME: "${MCP_AGENT_NAME}"
+  
+  # API Configuration
+  API_BASE_URL: "${API_BASE_URL}"
+  
+  # Database Configuration (shared with backend)
+  DB_HOST: "${DB_HOST}"
+  DB_PORT: "${DB_PORT:-5432}"
+  DB_NAME: "${DB_NAME}"
+  DB_USER: "${DB_USER}"
+  
+  # Environment
+  ENVIRONMENT: "${ENVIRONMENT}"
+  
+  # Debug settings
+  POSTGRES_ENABLED: "true"

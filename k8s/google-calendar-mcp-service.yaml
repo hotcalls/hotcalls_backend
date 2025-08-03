@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${PROJECT_PREFIX}-google-calendar-mcp-service
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: google-calendar-mcp
+    environment: ${ENVIRONMENT}
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8000
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: google-calendar-mcp
