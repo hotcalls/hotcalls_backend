@@ -69,6 +69,9 @@ urlpatterns = [
     path('health/', health_check, name='health_check'),
     path('health/', include('health_check.urls')),
     
+    # API Health check (for external calls through ingress)
+    path('api/health/', health_check, name='api_health_check'),
+    
     # API Root
     path('api/', api_root, name='api-root'),
     
