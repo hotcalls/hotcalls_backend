@@ -261,7 +261,7 @@ validate_deployment_config() {
     # Validate boolean values
     local boolean_vars=(
         "UPDATE_ONLY" "NO_CACHE" "PURGE_DB" "VERBOSE_LOGGING" "DRY_RUN"
-        "BUILD_BACKEND" "BUILD_FRONTEND" "BUILD_OUTBOUNDAGENT"
+        "REDEPLOY_BACKEND" "REDEPLOY_FRONTEND" "REDEPLOY_OUTBOUNDAGENT" "REDEPLOY_GOOGLE_CALENDAR_MCP"
         "BACKEND_HPA_ENABLED" "OUTBOUNDAGENT_HPA_ENABLED"
     )
     
@@ -296,6 +296,17 @@ show_deployment_config_summary() {
         log_info "  Purge DB: ${PURGE_DB}"
         log_info "  Parallel Deployment: ${DEPLOYMENT_PARALLEL:-true}"
         
+        log_info "🚀 COMPONENT DEPLOYMENT CONTROL:"
+        log_info "  Backend: ${REDEPLOY_BACKEND:-true}"
+        log_info "  Frontend: ${REDEPLOY_FRONTEND:-true}"
+        log_info "  Outbound Agent: ${REDEPLOY_OUTBOUNDAGENT:-true}"
+        log_info "  Google Calendar MCP: ${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}"
+        log_info "  Celery Worker: ${REDEPLOY_CELERY_WORKER:-true}"
+        log_info "  Celery Beat: ${REDEPLOY_CELERY_BEAT:-true}"
+        log_info "  Redis: ${REDEPLOY_REDIS:-true}"
+        log_info "  PostgreSQL: ${REDEPLOY_POSTGRES:-true}"
+        log_info "  Storage: ${REDEPLOY_STORAGE:-true}"
+        
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
             log_warning "🔍 DRY RUN MODE - No changes will be applied!"
         fi
@@ -303,6 +314,8 @@ show_deployment_config_summary() {
         echo ""
     else
         log_info "Environment: $ENVIRONMENT | Backend: ${BACKEND_REPLICAS:-2} replicas | Agent: ${OUTBOUNDAGENT_REPLICAS:-1} replicas"
+        log_info "Apps: Backend=${REDEPLOY_BACKEND:-true} | Frontend=${REDEPLOY_FRONTEND:-true} | Agent=${REDEPLOY_OUTBOUNDAGENT:-true} | MCP=${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}"
+        log_info "Infrastructure: Celery=${REDEPLOY_CELERY_WORKER:-true}/${REDEPLOY_CELERY_BEAT:-true} | Redis=${REDEPLOY_REDIS:-true} | DB=${REDEPLOY_POSTGRES:-true} | Storage=${REDEPLOY_STORAGE:-true}"
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
             log_warning "🔍 DRY RUN MODE"
         fi
@@ -966,33 +979,39 @@ build_and_push_images() {
     # Set image tag (use environment or default to 'latest')
     export IMAGE_TAG="${IMAGE_TAG:-latest}"
     
-    # Build backend image for AMD64 architecture (Azure AKS compatibility)
-    log_info "Building backend image for AMD64 architecture..."
-    
-    if [[ "$NO_CACHE" == "true" ]]; then
-        log_info "Building WITHOUT cache (--no-cache flag enabled)..."
-        docker buildx build --platform linux/amd64 \
-            --no-cache \
-            -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
-    else
-        # Optimize for new projects - skip cache lookup on first build to avoid timeouts
-        if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" >/dev/null 2>&1; then
-            log_info "Using existing cache for faster build..."
+    # Build backend image if deployment is enabled
+    if [[ "${REDEPLOY_BACKEND:-true}" == "true" ]]; then
+        log_info "Building backend image for AMD64 architecture (REDEPLOY_BACKEND=true)..."
+        
+        if [[ "$NO_CACHE" == "true" ]]; then
+            log_info "Building WITHOUT cache (--no-cache flag enabled)..."
             docker buildx build --platform linux/amd64 \
-                --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
-                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                --no-cache \
                 -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
         else
-            log_info "First build - no cache available, building fresh..."
-            docker buildx build --platform linux/amd64 \
-                --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
-                -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+            # Optimize for new projects - skip cache lookup on first build to avoid timeouts
+            if docker manifest inspect "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" >/dev/null 2>&1; then
+                log_info "Using existing cache for faster build..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+            else
+                log_info "First build - no cache available, building fresh..."
+                docker buildx build --platform linux/amd64 \
+                    --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                    -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
+            fi
         fi
+        export HAS_BACKEND=true
+    else
+        log_info "Skipping backend image build (REDEPLOY_BACKEND=false)"
+        export HAS_BACKEND=false
     fi
     
-    # Build frontend image if dist directory exists
-    if [[ -d "dist" ]]; then
-        log_info "Building frontend image for AMD64 architecture..."
+    # Build frontend image if dist directory exists and deployment is enabled
+    if [[ -d "dist" ]] && [[ "${REDEPLOY_FRONTEND:-true}" == "true" ]]; then
+        log_info "Building frontend image for AMD64 architecture (REDEPLOY_FRONTEND=true)..."
         
         if [[ "$NO_CACHE" == "true" ]]; then
             log_info "Building frontend WITHOUT cache (--no-cache flag enabled)..."
@@ -1017,13 +1036,17 @@ build_and_push_images() {
         
         export HAS_FRONTEND=true
     else
-        log_warning "No dist/ directory found, skipping frontend image build"
+        if [[ "${REDEPLOY_FRONTEND:-true}" == "false" ]]; then
+            log_info "Skipping frontend image build (REDEPLOY_FRONTEND=false)"
+        else
+            log_warning "No dist/ directory found, skipping frontend image build"
+        fi
         export HAS_FRONTEND=false
     fi
     
     # Build outbound agent image if enabled and directory exists
-    if [[ "${BUILD_OUTBOUNDAGENT:-true}" == "true" ]] && [[ -d "outboundagent" ]]; then
-        log_info "Building outbound agent image for AMD64 architecture..."
+    if [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "true" ]] && [[ -d "outboundagent" ]]; then
+        log_info "Building outbound agent image for AMD64 architecture (REDEPLOY_OUTBOUNDAGENT=true)..."
         
         cd outboundagent
         
@@ -1058,13 +1081,13 @@ build_and_push_images() {
         export HAS_OUTBOUNDAGENT=true
         log_success "Outbound agent image built and pushed!"
     else
-        log_info "Skipping outbound agent build (BUILD_OUTBOUNDAGENT=false or directory not found)"
+        log_info "Skipping outbound agent build (REDEPLOY_OUTBOUNDAGENT=false or directory not found)"
         export HAS_OUTBOUNDAGENT=false
     fi
     
     # Build Google Calendar MCP image if enabled and directory exists
-    if [[ "${BUILD_GOOGLE_CALENDAR_MCP:-true}" == "true" ]] && [[ -d "google-calendar-mcp" ]]; then
-        log_info "Building Google Calendar MCP image for AMD64 architecture..."
+    if [[ "${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}" == "true" ]] && [[ -d "google-calendar-mcp" ]]; then
+        log_info "Building Google Calendar MCP image for AMD64 architecture (REDEPLOY_GOOGLE_CALENDAR_MCP=true)..."
         
         cd google-calendar-mcp
         
@@ -1099,7 +1122,7 @@ build_and_push_images() {
         export HAS_GOOGLE_CALENDAR_MCP=true
         log_success "Google Calendar MCP image built and pushed!"
     else
-        log_info "Skipping Google Calendar MCP build (BUILD_GOOGLE_CALENDAR_MCP=false or directory not found)"
+        log_info "Skipping Google Calendar MCP build (REDEPLOY_GOOGLE_CALENDAR_MCP=false or directory not found)"
         export HAS_GOOGLE_CALENDAR_MCP=false
     fi
     
@@ -1609,47 +1632,91 @@ deploy_kubernetes() {
     wait  # Wait for config to be ready
     
     log_info "Deploying core services (parallel)..."
-    # Deploy Redis and services in parallel (Redis starts faster)
-    envsubst < redis-deployment.yaml | kubectl apply -f - &
+    # Deploy Redis if enabled
+    if [[ "${REDEPLOY_REDIS:-true}" == "true" ]]; then
+        log_info "Deploying Redis (REDEPLOY_REDIS=true)..."
+        envsubst < redis-deployment.yaml | kubectl apply -f - &
+    else
+        log_info "Skipping Redis deployment (REDEPLOY_REDIS=false)"
+    fi
     envsubst < service.yaml | kubectl apply -f - &
     
-    # Deploy frontend if available (parallel with services)
-    if [[ "${HAS_FRONTEND:-false}" == "true" ]] && [[ -f "frontend-deployment.yaml" ]]; then
+    # Deploy frontend if available and enabled (parallel with services)
+    if [[ "${HAS_FRONTEND:-false}" == "true" ]] && [[ "${REDEPLOY_FRONTEND:-true}" == "true" ]] && [[ -f "frontend-deployment.yaml" ]]; then
+        log_info "Deploying frontend (REDEPLOY_FRONTEND=true)..."
         envsubst < frontend-deployment.yaml | kubectl apply -f - &
         envsubst < frontend-service.yaml | kubectl apply -f - &
+    elif [[ "${HAS_FRONTEND:-false}" == "true" ]] && [[ "${REDEPLOY_FRONTEND:-true}" == "false" ]]; then
+        log_info "Skipping frontend deployment (REDEPLOY_FRONTEND=false)"
     fi
     
-    # Deploy outbound agent if available (parallel with services)
-    if [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ -f "outboundagent-deployment.yaml" ]]; then
-        log_info "Deploying outbound agent..."
+    # Deploy outbound agent if available and enabled (parallel with services)
+    if [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "true" ]] && [[ -f "outboundagent-deployment.yaml" ]]; then
+        log_info "Deploying outbound agent (REDEPLOY_OUTBOUNDAGENT=true)..."
         envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
         envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
+    elif [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "false" ]]; then
+        log_info "Skipping outbound agent deployment (REDEPLOY_OUTBOUNDAGENT=false)"
     fi
     
-    # Deploy Google Calendar MCP if available (parallel with services)
-    if [[ "${HAS_GOOGLE_CALENDAR_MCP:-false}" == "true" ]] && [[ -f "google-calendar-mcp-deployment.yaml" ]]; then
-        log_info "Deploying Google Calendar MCP..."
+    # Deploy Google Calendar MCP if available and enabled (parallel with services)
+    if [[ "${HAS_GOOGLE_CALENDAR_MCP:-false}" == "true" ]] && [[ "${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}" == "true" ]] && [[ -f "google-calendar-mcp-deployment.yaml" ]]; then
+        log_info "Deploying Google Calendar MCP (REDEPLOY_GOOGLE_CALENDAR_MCP=true)..."
         envsubst < google-calendar-mcp-configmap.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-secrets.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-deployment.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-service.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-ingress.yaml | kubectl apply -f - &
+    elif [[ "${HAS_GOOGLE_CALENDAR_MCP:-false}" == "true" ]] && [[ "${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}" == "false" ]]; then
+        log_info "Skipping Google Calendar MCP deployment (REDEPLOY_GOOGLE_CALENDAR_MCP=false)"
     fi
     
     wait  # Wait for services to be created
     
-    log_info "Waiting for Redis to be ready..."
-    # Wait for Redis to be available before deploying backend
-    kubectl wait --for=condition=available deployment/redis -n "$NAMESPACE" --timeout=300s
+    # Wait for Redis if it was deployed
+    if [[ "${REDEPLOY_REDIS:-true}" == "true" ]]; then
+        log_info "Waiting for Redis to be ready..."
+        kubectl wait --for=condition=available deployment/redis -n "$NAMESPACE" --timeout=300s
+    else
+        log_info "Skipping Redis readiness check (REDEPLOY_REDIS=false)"
+    fi
     
-    log_info "Deploying backend applications..."
-    # Deploy backend applications (depends on Redis and config)
-    envsubst < deployment.yaml | kubectl apply -f -
+    # Deploy backend applications if enabled (depends on Redis and config)
+    if [[ "${REDEPLOY_BACKEND:-true}" == "true" ]]; then
+        log_info "Deploying backend applications (REDEPLOY_BACKEND=true)..."
+        envsubst < deployment.yaml | kubectl apply -f -
+    else
+        log_info "Skipping backend deployment (REDEPLOY_BACKEND=false)"
+    fi
     
-    # Run Django migrations after backend is deployed
-    run_django_migrations
+    # Deploy Celery Worker if enabled
+    if [[ "${REDEPLOY_CELERY_WORKER:-true}" == "true" ]]; then
+        log_info "Deploying Celery workers (REDEPLOY_CELERY_WORKER=true)..."
+        envsubst < celery-worker-deployment.yaml | kubectl apply -f -
+    else
+        log_info "Skipping Celery worker deployment (REDEPLOY_CELERY_WORKER=false)"
+    fi
+    
+    # Deploy Celery Beat if enabled
+    if [[ "${REDEPLOY_CELERY_BEAT:-true}" == "true" ]]; then
+        log_info "Deploying Celery beat scheduler (REDEPLOY_CELERY_BEAT=true)..."
+        envsubst < celery-beat-deployment.yaml | kubectl apply -f -
+    else
+        log_info "Skipping Celery beat deployment (REDEPLOY_CELERY_BEAT=false)"
+    fi
+    
+    # Run Django migrations after backend is deployed (only if backend and postgres are both enabled)
+    if [[ "${REDEPLOY_BACKEND:-true}" == "true" ]] && [[ "${REDEPLOY_POSTGRES:-true}" == "true" ]]; then
+        run_django_migrations
+    else
+        if [[ "${REDEPLOY_BACKEND:-true}" == "false" ]]; then
+            log_info "Skipping Django migrations (REDEPLOY_BACKEND=false)"
+        elif [[ "${REDEPLOY_POSTGRES:-true}" == "false" ]]; then
+            log_info "Skipping Django migrations (REDEPLOY_POSTGRES=false)"
+        fi
+    fi
     
     # Apply ingress last (after services are ready)
     log_info "Creating networking..."
@@ -2434,7 +2501,13 @@ main() {
         terraform workspace select "$WORKSPACE_NAME"
         cd ..
         
-        setup_frontend
+        # Setup frontend only if deployment is enabled
+        if [[ "${REDEPLOY_FRONTEND:-true}" == "true" ]]; then
+            setup_frontend
+        else
+            log_info "Skipping frontend setup (REDEPLOY_FRONTEND=false)"
+        fi
+        
         get_infrastructure_outputs_update_only
         configure_kubectl
         
@@ -2472,7 +2545,13 @@ main() {
             exit 1
         fi
         
-        setup_frontend
+        # Setup frontend only if deployment is enabled
+        if [[ "${REDEPLOY_FRONTEND:-true}" == "true" ]]; then
+            setup_frontend
+        else
+            log_info "Skipping frontend setup (REDEPLOY_FRONTEND=false)"
+        fi
+        
         deploy_infrastructure
         get_infrastructure_outputs
         configure_kubectl

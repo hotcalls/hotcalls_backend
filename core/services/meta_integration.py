@@ -44,7 +44,7 @@ class MetaIntegrationService:
         
         # Properly URL-encode all parameters
         query_string = urlencode(params)
-        return f"https://www.facebook.com/v{self.api_version}/dialog/oauth?{query_string}"
+        return f"https://www.facebook.com/{self.api_version}/dialog/oauth?{query_string}"
     
     def exchange_code_for_token(self, code: str) -> Dict:
         """Exchange OAuth code for access token"""
