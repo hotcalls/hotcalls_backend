@@ -101,6 +101,10 @@ class GoogleCalendarMCPPermission(permissions.BasePermission):
         if request.method in permissions.SAFE_METHODS:
             return True
         
+        # Allow all authenticated users to access Google OAuth functionality
+        if hasattr(view, 'action') and view.action in ['get_google_auth_url']:
+            return True
+        
         return request.user.is_staff
     
     def has_object_permission(self, request, view, obj):
