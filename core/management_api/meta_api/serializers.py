@@ -12,8 +12,8 @@ class MetaIntegrationSerializer(serializers.ModelSerializer):
         model = MetaIntegration
         fields = [
             'id', 'workspace', 'workspace_name', 'business_account_id', 'page_id',
-            'access_token_expires_at', 'scopes', 'status', 'lead_forms_count',
-            'created_at', 'updated_at'
+            'page_name', 'page_picture_url', 'access_token_expires_at', 'scopes', 
+            'status', 'lead_forms_count', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'workspace_name', 'lead_forms_count']
         extra_kwargs = {
@@ -52,8 +52,8 @@ class MetaLeadFormSerializer(serializers.ModelSerializer):
     class Meta:
         model = MetaLeadForm
         fields = [
-            'id', 'meta_integration', 'workspace', 'meta_form_id', 'meta_lead_id',
-            'variables_scheme', 'lead', 'integration_status', 'lead_count',
+            'id', 'meta_integration', 'workspace', 'meta_form_id', 'name', 'meta_lead_id',
+            'is_active', 'variables_scheme', 'lead', 'integration_status', 'lead_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'workspace', 'integration_status', 'lead_count']
@@ -79,7 +79,28 @@ class MetaLeadFormCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = MetaLeadForm
-        fields = ['meta_integration', 'meta_form_id', 'variables_scheme']
+        fields = ['meta_integration', 'meta_form_id', 'is_active', 'variables_scheme']
+
+
+class MetaLeadFormBulkUpdateSerializer(serializers.Serializer):
+    """Serializer for bulk updating lead form active status"""
+    form_selections = serializers.ListField(
+        child=serializers.DictField(
+            child=serializers.BooleanField(),
+            help_text="Dictionary with form_id as key and is_active boolean as value"
+        ),
+        help_text="List of form selections to update"
+    )
+    
+    def validate_form_selections(self, value):
+        """Validate form selections format"""
+        for selection in value:
+            if not isinstance(selection, dict):
+                raise serializers.ValidationError("Each selection must be a dictionary")
+            for form_id, is_active in selection.items():
+                if not isinstance(form_id, str) or not isinstance(is_active, bool):
+                    raise serializers.ValidationError("Form ID must be string and is_active must be boolean")
+        return value
 
 
 class MetaOAuthCallbackSerializer(serializers.Serializer):

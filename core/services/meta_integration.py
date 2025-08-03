@@ -30,6 +30,7 @@ class MetaIntegrationService:
         scopes = [
             'pages_read_engagement',
             'pages_manage_metadata',
+            'pages_manage_ads',
             'leads_retrieval',
             'business_management'
         ]
@@ -98,6 +99,22 @@ class MetaIntegrationService:
         except requests.RequestException as e:
             logger.error(f"Error getting user pages: {str(e)}")
             raise Exception(f"Failed to get user pages: {str(e)}")
+    
+    def get_page_details(self, page_id: str, access_token: str) -> Dict:
+        """Get detailed page information including name and picture"""
+        url = f"{self.base_url}/{page_id}"
+        params = {
+            'access_token': access_token,
+            'fields': 'id,name,picture,category,about,website'
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Error getting page details: {str(e)}")
+            raise Exception(f"Failed to get page details: {str(e)}")
     
     def get_page_lead_forms(self, page_id: str, access_token: str) -> List[Dict]:
         """Get lead forms for a specific page"""
@@ -185,6 +202,13 @@ class MetaIntegrationService:
             page_id = page['id']
             page_access_token = page['access_token']
             
+            # Get detailed page information
+            page_details = self.get_page_details(page_id, page_access_token)
+            page_name = page_details.get('name', f'Page {page_id}')
+            page_picture_url = ''
+            if 'picture' in page_details and 'data' in page_details['picture']:
+                page_picture_url = page_details['picture']['data'].get('url', '')
+            
             # Generate verification token
             verification_token = hashlib.sha256(
                 f"{workspace.id}{page_id}{timezone.now().isoformat()}".encode()
@@ -195,6 +219,8 @@ class MetaIntegrationService:
                 workspace=workspace,
                 business_account_id=self.app_id,  # Using app_id as business account for now
                 page_id=page_id,
+                page_name=page_name,
+                page_picture_url=page_picture_url,
                 access_token=page_access_token,  # Store page token instead of user token
                 access_token_expires_at=token_expires_at,
                 verification_token=verification_token,
@@ -239,6 +265,7 @@ class MetaIntegrationService:
                     meta_integration=integration,
                     meta_form_id=form_data['id'],
                     defaults={
+                        'name': form_data.get('name', f"Form {form_data['id']}"),
                         'variables_scheme': self._generate_variables_scheme(form_data)
                     }
                 )

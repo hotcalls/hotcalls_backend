@@ -1142,6 +1142,18 @@ class MetaIntegration(models.Model):
         max_length=255,
         help_text="Facebook/Instagram Page ID"
     )
+    page_name = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Meta Page Name"
+    )
+    page_picture_url = models.URLField(
+        blank=True,
+        default='',
+        max_length=1000,
+        help_text="Meta Page Profile Picture URL"
+    )
     access_token = models.TextField(
         editable=False,
         help_text="Meta API access token (encrypted at rest)"
@@ -1189,6 +1201,16 @@ class MetaLeadForm(models.Model):
     meta_form_id = models.CharField(
         max_length=255,
         help_text="Meta Lead Form ID"
+    )
+    name = models.CharField(
+        max_length=500,
+        blank=True,
+        default='',
+        help_text="Meta Lead Form Name/Title"
+    )
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Whether this lead form should process incoming leads"
     )
     meta_lead_id = models.CharField(
         max_length=255,

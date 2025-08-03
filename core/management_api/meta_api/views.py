@@ -15,9 +15,10 @@ import hmac
 import hashlib
 
 from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
+from core.services.meta_integration import MetaIntegrationService
 from .serializers import (
     MetaIntegrationSerializer, MetaIntegrationCreateSerializer,
-    MetaLeadFormSerializer, MetaLeadFormCreateSerializer,
+    MetaLeadFormSerializer, MetaLeadFormCreateSerializer, MetaLeadFormBulkUpdateSerializer,
     MetaOAuthCallbackSerializer, MetaLeadWebhookSerializer,
     MetaWebhookVerificationSerializer, MetaLeadDataSerializer,
     MetaIntegrationStatsSerializer
@@ -405,35 +406,39 @@ class MetaWebhookView(viewsets.ViewSet):
                 meta_lead_form, created = MetaLeadForm.objects.get_or_create(
                     meta_integration=meta_integration,
                     meta_form_id=form_id,
-                    defaults={'variables_scheme': {}}
+                    defaults={'variables_scheme': {}, 'is_active': False}  # Default to inactive
                 )
             except MetaIntegration.DoesNotExist:
                 logger.warning(f"No active Meta integration found for page {page_id}")
                 return None
             
-            # TODO: Fetch actual lead data from Meta API using leadgen_id
-            # For now, create a placeholder lead
-            with transaction.atomic():
-                lead = Lead.objects.create(
-                    name="Meta Lead",  # TODO: Extract from actual field data
-                    email=f"lead-{leadgen_id}@example.com",  # TODO: Extract from field data
-                    phone="+1234567890",  # TODO: Extract from field data
-                    workspace=meta_integration.workspace,
-                    integration_provider='meta',
-                    variables={'meta_leadgen_id': leadgen_id, 'form_id': form_id}
-                )
-                
-                # Update the MetaLeadForm with the lead reference
-                meta_lead_form.meta_lead_id = leadgen_id
-                meta_lead_form.lead = lead
-                meta_lead_form.save()
+            # ✅ CHECK: Is this lead form active?
+            if not meta_lead_form.is_active:
+                logger.info(f"Ignoring lead from inactive form {form_id} (integration: {meta_integration.id})")
+                return {
+                    'lead_id': None,
+                    'meta_leadgen_id': leadgen_id,
+                    'form_id': form_id,
+                    'workspace': str(meta_integration.workspace.id),
+                    'status': 'ignored_inactive_form'
+                }
             
-            return {
-                'lead_id': str(lead.id),
-                'meta_leadgen_id': leadgen_id,
-                'form_id': form_id,
-                'workspace': str(meta_integration.workspace.id)
-            }
+            # Use MetaIntegrationService to fetch real lead data and create lead
+            meta_service = MetaIntegrationService()
+            
+            # Process lead with real Facebook API data
+            lead = meta_service.process_lead_webhook(lead_data, meta_integration)
+            
+            if lead:
+                return {
+                    'lead_id': str(lead.id),
+                    'meta_leadgen_id': leadgen_id,
+                    'form_id': form_id,
+                    'workspace': str(meta_integration.workspace.id)
+                }
+            else:
+                logger.warning(f"Failed to process lead {leadgen_id}")
+                return None
             
         except Exception as e:
             logger.error(f"Error processing lead data: {str(e)}")
@@ -474,4 +479,92 @@ class MetaLeadFormViewSet(viewsets.ModelViewSet):
         """Return appropriate serializer based on action"""
         if self.action == 'create':
             return MetaLeadFormCreateSerializer
-        return MetaLeadFormSerializer 
+        elif self.action == 'update_selections':
+            return MetaLeadFormBulkUpdateSerializer
+        return MetaLeadFormSerializer
+    
+    @extend_schema(
+        summary="💾 Update form selections",
+        description="""
+        Bulk update the active status of multiple Meta lead forms.
+        
+        **🔐 Permission Requirements**:
+        - User must be authenticated and email verified
+        - Only forms from user's workspaces can be updated
+        
+        **📝 Request Format**:
+        - Provide a list of form_id to is_active mappings
+        - Only specified forms will be updated
+        - Unspecified forms remain unchanged
+        
+        **🎯 Use Cases**:
+        - Enable/disable specific lead forms
+        - Bulk configuration of form processing
+        - Lead source management
+        """,
+        request=MetaLeadFormBulkUpdateSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Form selections updated successfully"
+            ),
+            400: OpenApiResponse(description="❌ Validation error"),
+            403: OpenApiResponse(description="🚫 Permission denied"),
+        },
+        tags=["Meta Integration"]
+    )
+    @action(detail=False, methods=['post'])
+    def update_selections(self, request):
+        """Update the active status of multiple lead forms"""
+        serializer = MetaLeadFormBulkUpdateSerializer(data=request.data)
+        if serializer.is_valid():
+            form_selections = serializer.validated_data['form_selections']
+            updated_forms = []
+            errors = []
+            
+            # Get user's accessible workspaces
+            if request.user.is_staff or request.user.is_superuser:
+                user_workspaces = None  # Access to all
+            else:
+                user_workspaces = request.user.mapping_user_workspaces.all()
+            
+            # Process each form selection
+            for selection in form_selections:
+                for form_id, is_active in selection.items():
+                    try:
+                        # Build queryset with workspace filtering
+                        queryset = MetaLeadForm.objects.filter(meta_form_id=form_id)
+                        if user_workspaces is not None:
+                            queryset = queryset.filter(meta_integration__workspace__in=user_workspaces)
+                        
+                        # Update the form(s)
+                        updated_count = queryset.update(is_active=is_active)
+                        
+                        if updated_count > 0:
+                            updated_forms.append({
+                                'form_id': form_id,
+                                'is_active': is_active,
+                                'updated_count': updated_count
+                            })
+                            logger.info(f"Updated {updated_count} forms with ID {form_id} to is_active={is_active}")
+                        else:
+                            errors.append({
+                                'form_id': form_id,
+                                'error': 'Form not found or access denied'
+                            })
+                            
+                    except Exception as e:
+                        logger.error(f"Error updating form {form_id}: {str(e)}")
+                        errors.append({
+                            'form_id': form_id,
+                            'error': str(e)
+                        })
+            
+            return Response({
+                'message': f'Updated {len(updated_forms)} form selections',
+                'updated_forms': updated_forms,
+                'errors': errors,
+                'total_updated': len(updated_forms),
+                'total_errors': len(errors)
+            })
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST) 
