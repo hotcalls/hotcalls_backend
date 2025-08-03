@@ -534,6 +534,31 @@ def create_checkout_session(request):
     try:
         workspace = Workspace.objects.get(id=workspace_id)
         
+        # 🔧 FIX: Handle existing subscriptions before creating new ones
+        if workspace.stripe_customer_id:
+            print(f"🔍 Checking for existing subscriptions for customer {workspace.stripe_customer_id}")
+            
+            # Get all active subscriptions
+            existing_subs = stripe.Subscription.list(
+                customer=workspace.stripe_customer_id,
+                status='active',
+                limit=10
+            )
+            
+            if existing_subs.data:
+                print(f"⚠️ Found {len(existing_subs.data)} existing active subscription(s) - canceling IMMEDIATELY")
+                
+                # Cancel all existing active subscriptions IMMEDIATELY
+                for sub in existing_subs.data:
+                    try:
+                        stripe.Subscription.cancel(sub.id)
+                        print(f"✅ IMMEDIATELY canceled subscription {sub.id}")
+                    except stripe.error.StripeError as e:
+                        print(f"❌ Failed to cancel subscription {sub.id}: {e}")
+                        # Continue with checkout even if cancellation fails
+            else:
+                print("✅ No existing active subscriptions found")
+        
         # Create checkout session - customer will be created automatically if needed
         session_params = {
             'payment_method_types': ['card'],
@@ -556,6 +581,7 @@ def create_checkout_session(request):
             session_params['customer'] = workspace.stripe_customer_id
         
         session = stripe.checkout.Session.create(**session_params)
+        print(f"✅ Created checkout session {session.id} for price {price_id}")
         
         return Response({
             'checkout_url': session.url,
@@ -1039,13 +1065,21 @@ def stripe_webhook(request):
         subscription = event_data
         customer_id = subscription['customer']
         
-        # Mark subscription as cancelled
+        # Mark subscription as cancelled and deactivate WorkspaceSubscription
         try:
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
             workspace.subscription_status = 'cancelled'
             workspace.stripe_subscription_id = None
             workspace.save()
-            print(f"Subscription cancelled for workspace {workspace.id}")
+            
+            # 🔧 FIX: Also deactivate WorkspaceSubscription records
+            from core.models import WorkspaceSubscription
+            WorkspaceSubscription.objects.filter(
+                workspace=workspace,
+                is_active=True
+            ).update(is_active=False)
+            
+            print(f"Subscription cancelled for workspace {workspace.id} - deactivated WorkspaceSubscription records")
         except Workspace.DoesNotExist:
             print(f"No workspace found for customer {customer_id}")
     
