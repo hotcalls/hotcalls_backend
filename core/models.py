@@ -1218,10 +1218,6 @@ class MetaLeadForm(models.Model):
         blank=True,
         help_text="Meta Lead ID (for tracking specific leads)"
     )
-    variables_scheme = models.JSONField(
-        default=dict,
-        help_text="Field mapping schema for lead form variables"
-    )
     lead = models.ForeignKey(
         'Lead',
         on_delete=models.SET_NULL,

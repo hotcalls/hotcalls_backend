@@ -265,8 +265,7 @@ class MetaIntegrationService:
                     meta_integration=integration,
                     meta_form_id=form_data['id'],
                     defaults={
-                        'name': form_data.get('name', f"Form {form_data['id']}"),
-                        'variables_scheme': self._generate_variables_scheme(form_data)
+                        'name': form_data.get('name', f"Form {form_data['id']}")
                     }
                 )
                 synced_forms.append(form)
@@ -279,49 +278,7 @@ class MetaIntegrationService:
         except Exception as e:
             logger.error(f"Error syncing lead forms: {str(e)}")
             return []
-    
-    def _generate_variables_scheme(self, form_data: Dict) -> Dict:
-        """Generate variables scheme from form questions"""
-        scheme = {}
-        questions = form_data.get('questions', [])
-        
-        for question in questions:
-            field_key = question.get('key', '')
-            field_type = question.get('type', 'text')
-            field_label = question.get('label', field_key)
-            
-            scheme[field_key] = {
-                'type': field_type,
-                'label': field_label,
-                'required': question.get('required', False),
-                'mapping': self._suggest_field_mapping(field_key, field_label)
-            }
-        
-        return scheme
-    
-    def _suggest_field_mapping(self, key: str, label: str) -> str:
-        """Suggest field mapping based on key and label"""
-        key_lower = key.lower()
-        label_lower = label.lower()
-        
-        # Email mapping
-        if 'email' in key_lower or 'email' in label_lower:
-            return 'email'
-        
-        # Name mappings
-        if 'full_name' in key_lower or 'name' in key_lower:
-            return 'name'
-        if 'first_name' in key_lower or 'vorname' in label_lower:
-            return 'name'
-        if 'last_name' in key_lower or 'nachname' in label_lower:
-            return 'surname'
-        
-        # Phone mapping
-        if 'phone' in key_lower or 'telefon' in label_lower or 'handy' in label_lower:
-            return 'phone'
-        
-        # Default to variables field
-        return 'variables'
+
     
     @transaction.atomic
     def process_lead_webhook(self, webhook_data: Dict, integration: MetaIntegration) -> Optional[Lead]:
@@ -337,8 +294,7 @@ class MetaIntegrationService:
             # Get or create MetaLeadForm
             meta_lead_form, created = MetaLeadForm.objects.get_or_create(
                 meta_integration=integration,
-                meta_form_id=form_id,
-                defaults={'variables_scheme': {}}
+                meta_form_id=form_id
             )
             
             # Fetch detailed lead data from Meta API
@@ -346,7 +302,7 @@ class MetaIntegrationService:
             field_data = lead_data.get('field_data', [])
             
             # Map fields to lead model
-            mapped_data = self._map_lead_fields(field_data, meta_lead_form.variables_scheme)
+            mapped_data = self._map_lead_fields(field_data)
             
             # Create Lead record
             lead = Lead.objects.create(
@@ -371,7 +327,7 @@ class MetaIntegrationService:
             logger.error(f"Error processing lead webhook: {str(e)}")
             return None
     
-    def _map_lead_fields(self, field_data: List[Dict], variables_scheme: Dict) -> Dict:
+    def _map_lead_fields(self, field_data: List[Dict]) -> Dict:
         """Map Meta field data to lead model fields"""
         mapped_data = {
             'name': '',
@@ -386,12 +342,19 @@ class MetaIntegrationService:
             field_values = field.get('values', [])
             field_value = field_values[0] if field_values else ''
             
-            # Check if we have a mapping scheme for this field
-            field_scheme = variables_scheme.get(field_name, {})
-            mapping = field_scheme.get('mapping', 'variables')
+            # Simple field mapping based on field name
+            field_name_lower = field_name.lower()
             
-            if mapping in ['name', 'surname', 'email', 'phone']:
-                mapped_data[mapping] = field_value
+            if 'email' in field_name_lower:
+                mapped_data['email'] = field_value
+            elif 'phone' in field_name_lower or 'telefon' in field_name_lower:
+                mapped_data['phone'] = field_value
+            elif 'first_name' in field_name_lower or 'vorname' in field_name_lower:
+                mapped_data['name'] = field_value
+            elif 'last_name' in field_name_lower or 'nachname' in field_name_lower:
+                mapped_data['surname'] = field_value
+            elif 'full_name' in field_name_lower or ('name' in field_name_lower and 'first' not in field_name_lower and 'last' not in field_name_lower):
+                mapped_data['name'] = field_value
             else:
                 mapped_data['variables'][field_name] = field_value
         

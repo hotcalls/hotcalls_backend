@@ -260,7 +260,7 @@ class MetaWebhookView(viewsets.ViewSet):
         **Webhook Flow**:
         1. Verify webhook signature using verification token
         2. Parse lead data from Meta format
-        3. Map fields using variables_scheme from MetaLeadForm
+        3. Map fields using simple field name matching
         4. Create Lead record with mapped data
         5. Link to MetaLeadForm for tracking
         
@@ -406,7 +406,7 @@ class MetaWebhookView(viewsets.ViewSet):
                 meta_lead_form, created = MetaLeadForm.objects.get_or_create(
                     meta_integration=meta_integration,
                     meta_form_id=form_id,
-                    defaults={'variables_scheme': {}, 'is_active': False}  # Default to inactive
+                    defaults={'is_active': False}  # Default to inactive
                 )
             except MetaIntegration.DoesNotExist:
                 logger.warning(f"No active Meta integration found for page {page_id}")
