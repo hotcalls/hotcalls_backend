@@ -53,7 +53,7 @@ class MetaLeadFormSerializer(serializers.ModelSerializer):
         model = MetaLeadForm
         fields = [
             'id', 'meta_integration', 'workspace', 'meta_form_id', 'meta_lead_id',
-            'variables_scheme', 'lead', 'integration_status', 'lead_count',
+            'lead', 'integration_status', 'lead_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'workspace', 'integration_status', 'lead_count']
@@ -79,7 +79,7 @@ class MetaLeadFormCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = MetaLeadForm
-        fields = ['meta_integration', 'meta_form_id', 'variables_scheme']
+        fields = ['meta_integration', 'meta_form_id']
 
 
 class MetaOAuthCallbackSerializer(serializers.Serializer):

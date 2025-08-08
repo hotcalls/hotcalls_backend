@@ -6958,7 +6958,7 @@ paths:
       description: "\n        Receive lead data from Meta webhook when new leads are\
         \ generated.\n        \n        **Webhook Flow**:\n        1. Verify webhook\
         \ signature using verification token\n        2. Parse lead data from Meta\
-        \ format\n        3. Map fields using variables_scheme from MetaLeadForm\n\
+        \ format\n        3. Map fields using simple field name matching\n\
         \        4. Create Lead record with mapped data\n        5. Link to MetaLeadForm\
         \ for tracking\n        \n        **\U0001F512 Security**: Webhook signature\
         \ verification is mandatory.\n        **⚡ Performance**: Webhook processing\
