@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
+from core.models import MetaIntegration, MetaLeadForm
 
 
 class MetaIntegrationSerializer(serializers.ModelSerializer):
