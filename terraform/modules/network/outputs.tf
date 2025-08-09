@@ -51,4 +51,14 @@ output "app_gateway_nsg_id" {
 output "private_endpoints_nsg_id" {
   description = "ID of the private endpoints network security group"
   value       = azurerm_network_security_group.private_endpoints.id
+}
+
+output "ingress_static_ip_address" {
+  description = "Static IP address for the ingress controller"
+  value       = azurerm_public_ip.ingress_static.ip_address
+}
+
+output "ingress_static_ip_id" {
+  description = "ID of the static public IP for the ingress controller"
+  value       = azurerm_public_ip.ingress_static.id
 } 
