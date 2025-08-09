@@ -30,6 +30,16 @@ RETRY_WITH_INCREMENT_REASONS = [
     DisconnectionReason.MARKED_AS_SPAM,   # User marked as spam
 ]
 
+# Disconnection reasons that indicate permanent failure - DELETE immediately
+# These are situations where retrying will never succeed
+PERMANENT_FAILURE_REASONS = [
+    DisconnectionReason.INVALID_DESTINATION,           # Invalid phone number
+    DisconnectionReason.TELEPHONY_PROVIDER_PERMISSION_DENIED,  # Permission denied
+    DisconnectionReason.NO_VALID_PAYMENT,             # Account/billing issue
+    DisconnectionReason.SCAM_DETECTED,                # Detected as scam
+    DisconnectionReason.ERROR_USER_NOT_JOINED,        # User never joined call
+]
+
 # Disconnection reasons that should trigger retry WITHOUT attempt increment
 # These are technical/system issues, not user rejections
 RETRY_WITHOUT_INCREMENT_REASONS = [
@@ -44,7 +54,7 @@ RETRY_WITHOUT_INCREMENT_REASONS = [
     DisconnectionReason.ERROR_LLM_WEBSOCKET_LOST_CONNECTION,
     DisconnectionReason.ERROR_LLM_WEBSOCKET_RUNTIME,
     DisconnectionReason.ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD,
-    DisconnectionReason.ERROR_RETELL,                  # Retell system error
+    DisconnectionReason.ERROR_HOTCALLS,                  # HotCalls system error
     DisconnectionReason.ERROR_UNKNOWN,                 # Unknown system error
     DisconnectionReason.REGISTERED_CALL_TIMEOUT,       # System timeout
 ]
@@ -99,15 +109,23 @@ def process_calltask_feedback(call_task, call_log):
         # RETRY with attempt increment
         handle_retry_with_increment(call_task, call_log)
         
+    elif disconnection_reason in PERMANENT_FAILURE_REASONS:
+        # DELETE - Permanent failure, no point retrying
+        call_task_id = call_task.id
+        call_task.delete()
+        logger.info(f"CallTask {call_task_id} deleted - permanent failure ({disconnection_reason})")
+        
     elif disconnection_reason in RETRY_WITHOUT_INCREMENT_REASONS:
         # RETRY without attempt increment  
         handle_retry_without_increment(call_task, call_log)
         
     else:
-        # Unknown/unhandled disconnection reason - log for investigation
-        logger.warning(f"Unhandled disconnection_reason: {disconnection_reason} for CallTask {call_task.id}")
-        # For safety, treat as retry without increment
-        handle_retry_without_increment(call_task, call_log)
+        # 🚨 FALLBACK: Unknown/unhandled disconnection reason
+        # DELETE to prevent infinite retries and database pollution
+        call_task_id = call_task.id
+        call_task.delete()
+        logger.warning(f"CallTask {call_task_id} deleted - unhandled disconnection_reason: {disconnection_reason}. ADD TO APPROPRIATE LIST!")
+        logger.warning(f"⚠️ MISSING DISCONNECTION REASON CLASSIFICATION: {disconnection_reason} - Update calltask_utils.py")
 
 
 def handle_retry_with_increment(call_task, call_log):
@@ -119,20 +137,26 @@ def handle_retry_with_increment(call_task, call_log):
         call_log: CallLog with disconnection info
     """
     agent = call_task.agent
+    call_task_id = call_task.id
     
     # Increment attempts using the existing method
+    # NOTE: This may DELETE the CallTask if max_retries is reached
     call_task.increment_retries(agent.max_retries)
     
-    # The increment_retries method already handles max_retries logic
-    # If attempts >= max_retries, it sets status to WAITING
-    # Otherwise we need to set up the retry
-    if call_task.status != CallStatus.WAITING:
+    # Check if CallTask still exists (not deleted by increment_retries)
+    try:
+        # Refresh from database to get updated state
+        call_task.refresh_from_db()
+        
+        # CallTask still exists - set up retry
         call_task.status = CallStatus.RETRY
         call_task.next_call = calculate_next_call_time(agent, timezone.now())
         call_task.save(update_fields=['status', 'next_call'])
-        logger.info(f"CallTask {call_task.id} scheduled for retry at {call_task.next_call} (attempt {call_task.attempts})")
-    else:
-        logger.info(f"CallTask {call_task.id} moved to WAITING - max retries ({agent.max_retries}) reached")
+        logger.info(f"CallTask {call_task_id} scheduled for retry at {call_task.next_call} (attempt {call_task.attempts})")
+        
+    except CallTask.DoesNotExist:
+        # CallTask was deleted by increment_retries - max retries reached
+        logger.info(f"CallTask {call_task_id} deleted by increment_retries - max retries ({agent.max_retries}) reached")
 
 
 def handle_retry_without_increment(call_task, call_log):

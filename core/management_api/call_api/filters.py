@@ -86,7 +86,7 @@ class CallLogFilter(django_filters.FilterSet):
                 DisconnectionReason.ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD,
                 DisconnectionReason.ERROR_NO_AUDIO_RECEIVED,
                 DisconnectionReason.ERROR_ASR,
-                DisconnectionReason.ERROR_RETELL,
+                DisconnectionReason.ERROR_HOTCALLS,
                 DisconnectionReason.ERROR_UNKNOWN,
                 DisconnectionReason.ERROR_USER_NOT_JOINED,
                 DisconnectionReason.REGISTERED_CALL_TIMEOUT,

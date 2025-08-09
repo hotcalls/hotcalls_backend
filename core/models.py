@@ -46,7 +46,7 @@ class DisconnectionReason(models.TextChoices):
     ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD = 'error_llm_websocket_corrupt_payload', 'LLM Websocket Corrupt Payload'
     ERROR_NO_AUDIO_RECEIVED = 'error_no_audio_received', 'No Audio Received'
     ERROR_ASR = 'error_asr', 'ASR Error'
-    ERROR_RETELL = 'error_retell', 'Retell Error'
+    ERROR_HOTCALLS = 'error_hotcalls', 'HotCalls Error'
     ERROR_UNKNOWN = 'error_unknown', 'Unknown Error'
     ERROR_USER_NOT_JOINED = 'error_user_not_joined', 'User Not Joined'
     REGISTERED_CALL_TIMEOUT = 'registered_call_timeout', 'Registered Call Timeout'
@@ -1474,9 +1474,11 @@ class CallTask(models.Model):
             self.attempts += 1
             self.save(update_fields=['attempts'])
         else:
-            # Prevent integer overflow - stop retrying
-            self.status = CallStatus.WAITING
-            self.save(update_fields=['status'])
+            # Max retries reached - delete CallTask immediately
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"CallTask {self.id} deleted - max retries ({max_retries}) reached")
+            self.delete()
     
     def can_retry(self, max_retries=3):
         """Check if the task can be retried"""
