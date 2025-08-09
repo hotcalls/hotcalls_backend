@@ -210,7 +210,7 @@ class CallAPITestCase(BaseAPITestCase):
             'to_number': '+15553334444',
             'duration': 245,
             'direction': 'outbound',
-            'disconnection_reason': 'completed'
+            'disconnection_reason': 'user_hangup'
         }
         
         response = self.admin_client.post(self.call_logs_url, call_data, format='json')
@@ -364,7 +364,7 @@ class CallAPITestCase(BaseAPITestCase):
             f"{self.call_logs_url}{self.test_call.id}/",
             {
                 'duration': 300,
-                'disconnection_reason': 'customer_hangup',
+                'disconnection_reason': 'user_hangup',
                 'status': 'reached'
             },
             format='json'
@@ -630,7 +630,7 @@ class CallAPITestCase(BaseAPITestCase):
             'to_number': '+15551234567',  # Same as from
             'duration': 0,
             'direction': 'outbound',
-            'disconnection_reason': 'invalid_number'
+            'disconnection_reason': 'invalid_destination'
         }
         
         response = self.admin_client.post(self.call_logs_url, call_data, format='json')
@@ -645,7 +645,7 @@ class CallAPITestCase(BaseAPITestCase):
             'to_number': '+15559876543',
             'duration': 0,
             'direction': 'outbound',
-            'disconnection_reason': 'no_answer'
+            'disconnection_reason': 'dial_no_answer'
         }
         
         response = self.admin_client.post(self.call_logs_url, call_data, format='json')

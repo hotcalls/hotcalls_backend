@@ -15,6 +15,43 @@ class CallStatus(models.TextChoices):
     WAITING = 'waiting', 'waiting'               # limit hit
 
 
+class DisconnectionReason(models.TextChoices):
+    """Call disconnection reasons based on Retell AI standards"""
+    # Expected behaviors - call ended successfully
+    USER_HANGUP = 'user_hangup', 'User Hangup'
+    AGENT_HANGUP = 'agent_hangup', 'Agent Hangup'
+    CALL_TRANSFER = 'call_transfer', 'Call Transfer'
+    VOICEMAIL_REACHED = 'voicemail_reached', 'Voicemail Reached'
+    INACTIVITY = 'inactivity', 'Inactivity Timeout'
+    MAX_DURATION_REACHED = 'max_duration_reached', 'Maximum Duration Reached'
+    
+    # Call not connected - outbound call failures
+    DIAL_BUSY = 'dial_busy', 'Dial Busy'
+    DIAL_FAILED = 'dial_failed', 'Dial Failed'
+    DIAL_NO_ANSWER = 'dial_no_answer', 'No Answer'
+    INVALID_DESTINATION = 'invalid_destination', 'Invalid Destination'
+    TELEPHONY_PROVIDER_PERMISSION_DENIED = 'telephony_provider_permission_denied', 'Telephony Provider Permission Denied'
+    TELEPHONY_PROVIDER_UNAVAILABLE = 'telephony_provider_unavailable', 'Telephony Provider Unavailable'
+    SIP_ROUTING_ERROR = 'sip_routing_error', 'SIP Routing Error'
+    MARKED_AS_SPAM = 'marked_as_spam', 'Marked as Spam'
+    USER_DECLINED = 'user_declined', 'User Declined'
+    
+    # System errors
+    CONCURRENCY_LIMIT_REACHED = 'concurrency_limit_reached', 'Concurrency Limit Reached'
+    NO_VALID_PAYMENT = 'no_valid_payment', 'No Valid Payment'
+    SCAM_DETECTED = 'scam_detected', 'Scam Detected'
+    ERROR_LLM_WEBSOCKET_OPEN = 'error_llm_websocket_open', 'LLM Websocket Open Error'
+    ERROR_LLM_WEBSOCKET_LOST_CONNECTION = 'error_llm_websocket_lost_connection', 'LLM Websocket Lost Connection'
+    ERROR_LLM_WEBSOCKET_RUNTIME = 'error_llm_websocket_runtime', 'LLM Websocket Runtime Error'
+    ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD = 'error_llm_websocket_corrupt_payload', 'LLM Websocket Corrupt Payload'
+    ERROR_NO_AUDIO_RECEIVED = 'error_no_audio_received', 'No Audio Received'
+    ERROR_ASR = 'error_asr', 'ASR Error'
+    ERROR_RETELL = 'error_retell', 'Retell Error'
+    ERROR_UNKNOWN = 'error_unknown', 'Unknown Error'
+    ERROR_USER_NOT_JOINED = 'error_user_not_joined', 'User Not Joined'
+    REGISTERED_CALL_TIMEOUT = 'registered_call_timeout', 'Registered Call Timeout'
+
+
 # Enum Choices
 USER_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -905,7 +942,8 @@ class CallLog(models.Model):
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")
     duration = models.IntegerField(help_text="Call duration in seconds")
     disconnection_reason = models.CharField(
-        max_length=255, 
+        max_length=50,
+        choices=DisconnectionReason.choices,
         null=True, 
         blank=True, 
         help_text="Reason for call disconnection"

@@ -298,6 +298,17 @@ class CallLogViewSet(viewsets.ModelViewSet):
             # Log error but don't fail call log creation
             logger.error(f"⚠️ Failed to record call minutes for call log {call_log.id}: {quota_err}")
             # Call log creation succeeds regardless of quota recording errors
+        
+        # Trigger CallTask feedback loop (async, non-blocking)
+        try:
+            from core.tasks import update_calltask_from_calllog
+            update_calltask_from_calllog.delay(str(call_log.id))
+            logger.info(f"🔄 Triggered CallTask feedback for CallLog {call_log.id}")
+            
+        except Exception as feedback_err:
+            # Log error but don't fail call log creation
+            logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id}: {feedback_err}")
+            # Call log creation succeeds regardless of feedback trigger errors
     
     @extend_schema(
         summary="📊 Get call analytics",
