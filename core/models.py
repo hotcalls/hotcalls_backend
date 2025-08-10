@@ -1047,16 +1047,6 @@ class GoogleCalendar(models.Model):
         help_text="Access level for this calendar"
     )
     
-    # Legacy fields - kept for compatibility but tokens come from connection
-    refresh_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.refresh_token")
-    access_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.access_token")
-    token_expires_at = models.DateTimeField(null=True, blank=True, help_text="DEPRECATED: Use connection.token_expires_at")
-    scopes = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="DEPRECATED: Use connection.scopes"
-    )
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
