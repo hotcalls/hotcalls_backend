@@ -222,8 +222,8 @@ def trigger_call(self, call_task_id):
         }
 
         from_number = (
-            agent.phone_numbers.first().phonenumber
-            if agent.phone_numbers.exists()
+            agent.phone_number.phonenumber
+            if agent.phone_number
             else getattr(workspace, "phone_number", None)
             or os.getenv("DEFAULT_FROM_NUMBER")
         )
@@ -502,6 +502,112 @@ def cleanup_stuck_call_tasks(self):
             'total_deleted': 0,
             'timestamp': timezone.now().isoformat()
         }
+
+
+# ─────────────────────────────
+# 6) CallTask Feedback Loop
+# ─────────────────────────────
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, name="core.tasks.update_calltask_from_calllog")
+def update_calltask_from_calllog(self, call_log_id):
+    """
+    Process CallLog and update/delete corresponding CallTask based on call outcome.
+    
+    This task provides the feedback loop between call completion (CallLog) and 
+    call scheduling (CallTask). It automatically:
+    - Deletes CallTasks for successful calls
+    - Schedules retries for failed calls (with proper agent configuration)
+    - Respects agent retry limits and working hours
+    
+    Args:
+        call_log_id (str): UUID of the CallLog to process
+        
+    Returns:
+        dict: Processing result with status and details
+    """
+    from core.models import CallLog
+    from core.utils.calltask_utils import find_related_calltask, process_calltask_feedback
+    
+    try:
+        # Get the CallLog
+        try:
+            call_log = CallLog.objects.get(id=call_log_id)
+        except CallLog.DoesNotExist:
+            logger.error(f"CallLog {call_log_id} not found for feedback processing")
+            return {
+                'success': False,
+                'error': 'CallLog not found',
+                'call_log_id': call_log_id
+            }
+        
+        # Find the related CallTask
+        call_task = find_related_calltask(call_log)
+        
+        if not call_task:
+            # This is normal - not all CallLogs have corresponding CallTasks
+            # (e.g., manual test calls, inbound calls, etc.)
+            logger.info(f"No CallTask found for CallLog {call_log_id} - likely a manual/test call")
+            return {
+                'success': True,
+                'action': 'no_calltask_found',
+                'call_log_id': call_log_id,
+                'lead_id': str(call_log.lead.id) if call_log.lead else None,
+                'agent_id': str(call_log.agent.agent_id),
+                'disconnection_reason': call_log.disconnection_reason
+            }
+        
+        # Process the feedback
+        call_task_id = str(call_task.id)
+        call_task_status_before = call_task.status
+        
+        process_calltask_feedback(call_task, call_log)
+        
+        # Check if CallTask was deleted (successful call)
+        from core.models import CallTask
+        try:
+            updated_call_task = CallTask.objects.get(id=call_task_id)
+            # CallTask still exists - it was updated
+            action = 'calltask_updated'
+            new_status = updated_call_task.status
+            next_call = updated_call_task.next_call.isoformat() if updated_call_task.next_call else None
+        except CallTask.DoesNotExist:
+            # CallTask was deleted - successful call
+            action = 'calltask_deleted'
+            new_status = None
+            next_call = None
+        
+        logger.info(f"CallTask feedback processed successfully: {action} for CallLog {call_log_id}")
+        
+        return {
+            'success': True,
+            'action': action,
+            'call_log_id': call_log_id,
+            'call_task_id': call_task_id,
+            'status_before': call_task_status_before,
+            'status_after': new_status,
+            'next_call': next_call,
+            'disconnection_reason': call_log.disconnection_reason,
+            'agent_id': str(call_log.agent.agent_id),
+            'lead_id': str(call_log.lead.id) if call_log.lead else None
+        }
+        
+    except Exception as exc:
+        logger.error(f"CallTask feedback failed for CallLog {call_log_id}: {exc}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            retry_delay = 60 * (2 ** self.request.retries)  # Exponential backoff
+            logger.info(f"Retrying CallTask feedback in {retry_delay}s (attempt {self.request.retries + 1})")
+            raise self.retry(exc=exc, countdown=retry_delay)
+        else:
+            # Max retries reached - log error and give up
+            logger.error(f"CallTask feedback failed permanently for CallLog {call_log_id} after {self.max_retries} retries")
+            return {
+                'success': False,
+                'error': str(exc),
+                'call_log_id': call_log_id,
+                'retries': self.request.retries
+            }
+
 
 # ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====
 

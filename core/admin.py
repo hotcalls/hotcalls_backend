@@ -4,7 +4,8 @@ from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
     GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
-    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration
+    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
+    WorkspaceInvitation
 )
 from django.utils import timezone
 
@@ -187,15 +188,14 @@ class WorkspaceAdmin(admin.ModelAdmin):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_numbers', 'calendar_configuration', 'created_at')
-    list_filter = ('status', 'voice', 'language', 'calendar_configuration', 'created_at')
-    search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id')
-    filter_horizontal = ('phone_numbers',)
+    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_number', 'calendar_configuration', 'created_at')
+    list_filter = ('status', 'voice', 'language', 'phone_number', 'calendar_configuration', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id', 'phone_number__phonenumber')
     ordering = ('-created_at',)
     
-    def get_phone_numbers(self, obj):
-        return ", ".join([phone.phonenumber for phone in obj.phone_numbers.all()])
-    get_phone_numbers.short_description = 'Phone Numbers'
+    def get_phone_number(self, obj):
+        return obj.phone_number.phonenumber if obj.phone_number else 'No phone assigned'
+    get_phone_number.short_description = 'Phone Number'
     
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "calendar_configuration":
@@ -220,7 +220,7 @@ class PhoneNumberAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     
     def get_agents(self, obj):
-        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.mapping_agent_phonenumbers.all()])
+        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.agents.all()])
     get_agents.short_description = 'Agents'
 
 
@@ -464,3 +464,43 @@ class MetaIntegrationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(WorkspaceInvitation)
+class WorkspaceInvitationAdmin(admin.ModelAdmin):
+    """Admin for WorkspaceInvitation model"""
+    list_display = ('email', 'workspace', 'invited_by', 'status', 'created_at', 'expires_at', 'is_valid_display')
+    list_filter = ('status', 'workspace', 'created_at', 'expires_at')
+    search_fields = ('email', 'workspace__workspace_name', 'invited_by__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('token', 'created_at', 'accepted_at')
+    
+    fieldsets = (
+        ('Invitation Info', {
+            'fields': ('workspace', 'email', 'invited_by', 'status')
+        }),
+        ('Security', {
+            'fields': ('token',),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'expires_at', 'accepted_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def is_valid_display(self, obj):
+        """Display if invitation is valid with colored indicator"""
+        if obj.is_valid():
+            return '✅ Valid'
+        else:
+            return '❌ Invalid/Expired'
+    is_valid_display.short_description = 'Valid'
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make certain fields readonly based on object state"""
+        readonly = list(self.readonly_fields)
+        if obj and obj.status != 'pending':
+            # Don't allow editing workspace/email after acceptance
+            readonly.extend(['workspace', 'email', 'invited_by'])
+        return readonly

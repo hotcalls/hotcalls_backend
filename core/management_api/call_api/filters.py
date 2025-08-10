@@ -10,7 +10,7 @@ class CallLogFilter(django_filters.FilterSet):
     search = django_filters.CharFilter(method='filter_search', label='Search')
     from_number = django_filters.CharFilter(lookup_expr='icontains')
     to_number = django_filters.CharFilter(lookup_expr='icontains')
-    disconnection_reason = django_filters.CharFilter(lookup_expr='icontains')
+    disconnection_reason = django_filters.ChoiceFilter(choices=CallLog._meta.get_field('disconnection_reason').choices)
     
     # Choice filters
     direction = django_filters.ChoiceFilter(choices=CallLog._meta.get_field('direction').choices)
@@ -66,11 +66,34 @@ class CallLogFilter(django_filters.FilterSet):
             return queryset.filter(duration__gt=0)
         else:
             # Failed calls (duration = 0 or disconnection reason indicates failure)
+            from core.models import DisconnectionReason
+            failure_reasons = [
+                DisconnectionReason.DIAL_BUSY,
+                DisconnectionReason.DIAL_FAILED,
+                DisconnectionReason.DIAL_NO_ANSWER,
+                DisconnectionReason.INVALID_DESTINATION,
+                DisconnectionReason.TELEPHONY_PROVIDER_PERMISSION_DENIED,
+                DisconnectionReason.TELEPHONY_PROVIDER_UNAVAILABLE,
+                DisconnectionReason.SIP_ROUTING_ERROR,
+                DisconnectionReason.MARKED_AS_SPAM,
+                DisconnectionReason.USER_DECLINED,
+                DisconnectionReason.CONCURRENCY_LIMIT_REACHED,
+                DisconnectionReason.NO_VALID_PAYMENT,
+                DisconnectionReason.SCAM_DETECTED,
+                DisconnectionReason.ERROR_LLM_WEBSOCKET_OPEN,
+                DisconnectionReason.ERROR_LLM_WEBSOCKET_LOST_CONNECTION,
+                DisconnectionReason.ERROR_LLM_WEBSOCKET_RUNTIME,
+                DisconnectionReason.ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD,
+                DisconnectionReason.ERROR_NO_AUDIO_RECEIVED,
+                DisconnectionReason.ERROR_ASR,
+                DisconnectionReason.ERROR_HOTCALLS,
+                DisconnectionReason.ERROR_UNKNOWN,
+                DisconnectionReason.ERROR_USER_NOT_JOINED,
+                DisconnectionReason.REGISTERED_CALL_TIMEOUT,
+            ]
             return queryset.filter(
                 models.Q(duration=0) |
-                models.Q(disconnection_reason__icontains='busy') |
-                models.Q(disconnection_reason__icontains='failed') |
-                models.Q(disconnection_reason__icontains='no answer')
+                models.Q(disconnection_reason__in=failure_reasons)
             )
     
     def filter_has_appointment(self, queryset, name, value):

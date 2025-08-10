@@ -81,4 +81,62 @@ class IsWorkspaceMemberOrStaff(permissions.BasePermission):
     def has_object_permission(self, request, view, obj):
         # Check if user is a member of the workspace or is staff
         return (request.user in obj.users.all() or 
-                request.user.is_staff) 
+                request.user.is_staff)
+
+
+class WorkspaceInvitationPermission(permissions.BasePermission):
+    """
+    Permission for workspace invitation operations
+    - Only workspace members can send invitations
+    - Only workspace members can view workspace invitations
+    - Staff can manage all invitations
+    """
+    
+    def has_permission(self, request, view):
+        # All operations require authentication
+        if not (request.user and request.user.is_authenticated):
+            return False
+        return True
+    
+    def has_object_permission(self, request, view, obj):
+        # For workspace-related operations, check workspace membership
+        if hasattr(obj, 'workspace'):
+            workspace = obj.workspace
+        else:
+            workspace = obj  # obj is the workspace itself
+        
+        # Staff can manage all invitations
+        if request.user.is_staff:
+            return True
+        
+        # Users can only manage invitations for workspaces they belong to
+        return request.user in workspace.users.all()
+
+
+class InvitationAcceptancePermission(permissions.BasePermission):
+    """
+    Permission for accepting invitations
+    - User must be authenticated
+    - User's email must match the invitation email
+    """
+    
+    def has_permission(self, request, view):
+        # Must be authenticated to accept invitations
+        return request.user and request.user.is_authenticated
+    
+    def has_object_permission(self, request, view, obj):
+        # User's email must match the invitation email
+        return request.user.email == obj.email
+
+
+class PublicInvitationViewPermission(permissions.BasePermission):
+    """
+    Permission for viewing invitation details (public endpoint)
+    - Anyone can view invitation details (no authentication required)
+    """
+    
+    def has_permission(self, request, view):
+        return True  # Public access
+    
+    def has_object_permission(self, request, view, obj):
+        return True  # Public access to invitation details 

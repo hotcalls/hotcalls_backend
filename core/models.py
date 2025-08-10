@@ -15,6 +15,43 @@ class CallStatus(models.TextChoices):
     WAITING = 'waiting', 'waiting'               # limit hit
 
 
+class DisconnectionReason(models.TextChoices):
+    """Call disconnection reasons based on Retell AI standards"""
+    # Expected behaviors - call ended successfully
+    USER_HANGUP = 'user_hangup', 'User Hangup'
+    AGENT_HANGUP = 'agent_hangup', 'Agent Hangup'
+    CALL_TRANSFER = 'call_transfer', 'Call Transfer'
+    VOICEMAIL_REACHED = 'voicemail_reached', 'Voicemail Reached'
+    INACTIVITY = 'inactivity', 'Inactivity Timeout'
+    MAX_DURATION_REACHED = 'max_duration_reached', 'Maximum Duration Reached'
+    
+    # Call not connected - outbound call failures
+    DIAL_BUSY = 'dial_busy', 'Dial Busy'
+    DIAL_FAILED = 'dial_failed', 'Dial Failed'
+    DIAL_NO_ANSWER = 'dial_no_answer', 'No Answer'
+    INVALID_DESTINATION = 'invalid_destination', 'Invalid Destination'
+    TELEPHONY_PROVIDER_PERMISSION_DENIED = 'telephony_provider_permission_denied', 'Telephony Provider Permission Denied'
+    TELEPHONY_PROVIDER_UNAVAILABLE = 'telephony_provider_unavailable', 'Telephony Provider Unavailable'
+    SIP_ROUTING_ERROR = 'sip_routing_error', 'SIP Routing Error'
+    MARKED_AS_SPAM = 'marked_as_spam', 'Marked as Spam'
+    USER_DECLINED = 'user_declined', 'User Declined'
+    
+    # System errors
+    CONCURRENCY_LIMIT_REACHED = 'concurrency_limit_reached', 'Concurrency Limit Reached'
+    NO_VALID_PAYMENT = 'no_valid_payment', 'No Valid Payment'
+    SCAM_DETECTED = 'scam_detected', 'Scam Detected'
+    ERROR_LLM_WEBSOCKET_OPEN = 'error_llm_websocket_open', 'LLM Websocket Open Error'
+    ERROR_LLM_WEBSOCKET_LOST_CONNECTION = 'error_llm_websocket_lost_connection', 'LLM Websocket Lost Connection'
+    ERROR_LLM_WEBSOCKET_RUNTIME = 'error_llm_websocket_runtime', 'LLM Websocket Runtime Error'
+    ERROR_LLM_WEBSOCKET_CORRUPT_PAYLOAD = 'error_llm_websocket_corrupt_payload', 'LLM Websocket Corrupt Payload'
+    ERROR_NO_AUDIO_RECEIVED = 'error_no_audio_received', 'No Audio Received'
+    ERROR_ASR = 'error_asr', 'ASR Error'
+    ERROR_HOTCALLS = 'error_hotcalls', 'HotCalls Error'
+    ERROR_UNKNOWN = 'error_unknown', 'Unknown Error'
+    ERROR_USER_NOT_JOINED = 'error_user_not_joined', 'User Not Joined'
+    REGISTERED_CALL_TIMEOUT = 'registered_call_timeout', 'Registered Call Timeout'
+
+
 # Enum Choices
 USER_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -63,6 +100,13 @@ META_INTEGRATION_STATUS_CHOICES = [
     ('revoked', 'Revoked'),
     ('error', 'Error'),
     ('disconnected', 'Disconnected'),
+]
+
+INVITATION_STATUS_CHOICES = [
+    ('pending', 'Pending'),
+    ('accepted', 'Accepted'),
+    ('expired', 'Expired'),
+    ('cancelled', 'Cancelled'),
 ]
 
 class FeatureUnit(models.TextChoices):
@@ -587,14 +631,7 @@ class Workspace(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    @property
-    def current_plan(self):
-        """Get current active plan"""
-        try:
-            return self.workspacesubscription_set.get(is_active=True).plan
-        except WorkspaceSubscription.DoesNotExist:
-            return None
+
     
     @property 
     def current_subscription(self):
@@ -622,6 +659,121 @@ class Workspace(models.Model):
     
     def __str__(self):
         return self.workspace_name
+
+
+class WorkspaceInvitation(models.Model):
+    """Workspace invitations for inviting users via email"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Core invitation fields
+    workspace = models.ForeignKey(
+        Workspace, 
+        on_delete=models.CASCADE, 
+        related_name='invitations',
+        help_text="Workspace the user is being invited to"
+    )
+    email = models.EmailField(
+        help_text="Email address of the person being invited"
+    )
+    invited_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sent_invitations',
+        help_text="User who sent the invitation"
+    )
+    
+    # Invitation management
+    token = models.CharField(
+        max_length=64,
+        unique=True,
+        editable=False,
+        help_text="Secure token for invitation acceptance (encrypted at rest)"
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=INVITATION_STATUS_CHOICES,
+        default='pending',
+        help_text="Current status of the invitation"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(
+        help_text="When this invitation expires (7 days from creation)"
+    )
+    accepted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the invitation was accepted"
+    )
+    
+    class Meta:
+        unique_together = ['workspace', 'email', 'status']
+        constraints = [
+            # Only one pending invitation per workspace-email combination
+            models.UniqueConstraint(
+                fields=['workspace', 'email'],
+                condition=models.Q(status='pending'),
+                name='unique_pending_invitation_per_workspace_email'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['token']),
+            models.Index(fields=['email', 'status']),
+            models.Index(fields=['workspace', 'status']),
+            models.Index(fields=['expires_at']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Set expiration to 7 days from now if not set
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timezone.timedelta(days=7)
+        
+        # Generate token if not set
+        if not self.token:
+            self.token = self.generate_token()
+        
+        super().save(*args, **kwargs)
+    
+    @staticmethod
+    def generate_token():
+        """Generate a secure random token for invitations"""
+        return secrets.token_urlsafe(48)  # 64 character URL-safe token
+    
+    def is_valid(self):
+        """Check if invitation is still valid (not expired and pending)"""
+        return (
+            self.status == 'pending' and 
+            self.expires_at and 
+            timezone.now() < self.expires_at
+        )
+    
+    def accept(self, user):
+        """Accept the invitation and add user to workspace"""
+        if not self.is_valid():
+            raise ValueError("Invitation is not valid or has expired")
+        
+        if user.email != self.email:
+            raise ValueError("Email address does not match invitation")
+        
+        # Add user to workspace
+        self.workspace.users.add(user)
+        
+        # Update invitation status
+        self.status = 'accepted'
+        self.accepted_at = timezone.now()
+        self.save(update_fields=['status', 'accepted_at'])
+        
+        return True
+    
+    def cancel(self):
+        """Cancel the invitation"""
+        if self.status == 'pending':
+            self.status = 'cancelled'
+            self.save(update_fields=['status'])
+    
+    def __str__(self):
+        return f"Invitation: {self.email} → {self.workspace.workspace_name} ({self.status})"
 
 
 class WorkspaceSubscription(models.Model):
@@ -799,7 +951,14 @@ class Agent(models.Model):
         blank=True,
         help_text="Configuration ID for agent settings"
     )
-    phone_numbers = models.ManyToManyField('PhoneNumber', related_name='mapping_agent_phonenumbers', blank=True)
+    phone_number = models.ForeignKey(
+        'PhoneNumber',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agents',
+        help_text="Phone number assigned to this agent"
+    )
     calendar_configuration = models.ForeignKey(
         'CalendarConfiguration',
         on_delete=models.SET_NULL,
@@ -926,7 +1085,8 @@ class CallLog(models.Model):
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")
     duration = models.IntegerField(help_text="Call duration in seconds")
     disconnection_reason = models.CharField(
-        max_length=255, 
+        max_length=50,
+        choices=DisconnectionReason.choices,
         null=True, 
         blank=True, 
         help_text="Reason for call disconnection"
@@ -1501,9 +1661,11 @@ class CallTask(models.Model):
             self.attempts += 1
             self.save(update_fields=['attempts'])
         else:
-            # Prevent integer overflow - stop retrying
-            self.status = CallStatus.WAITING
-            self.save(update_fields=['status'])
+            # Max retries reached - delete CallTask immediately
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"CallTask {self.id} deleted - max retries ({max_retries}) reached")
+            self.delete()
     
     def can_retry(self, max_retries=3):
         """Check if the task can be retried"""

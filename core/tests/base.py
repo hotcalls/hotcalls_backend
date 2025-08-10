@@ -159,7 +159,7 @@ class BaseAPITestCase(TestCase):
             'to_number': kwargs.get('to_number', lead.phone),
             'duration': duration,
             'direction': kwargs.get('direction', "outbound"),
-            'disconnection_reason': kwargs.get('disconnection_reason', "completed"),
+            'disconnection_reason': kwargs.get('disconnection_reason', "user_hangup"),
             'status': kwargs.get('status'),
             'appointment_datetime': kwargs.get('appointment_datetime')
         }
