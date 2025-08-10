@@ -48,15 +48,17 @@ class MetaLeadFormSerializer(serializers.ModelSerializer):
     workspace = serializers.SerializerMethodField()
     integration_status = serializers.SerializerMethodField()
     lead_count = serializers.SerializerMethodField()
+    has_funnel = serializers.SerializerMethodField()
+    assigned_agent = serializers.SerializerMethodField()
     
     class Meta:
         model = MetaLeadForm
         fields = [
             'id', 'meta_integration', 'workspace', 'meta_form_id', 'name', 'meta_lead_id',
-            'is_active', 'lead', 'integration_status', 'lead_count',
+            'is_active', 'integration_status', 'lead_count', 'has_funnel', 'assigned_agent',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'workspace', 'integration_status', 'lead_count']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'workspace', 'integration_status', 'lead_count', 'has_funnel', 'assigned_agent']
     
     @extend_schema_field(serializers.UUIDField)
     def get_workspace(self, obj):
@@ -70,8 +72,22 @@ class MetaLeadFormSerializer(serializers.ModelSerializer):
     
     @extend_schema_field(serializers.IntegerField)
     def get_lead_count(self, obj) -> int:
-        """Get count of leads created from this form"""
-        return MetaLeadForm.objects.filter(meta_form_id=obj.meta_form_id).count()
+        """Get count of leads created from this form via its funnel"""
+        if hasattr(obj, 'lead_funnel'):
+            return obj.lead_funnel.leads.count()
+        return 0
+    
+    @extend_schema_field(serializers.BooleanField)
+    def get_has_funnel(self, obj) -> bool:
+        """Check if this form has a lead funnel"""
+        return hasattr(obj, 'lead_funnel')
+    
+    @extend_schema_field(serializers.CharField)
+    def get_assigned_agent(self, obj) -> str:
+        """Get the name of the assigned agent if any"""
+        if hasattr(obj, 'lead_funnel') and hasattr(obj.lead_funnel, 'agent'):
+            return obj.lead_funnel.agent.name
+        return None
 
 
 class MetaLeadFormCreateSerializer(serializers.ModelSerializer):

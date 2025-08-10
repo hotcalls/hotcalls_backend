@@ -89,6 +89,15 @@ app.conf.beat_schedule = {
         }
     },
     
+    # Sync Meta lead forms daily to keep them up to date
+    'daily-meta-sync': {
+        'task': 'core.tasks.daily_meta_sync',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
     # Clean up stuck call tasks every minute
     'cleanup-stuck-call-tasks': {
         'task': 'core.tasks.cleanup_stuck_call_tasks',

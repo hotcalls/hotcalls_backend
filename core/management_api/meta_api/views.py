@@ -236,6 +236,11 @@ class MetaWebhookView(viewsets.ViewSet):
             
             logger.info(f"Successfully created Meta integration {integration.id}")
             
+            # STEP 4: Trigger async sync task instead of synchronous sync
+            from core.tasks import sync_meta_lead_forms
+            sync_meta_lead_forms.delay(str(integration.id))
+            logger.info(f"Triggered async sync task for integration {integration.id}")
+            
             # Redirect user back to frontend after successful OAuth
             from django.shortcuts import redirect
             return redirect('https://app.hotcalls.de/dashboard/lead-sources?connected=true')

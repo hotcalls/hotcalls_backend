@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice
+from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice, LeadFunnel
 
 
 class PhoneNumberSerializer(serializers.ModelSerializer):
@@ -10,6 +10,29 @@ class PhoneNumberSerializer(serializers.ModelSerializer):
         model = PhoneNumber
         fields = ['id', 'phonenumber', 'created_at', 'is_active']
         read_only_fields = ['id', 'created_at']
+
+
+class AgentBasicSerializer(serializers.ModelSerializer):
+    """Basic serializer for Agent with minimal fields"""
+    workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
+    voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
+    
+    class Meta:
+        model = Agent
+        fields = [
+            'agent_id', 'name', 'status', 'workspace_name',
+            'voice_external_id', 'language'
+        ]
+        read_only_fields = ['agent_id']
+
+
+class LeadFunnelBasicSerializer(serializers.ModelSerializer):
+    """Basic serializer for LeadFunnel to avoid circular imports"""
+    
+    class Meta:
+        model = LeadFunnel
+        fields = ['id', 'name', 'is_active']
+        read_only_fields = ['id']
 
 
 class AgentSerializer(serializers.ModelSerializer):
@@ -23,6 +46,9 @@ class AgentSerializer(serializers.ModelSerializer):
     voice_provider = serializers.CharField(source='voice.provider', read_only=True)
     voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
     
+    # NEW: Lead funnel field
+    lead_funnel = LeadFunnelBasicSerializer(read_only=True)
+    
     class Meta:
         model = Agent
         fields = [
@@ -31,6 +57,8 @@ class AgentSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD (now FK to Voice)  
             'voice', 'voice_provider', 'voice_external_id',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'phone_numbers', 'phone_number_count',
@@ -211,6 +239,9 @@ class AgentConfigSerializer(serializers.ModelSerializer):
     voice_provider = serializers.CharField(source='voice.provider', read_only=True)
     voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
     
+    # NEW: Lead funnel field
+    lead_funnel = LeadFunnelBasicSerializer(read_only=True)
+    
     class Meta:
         model = Agent
         fields = [
@@ -219,6 +250,8 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice', 'voice_provider', 'voice_external_id',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS  
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_numbers', 'calendar_configuration',

@@ -803,3 +803,283 @@ def cleanup_invalid_meta_integrations(self):
     """)
     
     return results
+
+# ─────────────────────────────
+# Meta Lead Form Sync Tasks
+# ─────────────────────────────
+@shared_task(bind=True, name="core.tasks.sync_meta_lead_forms")
+def sync_meta_lead_forms(self, integration_id):
+    """
+    Background task to sync lead forms from Meta and create LeadFunnels
+    
+    This task is triggered after OAuth callback to:
+    1. Fetch all lead forms from Meta API
+    2. Create/update MetaLeadForm records
+    3. Auto-create LeadFunnel for each new form
+    4. Return summary of operations
+    
+    Race condition prevention:
+    - Uses select_for_update() for atomic operations
+    - Uses get_or_create() for idempotent operations
+    """
+    from core.models import MetaIntegration, MetaLeadForm, LeadFunnel
+    from core.services.meta_integration import MetaIntegrationService
+    from django.db import transaction
+    
+    logger.info(f"Starting sync_meta_lead_forms for integration {integration_id}")
+    
+    try:
+        # Get integration with lock to prevent concurrent modifications
+        with transaction.atomic():
+            integration = MetaIntegration.objects.select_for_update().get(
+                id=integration_id
+            )
+            
+            if integration.status != 'active':
+                logger.warning(f"Integration {integration_id} is not active, skipping sync")
+                return {
+                    'success': False,
+                    'reason': 'integration_not_active',
+                    'integration_id': str(integration_id)
+                }
+            
+            meta_service = MetaIntegrationService()
+            
+            # Fetch lead forms from Meta API
+            try:
+                forms_data = meta_service.get_page_lead_forms(
+                    integration.page_id,
+                    integration.access_token
+                )
+            except Exception as e:
+                logger.error(f"Failed to fetch lead forms from Meta: {str(e)}")
+                return {
+                    'success': False,
+                    'error': str(e),
+                    'integration_id': str(integration_id)
+                }
+            
+            created_forms = []
+            updated_forms = []
+            created_funnels = []
+            
+            # Process each form
+            for form_data in forms_data:
+                form_id = form_data.get('id')
+                form_name = form_data.get('name', f"Form {form_id}")
+                
+                # Create or update MetaLeadForm
+                meta_form, form_created = MetaLeadForm.objects.get_or_create(
+                    meta_integration=integration,
+                    meta_form_id=form_id,
+                    defaults={
+                        'name': form_name,
+                        'is_active': False  # Start inactive, user must activate
+                    }
+                )
+                
+                # Update name if changed
+                if not form_created and meta_form.name != form_name:
+                    meta_form.name = form_name
+                    meta_form.save(update_fields=['name', 'updated_at'])
+                    updated_forms.append(form_id)
+                elif form_created:
+                    created_forms.append(form_id)
+                
+                # Create LeadFunnel for new forms
+                if form_created:
+                    # Check if funnel already exists (shouldn't happen but be safe)
+                    if not hasattr(meta_form, 'lead_funnel'):
+                        funnel = LeadFunnel.objects.create(
+                            name=f"{form_name}",
+                            workspace=integration.workspace,
+                            meta_lead_form=meta_form,
+                            is_active=True  # Active by default, but no agent yet
+                        )
+                        created_funnels.append({
+                            'id': str(funnel.id),
+                            'name': funnel.name,
+                            'form_id': form_id
+                        })
+                        logger.info(f"Created LeadFunnel {funnel.id} for form {form_id}")
+            
+            # Log summary
+            summary = {
+                'success': True,
+                'integration_id': str(integration_id),
+                'total_forms': len(forms_data),
+                'created_forms': len(created_forms),
+                'updated_forms': len(updated_forms),
+                'created_funnels': len(created_funnels),
+                'form_ids': {
+                    'created': created_forms,
+                    'updated': updated_forms
+                },
+                'funnels': created_funnels
+            }
+            
+            logger.info(f"Sync completed for integration {integration_id}: {summary}")
+            return summary
+            
+    except MetaIntegration.DoesNotExist:
+        logger.error(f"Integration {integration_id} not found")
+        return {
+            'success': False,
+            'error': 'integration_not_found',
+            'integration_id': str(integration_id)
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error in sync_meta_lead_forms: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e),
+            'integration_id': str(integration_id)
+        }
+
+
+@shared_task(bind=True, name="core.tasks.daily_meta_sync")
+def daily_meta_sync(self):
+    """
+    Daily task to keep all Meta integrations up to date
+    Runs at midnight to sync all active integrations
+    
+    For each active integration:
+    - Check for new forms on Meta
+    - Create missing LeadFunnels
+    - Update form names if changed
+    - Disable forms that no longer exist on Meta
+    """
+    from core.models import MetaIntegration, MetaLeadForm, LeadFunnel
+    from core.services.meta_integration import MetaIntegrationService
+    from django.utils import timezone
+    from django.db import transaction
+    
+    logger.info("Starting daily Meta sync task")
+    
+    # Get all active integrations
+    active_integrations = MetaIntegration.objects.filter(
+        status='active',
+        access_token_expires_at__gt=timezone.now()
+    )
+    
+    results = {
+        'total_integrations': active_integrations.count(),
+        'successful_syncs': 0,
+        'failed_syncs': 0,
+        'integrations': []
+    }
+    
+    meta_service = MetaIntegrationService()
+    
+    for integration in active_integrations:
+        try:
+            with transaction.atomic():
+                # Fetch current forms from Meta
+                forms_data = meta_service.get_page_lead_forms(
+                    integration.page_id,
+                    integration.access_token
+                )
+                
+                # Get all form IDs from Meta
+                meta_form_ids = {form['id'] for form in forms_data}
+                
+                # Get all existing forms for this integration
+                existing_forms = MetaLeadForm.objects.filter(
+                    meta_integration=integration
+                )
+                existing_form_ids = {form.meta_form_id for form in existing_forms}
+                
+                # Find new forms
+                new_form_ids = meta_form_ids - existing_form_ids
+                
+                # Find removed forms (exist in DB but not in Meta)
+                removed_form_ids = existing_form_ids - meta_form_ids
+                
+                created_forms = 0
+                updated_forms = 0
+                deactivated_forms = 0
+                created_funnels = 0
+                
+                # Create new forms and funnels
+                for form_data in forms_data:
+                    form_id = form_data['id']
+                    form_name = form_data.get('name', f"Form {form_id}")
+                    
+                    if form_id in new_form_ids:
+                        # Create new form
+                        meta_form = MetaLeadForm.objects.create(
+                            meta_integration=integration,
+                            meta_form_id=form_id,
+                            name=form_name,
+                            is_active=False
+                        )
+                        created_forms += 1
+                        
+                        # Create funnel
+                        funnel = LeadFunnel.objects.create(
+                            name=form_name,
+                            workspace=integration.workspace,
+                            meta_lead_form=meta_form,
+                            is_active=True
+                        )
+                        created_funnels += 1
+                        
+                    else:
+                        # Update existing form name if changed
+                        meta_form = MetaLeadForm.objects.get(
+                            meta_integration=integration,
+                            meta_form_id=form_id
+                        )
+                        if meta_form.name != form_name:
+                            meta_form.name = form_name
+                            meta_form.save(update_fields=['name', 'updated_at'])
+                            
+                            # Also update funnel name if it exists
+                            if hasattr(meta_form, 'lead_funnel'):
+                                meta_form.lead_funnel.name = form_name
+                                meta_form.lead_funnel.save(update_fields=['name', 'updated_at'])
+                            
+                            updated_forms += 1
+                
+                # Deactivate removed forms
+                if removed_form_ids:
+                    removed_forms = MetaLeadForm.objects.filter(
+                        meta_integration=integration,
+                        meta_form_id__in=removed_form_ids,
+                        is_active=True
+                    )
+                    for form in removed_forms:
+                        form.is_active = False
+                        form.save(update_fields=['is_active', 'updated_at'])
+                        
+                        # Also deactivate the funnel
+                        if hasattr(form, 'lead_funnel'):
+                            form.lead_funnel.is_active = False
+                            form.lead_funnel.save(update_fields=['is_active', 'updated_at'])
+                        
+                        deactivated_forms += 1
+                
+                integration_result = {
+                    'integration_id': str(integration.id),
+                    'workspace': integration.workspace.workspace_name,
+                    'created_forms': created_forms,
+                    'updated_forms': updated_forms,
+                    'deactivated_forms': deactivated_forms,
+                    'created_funnels': created_funnels
+                }
+                
+                results['integrations'].append(integration_result)
+                results['successful_syncs'] += 1
+                
+                logger.info(f"Daily sync successful for integration {integration.id}: {integration_result}")
+                
+        except Exception as e:
+            logger.error(f"Daily sync failed for integration {integration.id}: {str(e)}")
+            results['failed_syncs'] += 1
+            results['integrations'].append({
+                'integration_id': str(integration.id),
+                'error': str(e)
+            })
+    
+    logger.info(f"Daily Meta sync completed: {results}")
+    return results

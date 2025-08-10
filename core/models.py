@@ -808,6 +808,17 @@ class Agent(models.Model):
         related_name='mapping_config_agents',
         help_text="Calendar configuration for this agent"
     )
+    
+    # NEW: Agent claims ownership of a lead funnel
+    lead_funnel = models.OneToOneField(
+        'LeadFunnel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent',
+        help_text="Lead funnel this agent handles"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -860,6 +871,16 @@ class Lead(models.Model):
     variables = models.JSONField(
         default=dict,
         help_text="Concrete lead variables from integration"
+    )
+    
+    # NEW: Lead knows which funnel it came from
+    lead_funnel = models.ForeignKey(
+        'LeadFunnel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='leads',
+        help_text="Source funnel this lead came from"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1208,14 +1229,7 @@ class MetaLeadForm(models.Model):
         blank=True,
         help_text="Meta Lead ID (for tracking specific leads)"
     )
-    lead = models.ForeignKey(
-        'Lead',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='meta_lead_forms',
-        help_text="Associated lead record"
-    )
+    # REMOVED: The broken lead field that only stored the last lead
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1228,6 +1242,67 @@ class MetaLeadForm(models.Model):
     
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"
+
+
+class LeadFunnel(models.Model):
+    """
+    Bridge between Agent and Lead Sources
+    
+    This model acts as the central routing mechanism for leads.
+    Each funnel is connected to a lead source (currently MetaLeadForm)
+    and can be claimed by an Agent.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=255,
+        help_text="Display name for this lead funnel"
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='lead_funnels',
+        help_text="Workspace this funnel belongs to"
+    )
+    
+    # Connection to Meta Lead Form (will be extended for other sources later)
+    meta_lead_form = models.OneToOneField(
+        'MetaLeadForm',
+        on_delete=models.CASCADE,
+        related_name='lead_funnel',
+        null=True,
+        blank=True,
+        help_text="Meta lead form connected to this funnel"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this funnel should process incoming leads"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['workspace', 'is_active']),
+            models.Index(fields=['workspace']),
+            models.Index(fields=['is_active']),
+        ]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        agent_name = self.agent.name if hasattr(self, 'agent') else "Unassigned"
+        return f"{self.name} (Agent: {agent_name})"
+    
+    @property
+    def has_agent(self):
+        """Check if this funnel has an assigned agent"""
+        return hasattr(self, 'agent')
+    
+    @property
+    def lead_count(self):
+        """Get count of leads from this funnel"""
+        return self.leads.count()
 
 
 class LiveKitAgent(models.Model):
