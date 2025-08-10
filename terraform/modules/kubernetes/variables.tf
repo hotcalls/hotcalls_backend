@@ -139,4 +139,10 @@ variable "default_from_email" {
 variable "server_email" {
   description = "Server email"
   type        = string
+}
+
+# Static IP configuration
+variable "static_ip_address" {
+  description = "Static IP address for the ingress controller"
+  type        = string
 } 

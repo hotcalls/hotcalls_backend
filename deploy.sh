@@ -1653,8 +1653,8 @@ deploy_kubernetes() {
     # Deploy outbound agent if available and enabled (parallel with services)
     if [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "true" ]] && [[ -f "outboundagent-deployment.yaml" ]]; then
         log_info "Deploying outbound agent (REDEPLOY_OUTBOUNDAGENT=true)..."
-        envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
         envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
+        envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
     elif [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "false" ]]; then
@@ -1664,8 +1664,8 @@ deploy_kubernetes() {
     # Deploy Google Calendar MCP if available and enabled (parallel with services)
     if [[ "${HAS_GOOGLE_CALENDAR_MCP:-false}" == "true" ]] && [[ "${REDEPLOY_GOOGLE_CALENDAR_MCP:-true}" == "true" ]] && [[ -f "google-calendar-mcp-deployment.yaml" ]]; then
         log_info "Deploying Google Calendar MCP (REDEPLOY_GOOGLE_CALENDAR_MCP=true)..."
-        envsubst < google-calendar-mcp-configmap.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-secrets.yaml | kubectl apply -f - &
+        envsubst < google-calendar-mcp-configmap.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-deployment.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-service.yaml | kubectl apply -f - &
         envsubst < google-calendar-mcp-ingress.yaml | kubectl apply -f - &
@@ -1795,13 +1795,6 @@ EOF
     log_success "Kubernetes resources deployed!"
     
     cd ..
-    
-    # Setup ACR authentication BEFORE any deployments start
-    setup_acr_authentication
-    
-    # Wait a moment for the service account patch to propagate
-    log_info "Waiting for service account configuration to propagate..."
-    sleep 5
 }
 
 # Run Django migrations
@@ -2138,11 +2131,11 @@ print(f'SSL Mode: {db_config.get(\"OPTIONS\", {}).get(\"sslmode\")}')
     
     # Check the health endpoint
     log_info "Checking health endpoint..."
-    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/ | python -m json.tool
+    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/ | python3 -m json.tool
     
     # Check readiness (includes database check)
     log_info "Checking readiness endpoint (includes database connectivity)..."
-    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/readiness/ | python -m json.tool
+    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/readiness/ | python3 -m json.tool
     
     # Check pod logs for any database errors
     log_info "Checking recent pod logs for database errors..."
@@ -2521,6 +2514,9 @@ main() {
         get_infrastructure_outputs_update_only
         configure_kubectl
         
+        # Setup ACR authentication IMMEDIATELY after kubectl config
+        setup_acr_authentication
+        
         # Handle --purge preparation BEFORE building images
         if [[ "$PURGE_DB" == "true" ]]; then
             log_warning "PURGE MODE: Preparing fresh migrations..."
@@ -2565,6 +2561,10 @@ main() {
         deploy_infrastructure
         get_infrastructure_outputs
         configure_kubectl
+        
+        # Setup ACR authentication IMMEDIATELY after kubectl config
+        setup_acr_authentication
+        
         install_ingress_controller
         
         # Handle --purge preparation BEFORE building images
