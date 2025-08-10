@@ -188,15 +188,14 @@ class WorkspaceAdmin(admin.ModelAdmin):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_numbers', 'calendar_configuration', 'created_at')
-    list_filter = ('status', 'voice', 'language', 'calendar_configuration', 'created_at')
-    search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id')
-    filter_horizontal = ('phone_numbers',)
+    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_number', 'calendar_configuration', 'created_at')
+    list_filter = ('status', 'voice', 'language', 'phone_number', 'calendar_configuration', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id', 'phone_number__phonenumber')
     ordering = ('-created_at',)
     
-    def get_phone_numbers(self, obj):
-        return ", ".join([phone.phonenumber for phone in obj.phone_numbers.all()])
-    get_phone_numbers.short_description = 'Phone Numbers'
+    def get_phone_number(self, obj):
+        return obj.phone_number.phonenumber if obj.phone_number else 'No phone assigned'
+    get_phone_number.short_description = 'Phone Number'
     
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
         if db_field.name == "calendar_configuration":
@@ -221,7 +220,7 @@ class PhoneNumberAdmin(admin.ModelAdmin):
     ordering = ('-created_at',)
     
     def get_agents(self, obj):
-        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.mapping_agent_phonenumbers.all()])
+        return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.agents.all()])
     get_agents.short_description = 'Agents'
 
 

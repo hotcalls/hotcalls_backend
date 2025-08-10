@@ -222,8 +222,8 @@ def trigger_call(self, call_task_id):
         }
 
         from_number = (
-            agent.phone_numbers.first().phonenumber
-            if agent.phone_numbers.exists()
+            agent.phone_number.phonenumber
+            if agent.phone_number
             else getattr(workspace, "phone_number", None)
             or os.getenv("DEFAULT_FROM_NUMBER")
         )

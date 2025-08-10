@@ -15,8 +15,8 @@ class PhoneNumberSerializer(serializers.ModelSerializer):
 class AgentSerializer(serializers.ModelSerializer):
     """Serializer for Agent model"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
-    phone_numbers = PhoneNumberSerializer(many=True, read_only=True)
-    phone_number_count = serializers.SerializerMethodField()
+    phone_number = PhoneNumberSerializer(read_only=True)
+    phone_number_display = serializers.SerializerMethodField()
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
     # NEW: Voice-related fields
@@ -33,15 +33,15 @@ class AgentSerializer(serializers.ModelSerializer):
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt', 'config_id', 'phone_numbers', 'phone_number_count',
+            'character', 'prompt', 'config_id', 'phone_number', 'phone_number_display',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
     
-    @extend_schema_field(serializers.IntegerField)
-    def get_phone_number_count(self, obj) -> int:
-        """Get the number of phone numbers assigned to this agent"""
-        return obj.phone_numbers.count()
+    @extend_schema_field(serializers.CharField)
+    def get_phone_number_display(self, obj) -> str:
+        """Get the phone number assigned to this agent"""
+        return obj.phone_number.phonenumber if obj.phone_number else 'No phone assigned'
 
 
 class AgentCreateSerializer(serializers.ModelSerializer):
@@ -57,7 +57,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'voice', 
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
-            'character', 'prompt', 'config_id', 'calendar_configuration'
+            'character', 'prompt', 'config_id', 'phone_number', 'calendar_configuration'
         ]
     
     def validate_workspace(self, value):
@@ -183,27 +183,23 @@ class PhoneNumberCreateSerializer(serializers.ModelSerializer):
 
 
 class AgentPhoneAssignmentSerializer(serializers.Serializer):
-    """Serializer for assigning/removing phone numbers to/from agents"""
-    phone_number_ids = serializers.ListField(
-        child=serializers.UUIDField(),
-        help_text="List of phone number IDs to assign/remove"
+    """Serializer for assigning a phone number to an agent"""
+    phone_number_id = serializers.UUIDField(
+        help_text="Phone number ID to assign to the agent"
     )
     
-    def validate_phone_number_ids(self, value):
-        """Validate that all phone number IDs exist and are active"""
-        existing_numbers = PhoneNumber.objects.filter(id__in=value, is_active=True)
-        if len(existing_numbers) != len(value):
-            missing_ids = set(value) - set(existing_numbers.values_list('id', flat=True))
-            raise serializers.ValidationError(
-                f"The following phone number IDs do not exist or are inactive: {list(missing_ids)}"
-            )
+    def validate_phone_number_id(self, value):
+        """Validate that the phone number ID exists and is active"""
+        existing_number = PhoneNumber.objects.filter(id=value, is_active=True).first()
+        if not existing_number:
+            raise serializers.ValidationError("Phone number not found or is inactive")
         return value
 
 
 class AgentConfigSerializer(serializers.ModelSerializer):
     """Serializer for agent configuration details"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
-    phone_numbers = serializers.SerializerMethodField()
+    phone_number = PhoneNumberSerializer(read_only=True)
     calendar_config_id = serializers.CharField(source='calendar_configuration.id', read_only=True)
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
@@ -221,11 +217,9 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'voice', 'voice_provider', 'voice_external_id',
             # EXISTING FIELDS  
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'phone_numbers', 'calendar_configuration',
+            'character', 'config_id', 'phone_number', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at']
     
-    def get_phone_numbers(self, obj):
-        """Return phone numbers as strings instead of objects"""
-        return [pn.phonenumber for pn in obj.phone_numbers.all()] 
+ 

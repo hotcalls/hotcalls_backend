@@ -341,12 +341,14 @@ class AgentViewSet(viewsets.ModelViewSet):
         tags=["Agent Management"]
     )
     @action(detail=True, methods=['get'])
-    def phone_numbers(self, request, pk=None):
-        """Get all phone numbers assigned to an agent"""
+    def phone_number(self, request, pk=None):
+        """Get the phone number assigned to an agent"""
         agent = self.get_object()
-        phone_numbers = agent.phone_numbers.all()
-        serializer = PhoneNumberSerializer(phone_numbers, many=True)
-        return Response(serializer.data)
+        if agent.phone_number:
+            serializer = PhoneNumberSerializer(agent.phone_number)
+            return Response(serializer.data)
+        else:
+            return Response({'message': 'No phone number assigned to this agent'}, status=status.HTTP_404_NOT_FOUND)
     
     @extend_schema(
         summary="➕ Assign phone numbers to agent",
@@ -390,8 +392,8 @@ class AgentViewSet(viewsets.ModelViewSet):
         tags=["Agent Management"]
     )
     @action(detail=True, methods=['post'], permission_classes=[AgentPhoneManagementPermission])
-    def assign_phone_numbers(self, request, pk=None):
-        """Assign phone numbers to an agent (staff only)"""
+    def assign_phone_number(self, request, pk=None):
+        """Assign a phone number to an agent (staff only)"""
         if not request.user.is_staff:
             return Response(
                 {'error': 'Only staff can manage agent phone numbers'}, 
@@ -402,30 +404,28 @@ class AgentViewSet(viewsets.ModelViewSet):
         serializer = AgentPhoneAssignmentSerializer(data=request.data)
         
         if serializer.is_valid():
-            phone_number_ids = serializer.validated_data['phone_number_ids']
-            phone_numbers = PhoneNumber.objects.filter(id__in=phone_number_ids)
+            phone_number_id = serializer.validated_data['phone_number_id']
+            phone_number = PhoneNumber.objects.get(id=phone_number_id)
             
-            # Track already assigned numbers
-            current_phone_ids = set(agent.phone_numbers.values_list('id', flat=True))
-            requested_phone_ids = set(phone_numbers.values_list('id', flat=True))
+            # Check if agent already has this phone number
+            if agent.phone_number and agent.phone_number.id == phone_number_id:
+                return Response({
+                    'message': 'Phone number already assigned to this agent',
+                    'phone_number': phone_number.phonenumber
+                })
             
-            already_assigned_ids = current_phone_ids.intersection(requested_phone_ids)
-            new_assignment_ids = requested_phone_ids - current_phone_ids
-            
-            # Only add new assignments
-            new_phones = phone_numbers.filter(id__in=new_assignment_ids)
-            agent.phone_numbers.add(*new_phones)
+            # Assign the phone number
+            old_phone = agent.phone_number.phonenumber if agent.phone_number else None
+            agent.phone_number = phone_number
+            agent.save()
             
             response_data = {
-                'message': 'Phone numbers assigned successfully',
-                'assigned_numbers': [pn.phonenumber for pn in new_phones],
-                'total_assigned': len(new_phones)
+                'message': 'Phone number assigned successfully',
+                'phone_number': phone_number.phonenumber
             }
             
-            # Include already assigned numbers if any
-            if already_assigned_ids:
-                already_assigned_phones = phone_numbers.filter(id__in=already_assigned_ids)
-                response_data['already_assigned'] = [pn.phonenumber for pn in already_assigned_phones]
+            if old_phone:
+                response_data['previous_phone'] = old_phone
             
             return Response(response_data)
         
@@ -454,8 +454,8 @@ class AgentViewSet(viewsets.ModelViewSet):
         tags=["Agent Management"]
     )
     @action(detail=True, methods=['delete'], permission_classes=[AgentPhoneManagementPermission])
-    def remove_phone_numbers(self, request, pk=None):
-        """Remove phone numbers from an agent (staff only)"""
+    def remove_phone_number(self, request, pk=None):
+        """Remove phone number from an agent (staff only)"""
         if not request.user.is_staff:
             return Response(
                 {'error': 'Only staff can manage agent phone numbers'}, 
@@ -463,37 +463,20 @@ class AgentViewSet(viewsets.ModelViewSet):
             )
         
         agent = self.get_object()
-        serializer = AgentPhoneAssignmentSerializer(data=request.data)
         
-        if serializer.is_valid():
-            phone_number_ids = serializer.validated_data['phone_number_ids']
-            phone_numbers = PhoneNumber.objects.filter(id__in=phone_number_ids)
-            
-            # Track which numbers are actually assigned
-            current_phone_ids = set(agent.phone_numbers.values_list('id', flat=True))
-            requested_phone_ids = set(phone_numbers.values_list('id', flat=True))
-            
-            assigned_ids = current_phone_ids.intersection(requested_phone_ids)
-            not_assigned_ids = requested_phone_ids - current_phone_ids
-            
-            # Only remove numbers that are actually assigned
-            phones_to_remove = phone_numbers.filter(id__in=assigned_ids)
-            agent.phone_numbers.remove(*phones_to_remove)
-            
-            response_data = {
-                'message': 'Phone numbers removed successfully',
-                'removed_numbers': [pn.phonenumber for pn in phones_to_remove],
-                'total_removed': len(phones_to_remove)
-            }
-            
-            # Include not assigned numbers if any
-            if not_assigned_ids:
-                not_assigned_phones = phone_numbers.filter(id__in=not_assigned_ids)
-                response_data['not_assigned'] = [pn.phonenumber for pn in not_assigned_phones]
-            
-            return Response(response_data)
+        if not agent.phone_number:
+            return Response({
+                'message': 'No phone number assigned to this agent'
+            }, status=status.HTTP_404_NOT_FOUND)
         
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        removed_phone = agent.phone_number.phonenumber
+        agent.phone_number = None
+        agent.save()
+        
+        return Response({
+            'message': 'Phone number removed successfully',
+            'removed_phone': removed_phone
+        })
     
     @extend_schema(
         summary="⚙️ Get agent configuration",
@@ -711,7 +694,7 @@ class PhoneNumberViewSet(viewsets.ModelViewSet):
     def agents(self, request, pk=None):
         """Get all agents assigned to this phone number"""
         phone_number = self.get_object()
-        agents = phone_number.mapping_agent_phonenumbers.all()
+        agents = phone_number.agents.all()
         # Filter agents based on user permissions
         user = request.user
         if not user.is_staff:

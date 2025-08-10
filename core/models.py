@@ -951,7 +951,14 @@ class Agent(models.Model):
         blank=True,
         help_text="Configuration ID for agent settings"
     )
-    phone_numbers = models.ManyToManyField('PhoneNumber', related_name='mapping_agent_phonenumbers', blank=True)
+    phone_number = models.ForeignKey(
+        'PhoneNumber',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agents',
+        help_text="Phone number assigned to this agent"
+    )
     calendar_configuration = models.ForeignKey(
         'CalendarConfiguration',
         on_delete=models.SET_NULL,

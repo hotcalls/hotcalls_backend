@@ -82,19 +82,15 @@ class AgentFilter(django_filters.FilterSet):
     
     def filter_has_phone_number(self, queryset, name, value):
         """Filter agents that have a specific phone number"""
-        return queryset.filter(mapping_agent_phonenumbers__phonenumber__icontains=value).distinct()
+        return queryset.filter(phone_number__phonenumber__icontains=value).distinct()
     
     def filter_phone_count_min(self, queryset, name, value):
         """Filter agents with minimum number of phone numbers"""
-        return queryset.annotate(
-            phone_count=models.Count('mapping_agent_phonenumbers')
-        ).filter(phone_count__gte=value)
+        return queryset.filter(phone_number__isnull=False)
     
     def filter_phone_count_max(self, queryset, name, value):
         """Filter agents with maximum number of phone numbers"""
-        return queryset.annotate(
-            phone_count=models.Count('mapping_agent_phonenumbers')
-        ).filter(phone_count__lte=value)
+        return queryset.filter(phone_number__isnull=True) if value == 0 else queryset.filter(phone_number__isnull=False)
     
     def filter_has_calendar_config(self, queryset, name, value):
         """Filter agents with/without calendar configuration"""
@@ -132,11 +128,11 @@ class PhoneNumberFilter(django_filters.FilterSet):
     def filter_unassigned(self, queryset, name, value):
         """Filter phone numbers not assigned to any agent"""
         if value:
-            return queryset.filter(mapping_agent_phonenumbers__isnull=True)
+            return queryset.filter(agents__isnull=True)
         return queryset
     
     def filter_assigned_to_agent(self, queryset, name, value):
         """Filter phone numbers assigned to a specific agent"""
         return queryset.filter(
-            mapping_agent_phonenumbers__workspace__workspace_name__icontains=value
+            agents__workspace__workspace_name__icontains=value
         ).distinct() 
