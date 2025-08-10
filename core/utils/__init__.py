@@ -304,6 +304,181 @@ def send_password_reset_email(user, reset_token, request=None):
         return False
 
 
+def send_workspace_invitation_email(invitation, request=None):
+    """
+    Send workspace invitation email to the invited user
+    
+    Args:
+        invitation: WorkspaceInvitation instance
+        request: Optional request object for building URLs
+        
+    Returns:
+        bool: True if email sent successfully, False otherwise
+    """
+    try:
+        # Build invitation URLs
+        base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
+        invitation_url = f"{base_url}/invitations/{invitation.token}/"
+        accept_url = f"{base_url}/invitations/{invitation.token}/accept/"
+        
+        # Email content
+        workspace_name = invitation.workspace.workspace_name
+        inviter_name = invitation.invited_by.get_full_name() or invitation.invited_by.email
+        subject = f'Einladung zu "{workspace_name}" - Hotcalls'
+        
+        # Create HTML email template content
+        html_content = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }}
+                .container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+                .header {{ background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%); padding: 40px 20px; text-align: center; }}
+                .logo {{ max-width: 180px; height: auto; margin-bottom: 20px; }}
+                .content {{ padding: 40px 30px; background-color: #ffffff; }}
+                .invitation-box {{ 
+                    background: #f8f9fa; 
+                    border: 2px solid #e9ecef; 
+                    border-radius: 8px; 
+                    padding: 20px; 
+                    margin: 20px 0; 
+                    text-align: center;
+                }}
+                .workspace-name {{ 
+                    font-size: 20px; 
+                    font-weight: bold; 
+                    color: #ff6b35; 
+                    margin: 10px 0;
+                }}
+                .button {{ 
+                    display: inline-block; 
+                    padding: 14px 32px; 
+                    background: #ff6b35;
+                    color: white; 
+                    text-decoration: none; 
+                    border-radius: 6px; 
+                    margin: 30px 0; 
+                    font-weight: 600;
+                    font-size: 16px;
+                    transition: background 0.3s ease;
+                }}
+                .button:hover {{ background: #ff8c42; }}
+                .important {{ 
+                    background: #fff3cd; 
+                    border: 1px solid #ffeaa7; 
+                    border-radius: 4px; 
+                    padding: 15px; 
+                    margin: 20px 0; 
+                }}
+                .footer {{ 
+                    padding: 30px; 
+                    text-align: center; 
+                    color: #666; 
+                    font-size: 14px; 
+                    background-color: #f9f9f9;
+                    border-top: 1px solid #e9ecef;
+                }}
+                .link {{ color: #ff6b35; text-decoration: none; }}
+                .link:hover {{ text-decoration: underline; }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h1 style="color: white; margin: 0; font-size: 28px;">🏢 Workspace-Einladung</h1>
+                </div>
+                <div class="content">
+                    <h2 style="color: #333; margin-top: 0;">Hallo! 👋</h2>
+                    
+                    <p><strong>{inviter_name}</strong> hat dich eingeladen, dem Workspace beizutreten:</p>
+                    
+                    <div class="invitation-box">
+                        <div class="workspace-name">"{workspace_name}"</div>
+                        <p style="margin: 5px 0; color: #666;">auf Hotcalls</p>
+                    </div>
+                    
+                    <p>Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.</p>
+                    
+                <p style="text-align: center;">
+                    <a href="{accept_url}" class="button">🎯 Einladung jetzt annehmen</a>
+                </p>
+                
+                <p style="text-align: center; margin: 20px 0; font-size: 14px; color: #666;">
+                    ↑ Klicke hier, um der Einladung direkt zu folgen
+                </p>
+                
+                <p>Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
+                <p><a href="{invitation_url}" class="link">{invitation_url}</a></p>
+                    
+                    <div class="important">
+                        <p><strong>Wichtig:</strong> Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.</p>
+                    </div>
+                    
+                    <p>Falls du diese Einladung nicht erwartet hast, kannst du diese E-Mail einfach ignorieren.</p>
+                    
+                    <p>Wir freuen uns darauf, dich im Team zu haben!</p>
+                    
+                    <p style="margin-top: 30px;">Beste Grüße,<br>
+                    <strong>Dein Hotcalls Team</strong></p>
+                </div>
+                <div class="footer">
+                    <p>Diese Einladung wurde von <strong>{inviter_name}</strong> über Hotcalls versendet</p>
+                    <p>Bei Fragen: <a href="mailto:support@hotcalls.com" class="link">support@hotcalls.com</a></p>
+                    <p style="margin-top: 20px; font-size: 12px; color: #999;">© 2024 Hotcalls. Alle Rechte vorbehalten.</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Plain text version
+        text_content = f"""Workspace-Einladung - Hotcalls
+
+Hallo!
+
+{inviter_name} hat dich eingeladen, dem Workspace "{workspace_name}" auf Hotcalls beizutreten.
+
+Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.
+
+🎯 EINLADUNG ANNEHMEN:
+{accept_url}
+
+Oder besuche die Einladungsseite:
+{invitation_url}
+
+Wichtig: Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.
+
+Falls du diese Einladung nicht erwartet hast, kannst du diese E-Mail einfach ignorieren.
+
+Wir freuen uns darauf, dich im Team zu haben!
+
+Bei Fragen: support@hotcalls.com
+
+Beste Grüße,
+Dein Hotcalls Team"""
+        
+        # Send email
+        success = send_mail(
+            subject=subject,
+            message=text_content,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@hotcalls.com'),
+            recipient_list=[invitation.email],
+            html_message=html_content,
+            fail_silently=False,
+        )
+        
+        if success:
+            logger.info(f"Workspace invitation email sent successfully to {invitation.email} for workspace {workspace_name}")
+            return True
+        else:
+            logger.error(f"Failed to send workspace invitation email to {invitation.email}")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error sending workspace invitation email to {invitation.email}: {str(e)}")
+        return False
+
+
 class CORSMediaView(View):
     """Custom view for serving media files with CORS headers"""
     

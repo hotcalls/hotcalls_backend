@@ -4,7 +4,8 @@ from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
     GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
-    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration
+    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
+    WorkspaceInvitation
 )
 from django.utils import timezone
 
@@ -464,3 +465,43 @@ class MetaIntegrationAdmin(admin.ModelAdmin):
             'classes': ('collapse',)
         }),
     )
+
+
+@admin.register(WorkspaceInvitation)
+class WorkspaceInvitationAdmin(admin.ModelAdmin):
+    """Admin for WorkspaceInvitation model"""
+    list_display = ('email', 'workspace', 'invited_by', 'status', 'created_at', 'expires_at', 'is_valid_display')
+    list_filter = ('status', 'workspace', 'created_at', 'expires_at')
+    search_fields = ('email', 'workspace__workspace_name', 'invited_by__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('token', 'created_at', 'accepted_at')
+    
+    fieldsets = (
+        ('Invitation Info', {
+            'fields': ('workspace', 'email', 'invited_by', 'status')
+        }),
+        ('Security', {
+            'fields': ('token',),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'expires_at', 'accepted_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def is_valid_display(self, obj):
+        """Display if invitation is valid with colored indicator"""
+        if obj.is_valid():
+            return '✅ Valid'
+        else:
+            return '❌ Invalid/Expired'
+    is_valid_display.short_description = 'Valid'
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make certain fields readonly based on object state"""
+        readonly = list(self.readonly_fields)
+        if obj and obj.status != 'pending':
+            # Don't allow editing workspace/email after acceptance
+            readonly.extend(['workspace', 'email', 'invited_by'])
+        return readonly

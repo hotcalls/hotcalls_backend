@@ -11,15 +11,27 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiParameter, OpenApiResponse, OpenApiExample
 from drf_spectacular.types import OpenApiTypes
 
-from core.models import Workspace, User
+from core.models import Workspace, User, WorkspaceInvitation
+from core.utils import send_workspace_invitation_email
 from .serializers import (
     WorkspaceSerializer, 
     WorkspaceCreateSerializer,
     WorkspaceUserSerializer,
     WorkspaceUserAssignmentSerializer,
-    WorkspaceStatsSerializer
+    WorkspaceStatsSerializer,
+    WorkspaceInvitationSerializer,
+    WorkspaceInviteUserSerializer,
+    WorkspaceInviteBulkSerializer,
+    InvitationDetailSerializer
 )
-from .permissions import WorkspacePermission, WorkspaceUserManagementPermission, IsWorkspaceMemberOrStaff
+from .permissions import (
+    WorkspacePermission, 
+    WorkspaceUserManagementPermission, 
+    IsWorkspaceMemberOrStaff,
+    WorkspaceInvitationPermission,
+    InvitationAcceptancePermission,
+    PublicInvitationViewPermission
+)
 from .filters import WorkspaceFilter
 
 
@@ -601,4 +613,500 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             workspaces = Workspace.objects.filter(users=user)
         
         serializer = WorkspaceSerializer(workspaces, many=True)
-        return Response(serializer.data) 
+        return Response(serializer.data)
+    
+    @extend_schema(
+        summary="📧 Invite user to workspace",
+        description="""
+        Send an invitation email to a user to join this workspace.
+        
+        **🔐 Permission Requirements**:
+        - **✅ Workspace Members**: Can invite others to their workspaces
+        - **✅ Staff Members**: Can invite users to any workspace
+        - **✅ Superusers**: Can invite users to any workspace
+        
+        **📝 Invitation Process**:
+        1. Validates email address and checks for existing memberships
+        2. Creates secure invitation token (7-day expiry)
+        3. Sends professional invitation email
+        4. Returns invitation details for tracking
+        
+        **✉️ Email Content**:
+        - Beautiful HTML template with workspace details
+        - Secure invitation link with token
+        - Clear instructions for accepting
+        - 7-day expiration notice
+        
+        **🔄 Existing Users vs New Users**:
+        - **Existing Users**: Can login and accept immediately
+        - **New Users**: Must register first, then accept invitation
+        """,
+        request=WorkspaceInviteUserSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=WorkspaceInvitationSerializer,
+                description="✅ Invitation sent successfully",
+                examples=[
+                    OpenApiExample(
+                        'Invitation Sent',
+                        summary='User invitation created and email sent',
+                        value={
+                            'id': 'invitation-uuid',
+                            'email': 'colleague@example.com',
+                            'status': 'pending',
+                            'workspace_name': 'Sales Team',
+                            'invited_by_name': 'John Doe',
+                            'invited_by_email': 'john@company.com',
+                            'created_at': '2024-01-15T10:30:00Z',
+                            'expires_at': '2024-01-22T10:30:00Z',
+                            'is_valid': True
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="❌ Validation error - User already member or pending invitation exists",
+                examples=[
+                    OpenApiExample(
+                        'Already Member',
+                        summary='User is already a workspace member',
+                        value={'email': ['This user is already a member of the workspace']}
+                    ),
+                    OpenApiExample(
+                        'Pending Invitation',
+                        summary='Invitation already pending',
+                        value={'email': ['A pending invitation already exists for this email address']}
+                    )
+                ]
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied - Not a workspace member"),
+            404: OpenApiResponse(description="🚫 Workspace not found")
+        },
+        tags=["Workspace Invitations"]
+    )
+    @action(detail=True, methods=['post'], permission_classes=[WorkspaceInvitationPermission])
+    def invite(self, request, pk=None):
+        """Send invitation to join workspace"""
+        workspace = self.get_object()
+        serializer = WorkspaceInviteUserSerializer(
+            data=request.data,
+            context={'workspace': workspace}
+        )
+        
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            
+            # Cancel any existing expired invitations for this email/workspace
+            WorkspaceInvitation.objects.filter(
+                workspace=workspace,
+                email=email,
+                status='pending'
+            ).update(status='cancelled')
+            
+            # Create new invitation
+            invitation = WorkspaceInvitation.objects.create(
+                workspace=workspace,
+                email=email,
+                invited_by=request.user
+            )
+            
+            # Send invitation email
+            email_sent = send_workspace_invitation_email(invitation, request)
+            
+            if email_sent:
+                # Return invitation details
+                invitation_serializer = WorkspaceInvitationSerializer(invitation)
+                return Response(invitation_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                # Email failed - cancel invitation
+                invitation.cancel()
+                return Response(
+                    {'error': 'Failed to send invitation email'}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="📧📧 Bulk invite users to workspace",
+        description="""
+        Send invitations to multiple users at once.
+        
+        **🔐 Permission Requirements**: Workspace members and staff only
+        
+        **📊 Bulk Processing**:
+        - Validates all email addresses before sending
+        - Skips users already in workspace or with pending invitations
+        - Sends individual invitation emails
+        - Returns detailed success/failure report
+        
+        **⚡ Performance**:
+        - Maximum 50 invitations per request
+        - Efficient validation and processing
+        - Detailed error reporting per email
+        """,
+        request=WorkspaceInviteBulkSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Bulk invitations processed",
+                examples=[
+                    OpenApiExample(
+                        'Bulk Invitations',
+                        summary='Mixed success/failure results',
+                        value={
+                            'successful_invitations': [
+                                {'email': 'user1@example.com', 'invitation_id': 'uuid1'},
+                                {'email': 'user2@example.com', 'invitation_id': 'uuid2'}
+                            ],
+                            'failed_invitations': [
+                                {'email': 'existing@example.com', 'error': 'Already a member'}
+                            ],
+                            'summary': {
+                                'total_processed': 3,
+                                'successful': 2,
+                                'failed': 1
+                            }
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(description="❌ Validation error"),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied")
+        },
+        tags=["Workspace Invitations"]
+    )
+    @action(detail=True, methods=['post'], permission_classes=[WorkspaceInvitationPermission])
+    def bulk_invite(self, request, pk=None):
+        """Send bulk invitations to join workspace"""
+        workspace = self.get_object()
+        serializer = WorkspaceInviteBulkSerializer(
+            data=request.data,
+            context={'workspace': workspace}
+        )
+        
+        if serializer.is_valid():
+            emails = serializer.validated_data['emails']
+            successful_invitations = []
+            failed_invitations = []
+            
+            for email in emails:
+                try:
+                    # Cancel any existing expired invitations
+                    WorkspaceInvitation.objects.filter(
+                        workspace=workspace,
+                        email=email,
+                        status='pending'
+                    ).update(status='cancelled')
+                    
+                    # Create new invitation
+                    invitation = WorkspaceInvitation.objects.create(
+                        workspace=workspace,
+                        email=email,
+                        invited_by=request.user
+                    )
+                    
+                    # Send invitation email
+                    email_sent = send_workspace_invitation_email(invitation, request)
+                    
+                    if email_sent:
+                        successful_invitations.append({
+                            'email': email,
+                            'invitation_id': str(invitation.id)
+                        })
+                    else:
+                        invitation.cancel()
+                        failed_invitations.append({
+                            'email': email,
+                            'error': 'Failed to send email'
+                        })
+                        
+                except Exception as e:
+                    failed_invitations.append({
+                        'email': email,
+                        'error': str(e)
+                    })
+            
+            return Response({
+                'successful_invitations': successful_invitations,
+                'failed_invitations': failed_invitations,
+                'summary': {
+                    'total_processed': len(emails),
+                    'successful': len(successful_invitations),
+                    'failed': len(failed_invitations)
+                }
+            })
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @extend_schema(
+        summary="📋 List workspace invitations",
+        description="""
+        Retrieve all invitations for this workspace.
+        
+        **🔐 Permission Requirements**: Workspace members and staff only
+        
+        **📊 Invitation Information**:
+        - Invitation status (pending, accepted, expired, cancelled)
+        - Invitee email and expiration date
+        - Inviter information
+        - Invitation validity status
+        
+        **🎯 Use Cases**:
+        - Monitor pending invitations
+        - Track invitation history
+        - Manage workspace access
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=WorkspaceInvitationSerializer(many=True),
+                description="✅ Workspace invitations retrieved successfully"
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required"),
+            403: OpenApiResponse(description="🚫 Permission denied"),
+            404: OpenApiResponse(description="🚫 Workspace not found")
+        },
+        tags=["Workspace Invitations"]
+    )
+    @action(detail=True, methods=['get'], permission_classes=[WorkspaceInvitationPermission])
+    def invitations(self, request, pk=None):
+        """List all invitations for this workspace"""
+        workspace = self.get_object()
+        invitations = workspace.invitations.all().order_by('-created_at')
+        serializer = WorkspaceInvitationSerializer(invitations, many=True)
+        return Response(serializer.data)
+
+
+class InvitationDetailView(viewsets.GenericViewSet):
+    """
+    🎯 **Public Invitation Management**
+    
+    Handles public invitation operations:
+    - **View invitation details** (public, no auth required)
+    - **Accept invitations** (authenticated users only)
+    """
+    queryset = WorkspaceInvitation.objects.all()
+    lookup_field = 'token'
+    lookup_url_kwarg = 'token'
+    
+    def get_permissions(self):
+        """Different permissions for different actions"""
+        if self.action == 'retrieve':
+            return [PublicInvitationViewPermission()]
+        elif self.action == 'accept':
+            return [InvitationAcceptancePermission()]
+        return [PublicInvitationViewPermission()]
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action"""
+        if self.action == 'retrieve':
+            return InvitationDetailSerializer
+        return InvitationDetailSerializer
+    
+    @extend_schema(
+        summary="🔍 Get invitation details",
+        description="""
+        **🌐 PUBLIC ENDPOINT** - View invitation details using the invitation token.
+        
+        **🔓 Access**: No authentication required (public endpoint)
+        
+        **📋 Information Provided**:
+        - Workspace name and details
+        - Inviter information
+        - Invitation expiration status
+        - Email address for verification
+        
+        **🎯 Use Cases**:
+        - Display invitation page before login
+        - Verify invitation validity
+        - Show workspace information to potential members
+        
+        **🛡️ Security Notes**:
+        - Only basic workspace information is exposed
+        - No sensitive data in public endpoint
+        - Token-based access only
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=InvitationDetailSerializer,
+                description="✅ Invitation details retrieved successfully",
+                examples=[
+                    OpenApiExample(
+                        'Valid Invitation',
+                        summary='Active invitation details',
+                        value={
+                            'email': 'colleague@example.com',
+                            'workspace_name': 'Sales Team',
+                            'invited_by_name': 'John Doe',
+                            'created_at': '2024-01-15T10:30:00Z',
+                            'expires_at': '2024-01-22T10:30:00Z',
+                            'is_valid': True
+                        }
+                    ),
+                    OpenApiExample(
+                        'Expired Invitation',
+                        summary='Expired invitation',
+                        value={
+                            'email': 'colleague@example.com',
+                            'workspace_name': 'Sales Team',
+                            'invited_by_name': 'John Doe',
+                            'created_at': '2024-01-08T10:30:00Z',
+                            'expires_at': '2024-01-15T10:30:00Z',
+                            'is_valid': False
+                        }
+                    )
+                ]
+            ),
+            404: OpenApiResponse(
+                description="🚫 Invitation not found or invalid token",
+                examples=[
+                    OpenApiExample(
+                        'Invalid Token',
+                        summary='Invitation token not found',
+                        value={'detail': 'Not found.'}
+                    )
+                ]
+            )
+        },
+        tags=["Public Invitations"]
+    )
+    def retrieve(self, request, token=None):
+        """Get invitation details (public endpoint)"""
+        try:
+            invitation = WorkspaceInvitation.objects.get(token=token)
+            serializer = InvitationDetailSerializer(invitation)
+            return Response(serializer.data)
+        except WorkspaceInvitation.DoesNotExist:
+            return Response(
+                {'error': 'Invitation not found or invalid token'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @extend_schema(
+        summary="✅ Accept workspace invitation",
+        description="""
+        Accept a workspace invitation and join the workspace.
+        
+        **🔐 Authentication Required**: User must be logged in to accept invitations
+        
+        **✉️ Email Verification**: User's email must match the invitation email
+        
+        **🔄 Acceptance Process**:
+        1. Validates invitation token and expiration
+        2. Verifies user's email matches invitation email
+        3. Adds user to workspace
+        4. Updates invitation status to 'accepted'
+        5. Returns success confirmation
+        
+        **⚠️ Security Validations**:
+        - User must be authenticated
+        - Email addresses must match exactly
+        - Invitation must be pending and not expired
+        - Token must be valid and secure
+        
+        **🎯 Different User Scenarios**:
+        - **Existing Users**: Login → Accept → Immediate access
+        - **New Users**: Register → Verify email → Accept → Access
+        """,
+        responses={
+            200: OpenApiResponse(
+                description="✅ Invitation accepted successfully - User added to workspace",
+                examples=[
+                    OpenApiExample(
+                        'Successful Acceptance',
+                        summary='User successfully joined workspace',
+                        value={
+                            'message': 'Successfully joined workspace',
+                            'workspace_name': 'Sales Team',
+                            'workspace_id': 'workspace-uuid',
+                            'user_email': 'colleague@example.com'
+                        }
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="❌ Invalid invitation or validation error",
+                examples=[
+                    OpenApiExample(
+                        'Expired Invitation',
+                        summary='Invitation has expired',
+                        value={'error': 'Invitation is not valid or has expired'}
+                    )
+                ]
+            ),
+            401: OpenApiResponse(
+                description="🚫 Authentication required - User must login to accept invitations",
+                examples=[
+                    OpenApiExample(
+                        'Not Authenticated',
+                        summary='User needs to login',
+                        value={'detail': 'Authentication credentials were not provided.'}
+                    )
+                ]
+            ),
+            403: OpenApiResponse(
+                description="🚫 Email mismatch - Wrong user account",
+                examples=[
+                    OpenApiExample(
+                        'Email Mismatch',
+                        summary='User email doesn\'t match invitation',
+                        value={
+                            'error': 'This invitation was sent to a different email address',
+                            'invited_email': 'colleague@example.com',
+                            'your_email': 'different@example.com'
+                        }
+                    )
+                ]
+            ),
+            404: OpenApiResponse(description="🚫 Invitation not found or invalid token")
+        },
+        tags=["Public Invitations"]
+    )
+    @action(detail=False, methods=['post'], url_path='(?P<token>[^/.]+)/accept')
+    def accept(self, request, token=None):
+        """Accept workspace invitation (authenticated users only)"""
+        try:
+            invitation = WorkspaceInvitation.objects.get(token=token)
+        except WorkspaceInvitation.DoesNotExist:
+            return Response(
+                {'error': 'Invalid or expired invitation'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if invitation is valid
+        if not invitation.is_valid():
+            return Response(
+                {'error': 'Invitation is not valid or has expired'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify email matches
+        if request.user.email != invitation.email:
+            return Response({
+                'error': 'This invitation was sent to a different email address',
+                'invited_email': invitation.email,
+                'your_email': request.user.email
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            # Accept the invitation
+            invitation.accept(request.user)
+            
+            return Response({
+                'message': 'Successfully joined workspace',
+                'workspace_name': invitation.workspace.workspace_name,
+                'workspace_id': str(invitation.workspace.id),
+                'user_email': request.user.email
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'error': 'An error occurred while accepting the invitation'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            ) 

@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workspace Invitation - HotCalls</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            padding: 60px 40px;
+            text-align: center;
+            max-width: 600px;
+            width: 100%;
+        }
+        
+        .invitation-icon {
+            width: 80px;
+            height: 80px;
+            background: #ff6b35;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 30px;
+            animation: pulse 2s infinite;
+        }
+        
+        .invitation-icon::after {
+            content: "🏢";
+            font-size: 40px;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        h1 {
+            color: #1f2937;
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 16px;
+        }
+        
+        .workspace-info {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 15px;
+            padding: 25px;
+            margin: 25px 0;
+            text-align: center;
+        }
+        
+        .workspace-name {
+            font-size: 24px;
+            font-weight: bold;
+            color: #ff6b35;
+            margin-bottom: 10px;
+        }
+        
+        .invited-by {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 15px;
+        }
+        
+        .invitation-email {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 12px 20px;
+            border-radius: 10px;
+            font-family: monospace;
+            color: #856404;
+            margin: 20px 0;
+            font-size: 16px;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+            color: white;
+            padding: 16px 32px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            display: inline-block;
+            transition: transform 0.2s;
+            cursor: pointer;
+            margin: 10px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
+        }
+        
+        .button.secondary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        
+        .button.secondary:hover {
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+        }
+        
+        .button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .button:disabled:hover {
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .status-message {
+            padding: 16px 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-size: 16px;
+        }
+        
+        .status-message.expired {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #991b1b;
+        }
+        
+        .status-message.valid {
+            background: #f0f9ff;
+            border: 1px solid #bae6fd;
+            color: #0c4a6e;
+        }
+        
+        .info-box {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 25px;
+            border-left: 4px solid #ff6b35;
+            text-align: left;
+        }
+        
+        .info-title {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .info-text {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .footer {
+            margin-top: 40px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 40px 20px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+            
+            .workspace-name {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="invitation-icon"></div>
+        <div class="logo">🔥 HotCalls</div>
+        <h1>Workspace-Einladung</h1>
+        
+        <div class="workspace-info">
+            <div class="workspace-name">"{{ invitation.workspace_name }}"</div>
+            <div class="invited-by">
+                Eingeladen von <strong>{{ invitation.invited_by_name }}</strong>
+            </div>
+        </div>
+        
+        <div class="invitation-email">{{ invitation.email }}</div>
+        
+        {% if invitation.is_valid %}
+            <div class="status-message valid">
+                ✅ Diese Einladung ist gültig und kann angenommen werden
+            </div>
+            
+            {% if user.is_authenticated %}
+                {% if user.email == invitation.email %}
+                    <form method="POST" action="/invitations/{{ invitation.token }}/accept/">
+                        {% csrf_token %}
+                        <button type="submit" class="button">Einladung annehmen</button>
+                    </form>
+                {% else %}
+                    <div class="status-message expired">
+                        ❌ Diese Einladung wurde an {{ invitation.email }} gesendet, aber Sie sind als {{ user.email }} angemeldet.
+                    </div>
+                    <a href="/auth/logout/" class="button secondary">Mit anderem Account anmelden</a>
+                {% endif %}
+            {% else %}
+                <a href="/auth/login/?next=/invitations/{{ invitation.token }}/" class="button">Anmelden um anzunehmen</a>
+                <a href="/auth/signup/?next=/invitations/{{ invitation.token }}/" class="button secondary">Konto erstellen</a>
+            {% endif %}
+        {% else %}
+            <div class="status-message expired">
+                ❌ Diese Einladung ist abgelaufen oder ungültig
+            </div>
+            <a href="/" class="button secondary">Zur Startseite</a>
+        {% endif %}
+        
+        <div class="info-box">
+            <div class="info-title">🏢 Über Workspaces</div>
+            <div class="info-text">
+                Workspaces ermöglichen es Teams, gemeinsam an Projekten zu arbeiten und Ressourcen zu teilen. 
+                Als Workspace-Mitglied erhalten Sie Zugang zu gemeinsamen Agenten, Leads und Analysen.
+            </div>
+        </div>
+        
+        <div class="footer">
+            Erstellt am {{ invitation.created_at|date:"d.m.Y" }} • 
+            Gültig bis {{ invitation.expires_at|date:"d.m.Y H:i" }}
+        </div>
+    </div>
+    
+    <!-- No JavaScript needed - form submits directly to template view -->
+</body>
+</html>

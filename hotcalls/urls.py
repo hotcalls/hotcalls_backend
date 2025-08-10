@@ -26,6 +26,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.decorators import permission_classes
 from core.health import health_check
 from core.utils import CORSMediaView
+from core.views import invitation_detail, accept_invitation
 
 # Create public versions of documentation views
 class PublicSpectacularAPIView(SpectacularAPIView):
@@ -107,6 +108,10 @@ urlpatterns = [
     
     # Meta Webhooks (for Meta to call)
     path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
+    
+    # Workspace Invitation Templates (Public + Authenticated)
+    path('invitations/<str:token>/', invitation_detail, name='invitation_detail'),
+    path('invitations/<str:token>/accept/', accept_invitation, name='accept_invitation'),
 ]
 
 # Serve media files in development with CORS support
