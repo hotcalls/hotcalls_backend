@@ -4,7 +4,7 @@ from .views import LeadViewSet
 
 # Create router and register viewsets
 router = DefaultRouter()
-router.register(r'leads', LeadViewSet, basename='lead')
+router.register(r'', LeadViewSet, basename='lead')
 
 urlpatterns = [
     path('', include(router.urls)),
