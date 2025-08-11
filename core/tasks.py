@@ -189,7 +189,13 @@ def trigger_call(self, call_task_id):
         workspace = call_task.workspace
         lead = call_task.lead
 
-        sip_trunk_id = getattr(workspace, "sip_trunk_id", None) or os.getenv("TRUNK_ID")
+        # Get SIP trunk ID from agent's phone number (dynamic routing)
+        sip_trunk_id = None
+        if agent.phone_number and agent.phone_number.sip_trunk:
+            sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
+        if not sip_trunk_id:
+            sip_trunk_id = os.getenv("TRUNK_ID")  # Fallback
+            
         agent_config = {
             "name": agent.name,
             "voice_external_id": agent.voice.voice_external_id
@@ -202,6 +208,7 @@ def trigger_call(self, call_task_id):
             "character": agent.character,
             "config_id": agent.config_id,
             "workspace_name": workspace.workspace_name,
+            "sip_trunk_id": sip_trunk_id,  # Pass dynamic trunk ID
         }
         lead_data = {
             "id": str(lead.id) if lead else str(call_task.id),

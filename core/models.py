@@ -953,11 +953,11 @@ class Agent(models.Model):
     )
     phone_number = models.ForeignKey(
         'PhoneNumber',
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
+        related_name='agents',
         null=True,
         blank=True,
-        related_name='agents',
-        help_text="Phone number assigned to this agent"
+        help_text="Phone number assigned to this agent (agent accesses SIP trunk via agent.phone_number.sip_trunk)"
     )
     calendar_configuration = models.ForeignKey(
         'CalendarConfiguration',
@@ -974,16 +974,81 @@ class Agent(models.Model):
         return f"{self.name} ({self.workspace.workspace_name})"
 
 
+class SIPTrunk(models.Model):
+    """SIP trunk configurations for outbound calling"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Provider credentials
+    provider_name = models.CharField(
+        max_length=100,
+        help_text="SIP provider name (e.g., 'Twilio', 'Sipgate')"
+    )
+    sip_username = models.CharField(
+        max_length=255,
+        help_text="SIP authentication username"
+    )
+    sip_password = models.CharField(
+        max_length=255,
+        help_text="SIP authentication password (encrypted at rest)"
+    )
+    sip_host = models.CharField(
+        max_length=255,
+        help_text="SIP server domain/IP address"
+    )
+    sip_port = models.IntegerField(
+        default=5060,
+        help_text="SIP server port"
+    )
+    
+    # External integration IDs
+    jambonz_carrier_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Jambonz carrier ID for this trunk"
+    )
+    livekit_trunk_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="LiveKit trunk ID for this provider"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this SIP trunk is active"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    def __str__(self):
+        return f"{self.provider_name} - {self.sip_host}"
+
+
 class PhoneNumber(models.Model):
     """Phone numbers that can be shared across multiple agents"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     phonenumber = models.CharField(
         max_length=17,
         unique=True,
-        help_text="Phone number"
+        help_text="Phone number in E.164 format"
+    )
+    
+    # TRUNK RELATIONSHIP - Each phone number has ONE SIP trunk
+    sip_trunk = models.OneToOneField(
+        SIPTrunk,
+        on_delete=models.CASCADE,
+        related_name='phone_number',
+        null=True,
+        blank=True,
+        help_text="SIP trunk associated with this phone number"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this phone number is active"
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    is_active = models.BooleanField(default=True)
     
     def __str__(self):
         return self.phonenumber
