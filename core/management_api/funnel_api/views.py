@@ -41,14 +41,16 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         user_workspaces = user.mapping_user_workspaces.all()
         
         # Optimize queries with select_related and prefetch_related
+        # Note: 'agent' is a reverse OneToOne relation, so we use prefetch_related
         queryset = LeadFunnel.objects.filter(
             workspace__in=user_workspaces
         ).select_related(
             'workspace',
             'meta_lead_form',
-            'meta_lead_form__meta_integration',
-            'agent',
-            'agent__voice'
+            'meta_lead_form__meta_integration'
+        ).prefetch_related(
+            'agent',  # Reverse OneToOne relation
+            'agent__voice'  # Nested relation through agent
         ).annotate(
             lead_count=Count('leads')
         ).order_by('-created_at')
