@@ -17,6 +17,12 @@ resource "helm_release" "nginx_ingress" {
     value = "/healthz"
   }
   
+  # Configure static IP for load balancer
+  set {
+    name  = "controller.service.loadBalancerIP"
+    value = var.static_ip_address
+  }
+  
   # Configure nginx to handle large file uploads (1GB max)
   set {
     name  = "controller.config.proxy-body-size"

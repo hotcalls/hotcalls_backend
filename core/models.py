@@ -967,6 +967,17 @@ class Agent(models.Model):
         related_name='mapping_config_agents',
         help_text="Calendar configuration for this agent"
     )
+    
+    # NEW: Agent claims ownership of a lead funnel
+    lead_funnel = models.OneToOneField(
+        'LeadFunnel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='agent',
+        help_text="Lead funnel this agent handles"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1084,6 +1095,16 @@ class Lead(models.Model):
     variables = models.JSONField(
         default=dict,
         help_text="Concrete lead variables from integration"
+    )
+    
+    # NEW: Lead knows which funnel it came from
+    lead_funnel = models.ForeignKey(
+        'LeadFunnel',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='leads',
+        help_text="Source funnel this lead came from"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1272,16 +1293,6 @@ class GoogleCalendar(models.Model):
         help_text="Access level for this calendar"
     )
     
-    # Legacy fields - kept for compatibility but tokens come from connection
-    refresh_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.refresh_token")
-    access_token = models.CharField(max_length=255, editable=False, blank=True, default='', help_text="DEPRECATED: Use connection.access_token")
-    token_expires_at = models.DateTimeField(null=True, blank=True, help_text="DEPRECATED: Use connection.token_expires_at")
-    scopes = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="DEPRECATED: Use connection.scopes"
-    )
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1433,24 +1444,14 @@ class MetaLeadForm(models.Model):
         default='',
         help_text="Meta Lead Form Name/Title"
     )
-    is_active = models.BooleanField(
-        default=False,
-        help_text="Whether this lead form should process incoming leads"
-    )
+    # REMOVED: is_active database field - now computed property
     meta_lead_id = models.CharField(
         max_length=255,
         null=True,
         blank=True,
         help_text="Meta Lead ID (for tracking specific leads)"
     )
-    lead = models.ForeignKey(
-        'Lead',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='meta_lead_forms',
-        help_text="Associated lead record"
-    )
+    # REMOVED: The broken lead field that only stored the last lead
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -1461,8 +1462,163 @@ class MetaLeadForm(models.Model):
             models.Index(fields=['meta_lead_id']),
         ]
     
+    @property
+    def is_active(self) -> bool:
+        """
+        Form is active if it has a funnel with an active agent assigned.
+        This is computed dynamically based on agent assignment.
+        """
+        if not hasattr(self, 'lead_funnel'):
+            return False
+        
+        lead_funnel = self.lead_funnel
+        if not lead_funnel.is_active:
+            return False
+            
+        if not hasattr(lead_funnel, 'agent'):
+            return False
+            
+        agent = lead_funnel.agent
+        return agent.status == 'active'
+    
+    @property
+    def workspace(self):
+        """Get the workspace from the integration"""
+        return self.meta_integration.workspace if self.meta_integration else None
+    
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"
+
+
+class LeadFunnel(models.Model):
+    """
+    Bridge between Agent and Lead Sources
+    
+    This model acts as the central routing mechanism for leads.
+    Each funnel is connected to a lead source (currently MetaLeadForm)
+    and can be claimed by an Agent.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=255,
+        help_text="Display name for this lead funnel"
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='lead_funnels',
+        help_text="Workspace this funnel belongs to"
+    )
+    
+    # Connection to Meta Lead Form (will be extended for other sources later)
+    meta_lead_form = models.OneToOneField(
+        'MetaLeadForm',
+        on_delete=models.CASCADE,
+        related_name='lead_funnel',
+        null=True,
+        blank=True,
+        help_text="Meta lead form connected to this funnel"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Whether this funnel should process incoming leads"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        indexes = [
+            models.Index(fields=['workspace', 'is_active']),
+            models.Index(fields=['workspace']),
+            models.Index(fields=['is_active']),
+        ]
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        agent_name = self.agent.name if hasattr(self, 'agent') else "Unassigned"
+        return f"{self.name} (Agent: {agent_name})"
+    
+    @property
+    def has_agent(self):
+        """Check if this funnel has an assigned agent"""
+        return hasattr(self, 'agent')
+    
+    @property
+    def lead_count(self):
+        """Get count of leads from this funnel"""
+        return self.leads.count()
+
+
+class LeadProcessingStats(models.Model):
+    """
+    Track lead processing statistics for monitoring and analytics.
+    Helps track how many leads are processed vs ignored.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='lead_processing_stats'
+    )
+    date = models.DateField(
+        auto_now_add=True,
+        help_text="Date of the statistics"
+    )
+    
+    # Counters
+    total_received = models.IntegerField(
+        default=0,
+        help_text="Total leads received from webhooks"
+    )
+    processed_with_agent = models.IntegerField(
+        default=0,
+        help_text="Leads processed with active agent"
+    )
+    ignored_no_funnel = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - no funnel configured"
+    )
+    ignored_no_agent = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - no agent assigned"
+    )
+    ignored_inactive_agent = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - agent inactive"
+    )
+    ignored_inactive_funnel = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - funnel inactive"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['workspace', 'date']
+        indexes = [
+            models.Index(fields=['workspace', 'date']),
+            models.Index(fields=['date']),
+        ]
+        ordering = ['-date']
+    
+    @property
+    def total_ignored(self):
+        """Total number of ignored leads"""
+        return (self.ignored_no_funnel + self.ignored_no_agent + 
+                self.ignored_inactive_agent + self.ignored_inactive_funnel)
+    
+    @property
+    def processing_rate(self):
+        """Percentage of leads processed"""
+        if self.total_received == 0:
+            return 0
+        return (self.processed_with_agent / self.total_received) * 100
+    
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.date} ({self.processing_rate:.1f}% processed)"
 
 
 class LiveKitAgent(models.Model):

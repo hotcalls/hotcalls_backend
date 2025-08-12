@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice
+from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice, LeadFunnel
 
 
 class PhoneNumberSerializer(serializers.ModelSerializer):
@@ -12,6 +12,34 @@ class PhoneNumberSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
+class AgentBasicSerializer(serializers.ModelSerializer):
+    """Basic serializer for Agent with minimal fields"""
+    workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
+    voice_external_id = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Agent
+        fields = [
+            'agent_id', 'name', 'status', 'workspace_name',
+            'voice_external_id', 'language'
+        ]
+        read_only_fields = ['agent_id']
+    
+    @extend_schema_field(serializers.CharField)
+    def get_voice_external_id(self, obj) -> str:
+        """Get the voice external ID, handling null voice safely"""
+        return obj.voice.voice_external_id if obj.voice else None
+
+
+class LeadFunnelBasicSerializer(serializers.ModelSerializer):
+    """Basic serializer for LeadFunnel to avoid circular imports"""
+    
+    class Meta:
+        model = LeadFunnel
+        fields = ['id', 'name', 'is_active']
+        read_only_fields = ['id']
+
+
 class AgentSerializer(serializers.ModelSerializer):
     """Serializer for Agent model"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
@@ -20,8 +48,11 @@ class AgentSerializer(serializers.ModelSerializer):
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
     # NEW: Voice-related fields
-    voice_provider = serializers.CharField(source='voice.provider', read_only=True)
-    voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
+    voice_provider = serializers.SerializerMethodField()
+    voice_external_id = serializers.SerializerMethodField()
+    
+    # NEW: Lead funnel field
+    lead_funnel = LeadFunnelBasicSerializer(read_only=True)
     
     class Meta:
         model = Agent
@@ -31,6 +62,8 @@ class AgentSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD (now FK to Voice)  
             'voice', 'voice_provider', 'voice_external_id',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'phone_number', 'phone_number_display',
@@ -42,6 +75,16 @@ class AgentSerializer(serializers.ModelSerializer):
     def get_phone_number_display(self, obj) -> str:
         """Get the phone number assigned to this agent"""
         return obj.phone_number.phonenumber if obj.phone_number else 'No phone assigned'
+    
+    @extend_schema_field(serializers.CharField)
+    def get_voice_provider(self, obj) -> str:
+        """Get the voice provider, handling null voice safely"""
+        return obj.voice.provider if obj.voice else None
+    
+    @extend_schema_field(serializers.CharField)
+    def get_voice_external_id(self, obj) -> str:
+        """Get the voice external ID, handling null voice safely"""
+        return obj.voice.voice_external_id if obj.voice else None
 
 
 class AgentCreateSerializer(serializers.ModelSerializer):
@@ -125,6 +168,8 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'calendar_configuration'
@@ -204,8 +249,11 @@ class AgentConfigSerializer(serializers.ModelSerializer):
     calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
     
     # NEW: Voice-related fields
-    voice_provider = serializers.CharField(source='voice.provider', read_only=True)
-    voice_external_id = serializers.CharField(source='voice.voice_external_id', read_only=True)
+    voice_provider = serializers.SerializerMethodField()
+    voice_external_id = serializers.SerializerMethodField()
+    
+    # NEW: Lead funnel field
+    lead_funnel = LeadFunnelBasicSerializer(read_only=True)
     
     class Meta:
         model = Agent
@@ -215,11 +263,23 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice', 'voice_provider', 'voice_external_id',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS  
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'config_id', 'phone_number', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at']
+    
+    @extend_schema_field(serializers.CharField)
+    def get_voice_provider(self, obj) -> str:
+        """Get the voice provider, handling null voice safely"""
+        return obj.voice.provider if obj.voice else None
+    
+    @extend_schema_field(serializers.CharField)
+    def get_voice_external_id(self, obj) -> str:
+        """Get the voice external ID, handling null voice safely"""
+        return obj.voice.voice_external_id if obj.voice else None
     
  

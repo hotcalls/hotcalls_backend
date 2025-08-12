@@ -1,35 +1,36 @@
-Django==4.2.14
-django-cors-headers==4.2.0
-djangorestframework==3.14.0
-djangorestframework-simplejwt==5.2.2
-drf-spectacular==0.26.4
-psycopg2-binary==2.9.7
-celery[redis]==5.3.4
-redis==5.0.0
-django-celery-beat==2.5.0
-django-filter==23.3
-python-dotenv==1.0.1
-gunicorn==21.2.0
-whitenoise==6.5.0
-Pillow==10.0.0
-boto3==1.34.90
-django-storages==1.14.3
-django-health-check==3.18.1
-faker==19.3.1
+Django>=5.0
+django-cors-headers
+djangorestframework
+djangorestframework-simplejwt
+drf-spectacular
+psycopg2-binary
+celery[redis]
+redis
+django-celery-beat
+django-filter
+python-dotenv
+gunicorn
+whitenoise
+Pillow
+boto3
+django-storages
+django-health-check
+faker
+django-redis
 
 # Google Cloud - Google Calendar API support
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
-google-api-python-client==2.125.0
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
 
 # LiveKit integration
-livekit==0.13.2
-livekit-api==0.6.5
+livekit
+livekit-api
 
 # Azure Communication Services
-azure-communication-phonenumbers==1.1.0
+azure-communication-phonenumbers
 
 # Stripe integration
-stripe==10.5.0
+stripe
 

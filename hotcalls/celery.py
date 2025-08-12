@@ -51,35 +51,53 @@ app.conf.beat_schedule = {
         }
     },
     
-    # ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====
+    # ===== OAUTH TOKEN MANAGEMENT - ALL AT MIDNIGHT =====
     
-    # Refresh Google Calendar tokens every 30 minutes (production-critical)
-    'refresh-google-calendar-tokens': {
-        'task': 'core.tasks.refresh_google_calendar_tokens',
-        'schedule': crontab(minute='*/30'),  # Every 30 minutes
-        'options': {
-            'queue': 'celery',
-            'expires': 1800,  # Task expires after 30 minutes
-        }
-    },
-    
-    # Daily health check for Google Calendar connections
-    'check-google-calendar-health': {
-        'task': 'core.tasks.check_google_calendar_health',
-        'schedule': crontab(hour=8, minute=0),  # Daily at 08:00
+    # Refresh Meta OAuth tokens 30 days before expiry
+    'refresh-meta-tokens-midnight': {
+        'task': 'core.tasks.refresh_meta_tokens',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
         'options': {
             'queue': 'celery'
         }
     },
     
-    # Weekly cleanup of expired Google Calendar tokens
-    'cleanup-expired-google-tokens': {
-        'task': 'core.tasks.cleanup_expired_google_tokens',
-        'schedule': crontab(hour=2, minute=0, day_of_week=1),  # Weekly Monday at 02:00
+    # Refresh Google OAuth tokens 30 days before expiry
+    'refresh-google-tokens-midnight': {
+        'task': 'core.tasks.refresh_google_calendar_connections',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
         'options': {
             'queue': 'celery'
         }
     },
+    
+    # Clean up invalid Meta integrations
+    'cleanup-invalid-meta-midnight': {
+        'task': 'core.tasks.cleanup_invalid_meta_integrations',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
+    # Clean up invalid Google connections
+    'cleanup-invalid-google-midnight': {
+        'task': 'core.tasks.cleanup_invalid_google_connections',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
+    # Sync Meta lead forms daily to keep them up to date
+    'daily-meta-sync': {
+        'task': 'core.tasks.daily_meta_sync',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
     # Clean up stuck call tasks every minute
     'cleanup-stuck-call-tasks': {
         'task': 'core.tasks.cleanup_stuck_call_tasks',

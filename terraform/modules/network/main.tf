@@ -7,6 +7,16 @@ resource "azurerm_virtual_network" "main" {
   tags               = var.tags
 }
 
+# Static Public IP for Ingress Controller
+resource "azurerm_public_ip" "ingress_static" {
+  name                = "${var.resource_prefix}-ingress-static-ip"
+  location           = var.location
+  resource_group_name = var.resource_group_name
+  allocation_method   = "Static"
+  sku                = "Standard"
+  tags               = var.tags
+}
+
 # AKS Subnet
 resource "azurerm_subnet" "aks" {
   name                 = "${var.resource_prefix}-aks-subnet"

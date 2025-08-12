@@ -18,7 +18,7 @@ from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
 from core.services.meta_integration import MetaIntegrationService
 from .serializers import (
     MetaIntegrationSerializer, MetaIntegrationCreateSerializer,
-    MetaLeadFormSerializer, MetaLeadFormCreateSerializer, MetaLeadFormBulkUpdateSerializer,
+    MetaLeadFormSerializer, MetaLeadFormCreateSerializer,
     MetaOAuthCallbackSerializer, MetaLeadWebhookSerializer,
     MetaWebhookVerificationSerializer, MetaLeadDataSerializer,
     MetaIntegrationStatsSerializer
@@ -236,6 +236,11 @@ class MetaWebhookView(viewsets.ViewSet):
             
             logger.info(f"Successfully created Meta integration {integration.id}")
             
+            # STEP 4: Trigger async sync task instead of synchronous sync
+            from core.tasks import sync_meta_lead_forms
+            sync_meta_lead_forms.delay(str(integration.id))
+            logger.info(f"Triggered async sync task for integration {integration.id}")
+            
             # Redirect user back to frontend after successful OAuth
             from django.shortcuts import redirect
             return redirect('https://app.hotcalls.de/dashboard/lead-sources?connected=true')
@@ -405,8 +410,7 @@ class MetaWebhookView(viewsets.ViewSet):
                 )
                 meta_lead_form, created = MetaLeadForm.objects.get_or_create(
                     meta_integration=meta_integration,
-                    meta_form_id=form_id,
-                    defaults={'is_active': False}  # Default to inactive
+                    meta_form_id=form_id
                 )
             except MetaIntegration.DoesNotExist:
                 logger.warning(f"No active Meta integration found for page {page_id}")
@@ -430,15 +434,24 @@ class MetaWebhookView(viewsets.ViewSet):
             lead = meta_service.process_lead_webhook(lead_data, meta_integration)
             
             if lead:
+                # Lead was created successfully (has active agent)
                 return {
                     'lead_id': str(lead.id),
                     'meta_leadgen_id': leadgen_id,
                     'form_id': form_id,
-                    'workspace': str(meta_integration.workspace.id)
+                    'workspace': str(meta_integration.workspace.id),
+                    'status': 'processed_with_agent'
                 }
             else:
-                logger.warning(f"Failed to process lead {leadgen_id}")
-                return None
+                # Lead was ignored (no active agent or funnel)
+                logger.info(f"Lead {leadgen_id} ignored - no active agent/funnel")
+                return {
+                    'lead_id': None,
+                    'meta_leadgen_id': leadgen_id,
+                    'form_id': form_id,
+                    'workspace': str(meta_integration.workspace.id),
+                    'status': 'ignored_no_agent'
+                }
             
         except Exception as e:
             logger.error(f"Error processing lead data: {str(e)}")
@@ -479,92 +492,8 @@ class MetaLeadFormViewSet(viewsets.ModelViewSet):
         """Return appropriate serializer based on action"""
         if self.action == 'create':
             return MetaLeadFormCreateSerializer
-        elif self.action == 'update_selections':
-            return MetaLeadFormBulkUpdateSerializer
         return MetaLeadFormSerializer
     
-    @extend_schema(
-        summary="💾 Update form selections",
-        description="""
-        Bulk update the active status of multiple Meta lead forms.
-        
-        **🔐 Permission Requirements**:
-        - User must be authenticated and email verified
-        - Only forms from user's workspaces can be updated
-        
-        **📝 Request Format**:
-        - Provide a list of form_id to is_active mappings
-        - Only specified forms will be updated
-        - Unspecified forms remain unchanged
-        
-        **🎯 Use Cases**:
-        - Enable/disable specific lead forms
-        - Bulk configuration of form processing
-        - Lead source management
-        """,
-        request=MetaLeadFormBulkUpdateSerializer,
-        responses={
-            200: OpenApiResponse(
-                description="✅ Form selections updated successfully"
-            ),
-            400: OpenApiResponse(description="❌ Validation error"),
-            403: OpenApiResponse(description="🚫 Permission denied"),
-        },
-        tags=["Meta Integration"]
-    )
-    @action(detail=False, methods=['post'])
-    def update_selections(self, request):
-        """Update the active status of multiple lead forms"""
-        serializer = MetaLeadFormBulkUpdateSerializer(data=request.data)
-        if serializer.is_valid():
-            form_selections = serializer.validated_data['form_selections']
-            updated_forms = []
-            errors = []
-            
-            # Get user's accessible workspaces
-            if request.user.is_staff or request.user.is_superuser:
-                user_workspaces = None  # Access to all
-            else:
-                user_workspaces = request.user.mapping_user_workspaces.all()
-            
-            # Process each form selection
-            for selection in form_selections:
-                for form_id, is_active in selection.items():
-                    try:
-                        # Build queryset with workspace filtering
-                        queryset = MetaLeadForm.objects.filter(meta_form_id=form_id)
-                        if user_workspaces is not None:
-                            queryset = queryset.filter(meta_integration__workspace__in=user_workspaces)
-                        
-                        # Update the form(s)
-                        updated_count = queryset.update(is_active=is_active)
-                        
-                        if updated_count > 0:
-                            updated_forms.append({
-                                'form_id': form_id,
-                                'is_active': is_active,
-                                'updated_count': updated_count
-                            })
-                            logger.info(f"Updated {updated_count} forms with ID {form_id} to is_active={is_active}")
-                        else:
-                            errors.append({
-                                'form_id': form_id,
-                                'error': 'Form not found or access denied'
-                            })
-                            
-                    except Exception as e:
-                        logger.error(f"Error updating form {form_id}: {str(e)}")
-                        errors.append({
-                            'form_id': form_id,
-                            'error': str(e)
-                        })
-            
-            return Response({
-                'message': f'Updated {len(updated_forms)} form selections',
-                'updated_forms': updated_forms,
-                'errors': errors,
-                'total_updated': len(updated_forms),
-                'total_errors': len(errors)
-            })
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST) 
+    # REMOVED: update_selections endpoint
+    # is_active is now a computed property based on agent assignment
+    # Forms become active automatically when an agent is assigned to their funnel 
