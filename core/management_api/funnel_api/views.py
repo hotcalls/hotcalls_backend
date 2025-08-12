@@ -1,20 +1,23 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
-from django.db.models import Q, Case, When, BooleanField
-from drf_spectacular.utils import extend_schema, OpenApiResponse
-import logging
+from django.db.models import Q, Case, When, BooleanField, Sum, Avg
+from django_filters.rest_framework import DjangoFilterBackend
+from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 from django.utils import timezone
+from datetime import timedelta
+import logging
 
-from core.models import LeadFunnel, Agent
+from core.models import LeadFunnel, Agent, MetaLeadForm, Workspace, LeadProcessingStats
 from .serializers import (
     LeadFunnelSerializer,
     LeadFunnelCreateSerializer,
     LeadFunnelUpdateSerializer,
     AssignAgentSerializer,
-    UnassignAgentSerializer
+    UnassignAgentSerializer,
+    LeadProcessingStatsSerializer
 )
 from .filters import LeadFunnelFilter
 
@@ -289,3 +292,96 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         }
         
         return Response(stats) 
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📊 List lead processing statistics",
+        description="""
+        Get lead processing statistics for your workspaces.
+        
+        Shows how many leads were processed vs ignored, with reasons.
+        
+        **🔐 Permission Requirements**:
+        - User must be authenticated and email verified
+        - Only shows stats for user's workspaces
+        
+        **📈 Metrics Included**:
+        - Total leads received
+        - Leads processed with agent
+        - Leads ignored (various reasons)
+        - Processing rate percentage
+        """,
+        responses={
+            200: OpenApiResponse(
+                response=LeadProcessingStatsSerializer(many=True),
+                description="✅ Successfully retrieved lead processing statistics"
+            )
+        }
+    )
+)
+class LeadProcessingStatsViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for viewing lead processing statistics.
+    
+    Provides read-only access to lead processing metrics.
+    """
+    serializer_class = LeadProcessingStatsSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    ordering_fields = ['date', 'total_received', 'processing_rate']
+    ordering = ['-date']
+    
+    def get_queryset(self):
+        """Get stats for user's workspaces"""
+        user = self.request.user
+        
+        # Get user's workspaces
+        if user.is_staff or user.is_superuser:
+            queryset = LeadProcessingStats.objects.all()
+        else:
+            user_workspaces = user.mapping_user_workspaces.all()
+            queryset = LeadProcessingStats.objects.filter(
+                workspace__in=user_workspaces
+            )
+        
+        return queryset.select_related('workspace').order_by('-date', '-created_at')
+    
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        """Get summary statistics across all workspaces"""
+        queryset = self.get_queryset()
+        
+        # Calculate aggregates
+        last_week = timezone.now().date() - timedelta(days=7)
+        week_stats = queryset.filter(date__gte=last_week).aggregate(
+            total_received=Sum('total_received'),
+            total_processed=Sum('processed_with_agent'),
+            total_ignored_no_funnel=Sum('ignored_no_funnel'),
+            total_ignored_no_agent=Sum('ignored_no_agent'),
+            total_ignored_inactive_agent=Sum('ignored_inactive_agent'),
+            total_ignored_inactive_funnel=Sum('ignored_inactive_funnel'),
+            avg_processing_rate=Avg('processing_rate')
+        )
+        
+        # Calculate total ignored
+        total_ignored = sum([
+            week_stats.get('total_ignored_no_funnel', 0) or 0,
+            week_stats.get('total_ignored_no_agent', 0) or 0,
+            week_stats.get('total_ignored_inactive_agent', 0) or 0,
+            week_stats.get('total_ignored_inactive_funnel', 0) or 0
+        ])
+        
+        return Response({
+            'period': 'last_7_days',
+            'total_received': week_stats.get('total_received', 0) or 0,
+            'total_processed': week_stats.get('total_processed', 0) or 0,
+            'total_ignored': total_ignored,
+            'breakdown': {
+                'ignored_no_funnel': week_stats.get('total_ignored_no_funnel', 0) or 0,
+                'ignored_no_agent': week_stats.get('total_ignored_no_agent', 0) or 0,
+                'ignored_inactive_agent': week_stats.get('total_ignored_inactive_agent', 0) or 0,
+                'ignored_inactive_funnel': week_stats.get('total_ignored_inactive_funnel', 0) or 0
+            },
+            'average_processing_rate': round(week_stats.get('avg_processing_rate', 0) or 0, 2)
+        }) 

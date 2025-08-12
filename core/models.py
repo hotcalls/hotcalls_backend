@@ -1551,6 +1551,76 @@ class LeadFunnel(models.Model):
         return self.leads.count()
 
 
+class LeadProcessingStats(models.Model):
+    """
+    Track lead processing statistics for monitoring and analytics.
+    Helps track how many leads are processed vs ignored.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='lead_processing_stats'
+    )
+    date = models.DateField(
+        auto_now_add=True,
+        help_text="Date of the statistics"
+    )
+    
+    # Counters
+    total_received = models.IntegerField(
+        default=0,
+        help_text="Total leads received from webhooks"
+    )
+    processed_with_agent = models.IntegerField(
+        default=0,
+        help_text="Leads processed with active agent"
+    )
+    ignored_no_funnel = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - no funnel configured"
+    )
+    ignored_no_agent = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - no agent assigned"
+    )
+    ignored_inactive_agent = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - agent inactive"
+    )
+    ignored_inactive_funnel = models.IntegerField(
+        default=0,
+        help_text="Leads ignored - funnel inactive"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ['workspace', 'date']
+        indexes = [
+            models.Index(fields=['workspace', 'date']),
+            models.Index(fields=['date']),
+        ]
+        ordering = ['-date']
+    
+    @property
+    def total_ignored(self):
+        """Total number of ignored leads"""
+        return (self.ignored_no_funnel + self.ignored_no_agent + 
+                self.ignored_inactive_agent + self.ignored_inactive_funnel)
+    
+    @property
+    def processing_rate(self):
+        """Percentage of leads processed"""
+        if self.total_received == 0:
+            return 0
+        return (self.processed_with_agent / self.total_received) * 100
+    
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.date} ({self.processing_rate:.1f}% processed)"
+
+
 class LiveKitAgent(models.Model):
     """
     LiveKit Agent Token Management

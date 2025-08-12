@@ -600,3 +600,276 @@ class LeadFunnelWebhookTest(TestCase):
         self.assertIsNotNone(lead)
         self.assertEqual(lead.lead_funnel, funnel)
         self.assertFalse(hasattr(lead, 'call_task')) 
+
+    @patch('core.services.meta_integration.MetaIntegrationService.get_lead_data')
+    def test_webhook_ignores_lead_without_agent(self, mock_get_lead):
+        """Test webhook ignores leads from funnels without agent"""
+        from core.services.meta_integration import MetaIntegrationService
+        
+        # Mock Meta API response
+        mock_get_lead.return_value = {
+            'field_data': [
+                {'name': 'full_name', 'values': ['John Doe']},
+                {'name': 'email', 'values': ['john@example.com']},
+                {'name': 'phone_number', 'values': ['+1234567890']}
+            ]
+        }
+        
+        # Create form and funnel WITHOUT agent
+        meta_form = MetaLeadForm.objects.create(
+            meta_integration=self.meta_integration,
+            meta_form_id='form_no_agent',
+            name='Form Without Agent'
+        )
+        funnel = LeadFunnel.objects.create(
+            name='Funnel Without Agent',
+            workspace=self.workspace,
+            meta_lead_form=meta_form,
+            is_active=True  # Funnel is active but no agent
+        )
+        
+        # Process webhook
+        service = MetaIntegrationService()
+        webhook_data = {
+            'leadgen_id': 'lead_no_agent',
+            'form_id': 'form_no_agent'
+        }
+        
+        lead = service.process_lead_webhook(webhook_data, self.meta_integration)
+        
+        # Verify lead was NOT created
+        self.assertIsNone(lead)
+        self.assertEqual(Lead.objects.filter(workspace=self.workspace).count(), 0)
+        
+        # Verify stats were updated
+        stats = self.workspace.lead_processing_stats.first()
+        if stats:
+            self.assertEqual(stats.ignored_no_agent, 1)
+            self.assertEqual(stats.processed_with_agent, 0)
+    
+    @patch('core.services.meta_integration.MetaIntegrationService.get_lead_data')
+    def test_webhook_ignores_lead_inactive_funnel(self, mock_get_lead):
+        """Test webhook ignores leads from inactive funnels"""
+        from core.services.meta_integration import MetaIntegrationService
+        
+        # Mock Meta API response
+        mock_get_lead.return_value = {
+            'field_data': [
+                {'name': 'full_name', 'values': ['Jane Doe']},
+                {'name': 'email', 'values': ['jane@example.com']},
+                {'name': 'phone_number', 'values': ['+1234567891']}
+            ]
+        }
+        
+        # Create form, inactive funnel, and agent
+        meta_form = MetaLeadForm.objects.create(
+            meta_integration=self.meta_integration,
+            meta_form_id='form_inactive',
+            name='Form Inactive Funnel'
+        )
+        funnel = LeadFunnel.objects.create(
+            name='Inactive Funnel',
+            workspace=self.workspace,
+            meta_lead_form=meta_form,
+            is_active=False  # Funnel is INACTIVE
+        )
+        
+        # Create active agent assigned to inactive funnel
+        agent = Agent.objects.create(
+            workspace=self.workspace,
+            name='Agent for Inactive Funnel',
+            status='active',
+            voice=self.voice,
+            lead_funnel=funnel
+        )
+        
+        # Process webhook
+        service = MetaIntegrationService()
+        webhook_data = {
+            'leadgen_id': 'lead_inactive_funnel',
+            'form_id': 'form_inactive'
+        }
+        
+        lead = service.process_lead_webhook(webhook_data, self.meta_integration)
+        
+        # Verify lead was NOT created
+        self.assertIsNone(lead)
+        self.assertEqual(Lead.objects.filter(workspace=self.workspace).count(), 0)
+        
+        # Verify stats
+        stats = self.workspace.lead_processing_stats.first()
+        if stats:
+            self.assertEqual(stats.ignored_inactive_funnel, 1)
+            self.assertEqual(stats.processed_with_agent, 0)
+    
+    @patch('core.services.meta_integration.MetaIntegrationService.get_lead_data')
+    def test_webhook_ignores_lead_inactive_agent(self, mock_get_lead):
+        """Test webhook ignores leads when agent is inactive"""
+        from core.services.meta_integration import MetaIntegrationService
+        
+        # Mock Meta API response
+        mock_get_lead.return_value = {
+            'field_data': [
+                {'name': 'full_name', 'values': ['Bob Smith']},
+                {'name': 'email', 'values': ['bob@example.com']},
+                {'name': 'phone_number', 'values': ['+1234567892']}
+            ]
+        }
+        
+        # Create form, funnel, and INACTIVE agent
+        meta_form = MetaLeadForm.objects.create(
+            meta_integration=self.meta_integration,
+            meta_form_id='form_inactive_agent',
+            name='Form Inactive Agent'
+        )
+        funnel = LeadFunnel.objects.create(
+            name='Funnel with Inactive Agent',
+            workspace=self.workspace,
+            meta_lead_form=meta_form,
+            is_active=True
+        )
+        
+        # Create INACTIVE agent
+        agent = Agent.objects.create(
+            workspace=self.workspace,
+            name='Inactive Agent',
+            status='inactive',  # Agent is INACTIVE
+            voice=self.voice,
+            lead_funnel=funnel
+        )
+        
+        # Process webhook
+        service = MetaIntegrationService()
+        webhook_data = {
+            'leadgen_id': 'lead_inactive_agent',
+            'form_id': 'form_inactive_agent'
+        }
+        
+        lead = service.process_lead_webhook(webhook_data, self.meta_integration)
+        
+        # Verify lead was NOT created
+        self.assertIsNone(lead)
+        self.assertEqual(Lead.objects.filter(workspace=self.workspace).count(), 0)
+        
+        # Verify stats
+        stats = self.workspace.lead_processing_stats.first()
+        if stats:
+            self.assertEqual(stats.ignored_inactive_agent, 1)
+            self.assertEqual(stats.processed_with_agent, 0)
+    
+    @patch('core.services.meta_integration.MetaIntegrationService.get_lead_data')
+    def test_webhook_processes_lead_with_active_agent(self, mock_get_lead):
+        """Test webhook successfully processes lead with active agent"""
+        from core.services.meta_integration import MetaIntegrationService
+        
+        # Mock Meta API response
+        mock_get_lead.return_value = {
+            'field_data': [
+                {'name': 'full_name', 'values': ['Alice Johnson']},
+                {'name': 'email', 'values': ['alice@example.com']},
+                {'name': 'phone_number', 'values': ['+1234567893']}
+            ]
+        }
+        
+        # Create complete setup: form, funnel, and active agent
+        meta_form = MetaLeadForm.objects.create(
+            meta_integration=self.meta_integration,
+            meta_form_id='form_with_agent',
+            name='Form with Active Agent'
+        )
+        funnel = LeadFunnel.objects.create(
+            name='Funnel with Active Agent',
+            workspace=self.workspace,
+            meta_lead_form=meta_form,
+            is_active=True
+        )
+        
+        # Create ACTIVE agent
+        agent = Agent.objects.create(
+            workspace=self.workspace,
+            name='Active Agent',
+            status='active',
+            voice=self.voice,
+            lead_funnel=funnel
+        )
+        
+        # Process webhook
+        service = MetaIntegrationService()
+        webhook_data = {
+            'leadgen_id': 'lead_with_agent',
+            'form_id': 'form_with_agent'
+        }
+        
+        lead = service.process_lead_webhook(webhook_data, self.meta_integration)
+        
+        # Verify lead WAS created
+        self.assertIsNotNone(lead)
+        self.assertEqual(lead.name, 'Alice Johnson')
+        self.assertEqual(lead.email, 'alice@example.com')
+        self.assertEqual(lead.phone, '+1234567893')
+        self.assertEqual(lead.lead_funnel, funnel)
+        
+        # Verify CallTask was created
+        self.assertTrue(hasattr(lead, 'call_task'))
+        call_task = lead.call_task
+        self.assertEqual(call_task.agent, agent)
+        self.assertEqual(call_task.status, CallStatus.SCHEDULED)
+        
+        # Verify stats
+        stats = self.workspace.lead_processing_stats.first()
+        if stats:
+            self.assertEqual(stats.processed_with_agent, 1)
+            self.assertEqual(stats.total_ignored, 0)
+    
+    def test_metaleadform_is_active_computed_property(self):
+        """Test that MetaLeadForm.is_active is computed from agent assignment"""
+        # Create form without funnel
+        meta_form = MetaLeadForm.objects.create(
+            meta_integration=self.meta_integration,
+            meta_form_id='form_computed',
+            name='Computed Active Test'
+        )
+        
+        # Should be inactive (no funnel)
+        self.assertFalse(meta_form.is_active)
+        
+        # Create funnel
+        funnel = LeadFunnel.objects.create(
+            name='Test Funnel',
+            workspace=self.workspace,
+            meta_lead_form=meta_form,
+            is_active=True
+        )
+        
+        # Still inactive (no agent)
+        meta_form.refresh_from_db()
+        self.assertFalse(meta_form.is_active)
+        
+        # Create inactive agent
+        agent = Agent.objects.create(
+            workspace=self.workspace,
+            name='Inactive Agent',
+            status='inactive',
+            voice=self.voice,
+            lead_funnel=funnel
+        )
+        
+        # Still inactive (agent is inactive)
+        meta_form.refresh_from_db()
+        self.assertFalse(meta_form.is_active)
+        
+        # Activate agent
+        agent.status = 'active'
+        agent.save()
+        
+        # Now should be active
+        meta_form.refresh_from_db()
+        self.assertTrue(meta_form.is_active)
+        
+        # Deactivate funnel
+        funnel.is_active = False
+        funnel.save()
+        
+        # Should be inactive again
+        meta_form.refresh_from_db()
+        self.assertFalse(meta_form.is_active) 

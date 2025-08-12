@@ -280,6 +280,33 @@ class MetaIntegrationService:
             return []
 
     
+    def _update_lead_stats(self, workspace, reason: str):
+        """Update lead processing statistics"""
+        from core.models import LeadProcessingStats
+        from django.utils import timezone
+        
+        today = timezone.now().date()
+        stats, created = LeadProcessingStats.objects.get_or_create(
+            workspace=workspace,
+            date=today
+        )
+        
+        # Update counters based on reason
+        stats.total_received += 1
+        
+        if reason == 'processed':
+            stats.processed_with_agent += 1
+        elif reason == 'no_funnel':
+            stats.ignored_no_funnel += 1
+        elif reason == 'no_agent':
+            stats.ignored_no_agent += 1
+        elif reason == 'agent_inactive':
+            stats.ignored_inactive_agent += 1
+        elif reason == 'funnel_inactive':
+            stats.ignored_inactive_funnel += 1
+            
+        stats.save()
+    
     @transaction.atomic
     def process_lead_webhook(self, webhook_data: Dict, integration: MetaIntegration) -> Optional[Lead]:
         """
@@ -339,6 +366,7 @@ class MetaIntegrationService:
                         'reason': 'no_funnel'
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'no_funnel')
                 return None
             
             # STEP 1: Check if funnel exists
@@ -352,6 +380,7 @@ class MetaIntegrationService:
                         'reason': 'no_funnel'
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'no_funnel')
                 return None
                 
             lead_funnel = meta_lead_form.lead_funnel
@@ -368,6 +397,7 @@ class MetaIntegrationService:
                         'reason': 'funnel_inactive'
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'funnel_inactive')
                 return None
             
             # STEP 3: Check if agent assigned (OneToOne relation)
@@ -382,6 +412,7 @@ class MetaIntegrationService:
                         'reason': 'no_agent'
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'no_agent')
                 return None
                 
             agent = lead_funnel.agent
@@ -400,6 +431,7 @@ class MetaIntegrationService:
                         'reason': 'agent_inactive'
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'agent_inactive')
                 return None
             
             # ✅ ALL CHECKS PASSED - Process lead with active agent
@@ -461,6 +493,7 @@ class MetaIntegrationService:
                         'workspace_id': integration.workspace.id
                     }
                 )
+                self._update_lead_stats(integration.workspace, 'processed')
                 
             except Exception as e:
                 # CallTask creation failed - log but don't fail lead creation

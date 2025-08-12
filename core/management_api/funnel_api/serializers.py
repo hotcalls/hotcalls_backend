@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import LeadFunnel, Agent, MetaLeadForm, Workspace
+from core.models import LeadFunnel, Agent, MetaLeadForm, Workspace, LeadProcessingStats
 from core.management_api.agent_api.serializers import AgentBasicSerializer
 from core.management_api.meta_api.serializers import MetaLeadFormSerializer
 
@@ -83,22 +83,30 @@ class LeadFunnelCreateSerializer(serializers.ModelSerializer):
 
 
 class LeadFunnelUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating a LeadFunnel"""
+    """Serializer for updating lead funnels"""
     
     class Meta:
         model = LeadFunnel
         fields = ['name', 'is_active']
+
+
+class LeadProcessingStatsSerializer(serializers.ModelSerializer):
+    """Serializer for lead processing statistics"""
+    workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
+    total_ignored = serializers.IntegerField(read_only=True)
+    processing_rate = serializers.FloatField(read_only=True)
     
-    def validate(self, attrs):
-        """Validate funnel update"""
-        user = self.context['request'].user
-        funnel = self.instance
-        
-        # Verify user has access to workspace
-        if funnel.workspace not in user.mapping_user_workspaces.all():
-            raise serializers.ValidationError("You don't have access to this funnel")
-        
-        return attrs
+    class Meta:
+        model = LeadProcessingStats
+        fields = [
+            'id', 'workspace', 'workspace_name', 'date',
+            'total_received', 'processed_with_agent',
+            'ignored_no_funnel', 'ignored_no_agent',
+            'ignored_inactive_agent', 'ignored_inactive_funnel',
+            'total_ignored', 'processing_rate',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = '__all__'
 
 
 class AssignAgentSerializer(serializers.Serializer):
