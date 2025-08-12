@@ -1609,6 +1609,19 @@ class CallTask(models.Model):
         help_text="Phone number to call"
     )
     
+    # Optional canonical target reference for flexible routing (not used yet)
+    # Examples:
+    #  - "lead:<uuid>"       → stored Lead record
+    #  - "test_user:<uuid>"  → user's phone for test calls
+    #  - "raw_phone:+49123"  → direct E.164 dialing
+    #  - "external:crm:<id>" → external system reference
+    target_ref = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Canonical call target reference (e.g., 'lead:<uuid>', 'test_user:<uuid>', 'raw_phone:+49123')"
+    )
+    
     # Relationships
     workspace = models.ForeignKey(
         Workspace,

@@ -8,7 +8,7 @@ automatically updating or deleting CallTasks based on call outcomes.
 import logging
 from datetime import timedelta
 from django.utils import timezone
-from core.models import CallTask, CallStatus, DisconnectionReason
+from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
 
 logger = logging.getLogger(__name__)
 
@@ -281,3 +281,62 @@ def is_valid_call_time(agent, datetime_obj):
         return False
     
     return True
+
+
+# ==================
+# Target Ref Resolver
+# ==================
+
+def parse_target_ref(target_ref: str) -> tuple[str, str]:
+    """
+    Parse canonical target_ref into (scheme, value).
+    Supported schemes: lead, test_user, raw_phone, external:<system>
+    """
+    if not target_ref:
+        return ("", "")
+    if target_ref.startswith("lead:"):
+        return ("lead", target_ref.split(":", 1)[1])
+    if target_ref.startswith("test_user:"):
+        return ("test_user", target_ref.split(":", 1)[1])
+    if target_ref.startswith("raw_phone:"):
+        return ("raw_phone", target_ref.split(":", 1)[1])
+    if target_ref.startswith("external:"):
+        return ("external", target_ref.split(":", 1)[1])
+    return ("", target_ref)
+
+
+def resolve_call_target(target_ref: str) -> dict:
+    """
+    Resolve target_ref to a concrete dialing target without performing any calls.
+    NOTE: Not used by the call flow yet. Present for future use.
+    Returns dict with keys: { 'phone': str, 'lead': Lead|None, 'user': User|None, 'meta': dict }
+    """
+    scheme, value = parse_target_ref(target_ref)
+    result = { 'phone': None, 'lead': None, 'user': None, 'meta': {} }
+    
+    try:
+        if scheme == "lead":
+            lead = Lead.objects.get(id=value)
+            result['lead'] = lead
+            result['phone'] = lead.phone
+        elif scheme == "test_user":
+            user = User.objects.get(id=value)
+            result['user'] = user
+            result['phone'] = user.phone
+        elif scheme == "raw_phone":
+            result['phone'] = value
+        elif scheme == "external":
+            # Placeholder for future external system resolution, e.g., CRM
+            system_and_id = value.split(":", 1)
+            system = system_and_id[0]
+            external_id = system_and_id[1] if len(system_and_id) > 1 else ""
+            result['meta'] = { 'external_system': system, 'external_id': external_id }
+            # Leave phone None; external resolver would fetch it
+        else:
+            # Unknown format; treat as raw phone if it looks like E.164
+            result['phone'] = value if value.startswith('+') else None
+    except (Lead.DoesNotExist, User.DoesNotExist):
+        # Keep result with None phone; caller should handle
+        pass
+    
+    return result
