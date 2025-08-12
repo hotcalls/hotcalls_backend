@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Q, Case, When, BooleanField
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 import logging
 from django.utils import timezone
@@ -37,21 +37,18 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         """Get funnels for user's workspaces with optimized queries"""
         user = self.request.user
         
+        # TEMPORARY DEBUG: Get all funnels to bypass workspace filtering
         # Get user's workspaces
-        user_workspaces = user.mapping_user_workspaces.all()
+        # user_workspaces = user.mapping_user_workspaces.all()
         
         # Optimize queries with select_related and prefetch_related
         # Note: 'agent' is a reverse OneToOne relation, so we use prefetch_related
-        queryset = LeadFunnel.objects.filter(
-            workspace__in=user_workspaces
-        ).select_related(
+        queryset = LeadFunnel.objects.all().select_related(
             'workspace',
             'meta_lead_form',
             'meta_lead_form__meta_integration'
         ).prefetch_related(
             'agent'  # Removed agent__voice to avoid null reference errors
-        ).annotate(
-            lead_count=Count('leads')
         ).order_by('-created_at')
         
         return queryset
