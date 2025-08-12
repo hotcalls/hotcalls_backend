@@ -328,8 +328,7 @@ class MetaIntegrationService:
                 # Create form but no funnel yet - ignore lead
                 meta_lead_form, created = MetaLeadForm.objects.get_or_create(
                     meta_integration=integration,
-                    meta_form_id=form_id,
-                    defaults={'is_active': False}
+                    meta_form_id=form_id
                 )
                 logger.info(
                     "Lead ignored - form created but no funnel",

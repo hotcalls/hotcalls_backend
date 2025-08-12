@@ -986,8 +986,8 @@ def sync_meta_lead_forms(self, integration_id):
                     meta_integration=integration,
                     meta_form_id=form_id,
                     defaults={
-                        'name': form_name,
-                        'is_active': False  # Start inactive, user must activate
+                        'name': form_name
+                        # is_active is now computed from agent assignment
                     }
                 )
                 
@@ -1154,23 +1154,19 @@ def daily_meta_sync(self):
                             
                             updated_forms += 1
                 
-                # Deactivate removed forms
+                # Deactivate removed forms (via funnel deactivation)
                 if removed_form_ids:
                     removed_forms = MetaLeadForm.objects.filter(
                         meta_integration=integration,
-                        meta_form_id__in=removed_form_ids,
-                        is_active=True
-                    )
+                        meta_form_id__in=removed_form_ids
+                    ).select_related('lead_funnel')
+                    
                     for form in removed_forms:
-                        form.is_active = False
-                        form.save(update_fields=['is_active', 'updated_at'])
-                        
-                        # Also deactivate the funnel
+                        # Deactivate the funnel (form.is_active will be computed as False)
                         if hasattr(form, 'lead_funnel'):
                             form.lead_funnel.is_active = False
                             form.lead_funnel.save(update_fields=['is_active', 'updated_at'])
-                        
-                        deactivated_forms += 1
+                            deactivated_forms += 1
                 
                 integration_result = {
                     'integration_id': str(integration.id),

@@ -1444,10 +1444,7 @@ class MetaLeadForm(models.Model):
         default='',
         help_text="Meta Lead Form Name/Title"
     )
-    is_active = models.BooleanField(
-        default=False,
-        help_text="Whether this lead form should process incoming leads"
-    )
+    # REMOVED: is_active database field - now computed property
     meta_lead_id = models.CharField(
         max_length=255,
         null=True,
@@ -1464,6 +1461,30 @@ class MetaLeadForm(models.Model):
             models.Index(fields=['meta_integration', 'meta_form_id']),
             models.Index(fields=['meta_lead_id']),
         ]
+    
+    @property
+    def is_active(self) -> bool:
+        """
+        Form is active if it has a funnel with an active agent assigned.
+        This is computed dynamically based on agent assignment.
+        """
+        if not hasattr(self, 'lead_funnel'):
+            return False
+        
+        lead_funnel = self.lead_funnel
+        if not lead_funnel.is_active:
+            return False
+            
+        if not hasattr(lead_funnel, 'agent'):
+            return False
+            
+        agent = lead_funnel.agent
+        return agent.status == 'active'
+    
+    @property
+    def workspace(self):
+        """Get the workspace from the integration"""
+        return self.meta_integration.workspace if self.meta_integration else None
     
     def __str__(self):
         return f"Meta Form {self.meta_form_id} - {self.meta_integration.workspace.workspace_name}"

@@ -95,28 +95,12 @@ class MetaLeadFormCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = MetaLeadForm
-        fields = ['meta_integration', 'meta_form_id', 'is_active']
+        fields = ['meta_integration', 'meta_form_id']
+        # is_active removed - now computed from agent assignment
 
 
-class MetaLeadFormBulkUpdateSerializer(serializers.Serializer):
-    """Serializer for bulk updating lead form active status"""
-    form_selections = serializers.ListField(
-        child=serializers.DictField(
-            child=serializers.BooleanField(),
-            help_text="Dictionary with form_id as key and is_active boolean as value"
-        ),
-        help_text="List of form selections to update"
-    )
-    
-    def validate_form_selections(self, value):
-        """Validate form selections format"""
-        for selection in value:
-            if not isinstance(selection, dict):
-                raise serializers.ValidationError("Each selection must be a dictionary")
-            for form_id, is_active in selection.items():
-                if not isinstance(form_id, str) or not isinstance(is_active, bool):
-                    raise serializers.ValidationError("Form ID must be string and is_active must be boolean")
-        return value
+# REMOVED: MetaLeadFormBulkUpdateSerializer
+# is_active is now computed from agent assignment
 
 
 class MetaOAuthCallbackSerializer(serializers.Serializer):
