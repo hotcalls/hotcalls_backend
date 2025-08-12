@@ -177,7 +177,7 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         - Changes voice, personality, and behavior
         - Updates working hours and availability
         """,
-        request=AgentCreateSerializer,
+        request=AgentUpdateSerializer,
         responses={
             200: OpenApiResponse(response=AgentSerializer, description="✅ Agent updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),
@@ -206,7 +206,7 @@ from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManag
         - **✅ Staff Members**: Can update any agent configuration
         - **✅ Superusers**: Can update any agent configuration
         """,
-        request=AgentCreateSerializer,
+        request=AgentUpdateSerializer,
         responses={
             200: OpenApiResponse(response=AgentSerializer, description="✅ Agent updated successfully"),
             400: OpenApiResponse(description="❌ Validation error"),

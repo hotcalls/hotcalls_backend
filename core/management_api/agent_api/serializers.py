@@ -168,6 +168,8 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice',
+            # LEAD FUNNEL FIELD
+            'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'config_id', 'calendar_configuration'
