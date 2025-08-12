@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime, timedelta, timezone as dt_timezone
 from django.conf import settings
 from django.utils import timezone
@@ -298,9 +299,13 @@ class CalendarViewSet(viewsets.ModelViewSet):
             
             # 6. Redirect to frontend after successful OAuth
             from django.shortcuts import redirect
+            from django.conf import settings
+            
+            # Get frontend URL from environment or fallback to localhost for development
+            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
             
             # Redirect to frontend calendar dashboard with success parameters
-            success_url = f"http://localhost:5173/dashboard/calendar?oauth_success=true&calendars={len(synced_calendars)}&email={connection.account_email}"
+            success_url = f"{frontend_url}/dashboard/calendar?oauth_success=true&calendars={len(synced_calendars)}&email={connection.account_email}"
             return redirect(success_url)
             
         except Exception as e:

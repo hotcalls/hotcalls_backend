@@ -98,6 +98,11 @@ variable "base_url" {
   type        = string
 }
 
+variable "frontend_url" {
+  description = "Frontend URL for OAuth redirects"
+  type        = string
+}
+
 # Email configuration
 variable "email_host" {
   description = "Email host"

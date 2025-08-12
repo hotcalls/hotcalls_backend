@@ -104,6 +104,7 @@ resource "kubernetes_secret" "app_secrets" {
     AZURE_CLIENT_ID             = ""
     AZURE_MONITOR_CONNECTION_STRING = ""
     BASE_URL                    = var.base_url
+    FRONTEND_URL                = var.frontend_url
     DJANGO_SETTINGS_MODULE      = "hotcalls.settings.production"
   }
 
