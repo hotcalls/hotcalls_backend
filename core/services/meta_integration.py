@@ -471,14 +471,13 @@ class MetaIntegrationService:
             
             # ATOMIC: Create CallTask immediately (agent guaranteed to exist)
             try:
-                call_task = CallTask.objects.create(
-                    status=CallStatus.SCHEDULED,
-                    attempts=0,
-                    phone=lead.phone,
-                    workspace=integration.workspace,
-                    lead=lead,
+                from core.utils.calltask_utils import create_call_task_safely
+                target_ref = f"lead:{lead.id}"
+                call_task = create_call_task_safely(
                     agent=agent,
-                    next_call=timezone.now()  # Schedule for immediate execution
+                    workspace=integration.workspace,
+                    target_ref=target_ref,
+                    next_call=timezone.now(),  # Schedule for immediate execution
                 )
                 
                 logger.info(

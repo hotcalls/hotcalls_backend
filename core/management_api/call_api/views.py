@@ -1,28 +1,23 @@
 from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from django.db.models import Sum, Avg, Count, Q
+# no module-level Count import to avoid lints; import Count locally where needed
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
-from django.db import transaction
 from django.utils import timezone
 from django.core.exceptions import PermissionDenied
-import json
-import os
 import logging
-
-logger = logging.getLogger(__name__)
 
 from core.models import CallLog, Agent, Lead, CallTask, CallStatus
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer, 
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer, OutboundCallSerializer, 
-    TestCallSerializer, CallTaskSerializer, CallTaskTriggerSerializer
+    CallLogAppointmentStatsSerializer, TestCallSerializer, CallTaskSerializer, CallTaskTriggerSerializer
 )
 from .filters import CallLogFilter, CallTaskFilter
-from .permissions import CallLogPermission, CallLogAnalyticsPermission, CallTaskPermission
+from .permissions import CallLogPermission, CallLogAnalyticsPermission
 
+logger = logging.getLogger(__name__)
 
 @extend_schema_view(
     list=extend_schema(
@@ -370,7 +365,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def analytics(self, request):
         """Get comprehensive call analytics"""
-        from django.db.models import Count, Avg, Sum
+        from django.db.models import Avg, Sum, Count
         from django.utils import timezone
         from datetime import timedelta
         
@@ -397,9 +392,11 @@ class CallLogViewSet(viewsets.ModelViewSet):
         )
         
         # Status breakdown
-        status_stats = CallLog.objects.filter(status__isnull=False).values('status').annotate(
-            count=Count('id')
-        )
+        from django.db.models import Count
+        status_stats = (CallLog.objects
+                        .filter(status__isnull=False)
+                        .values('status')
+                        .annotate(count=Count('id')))
         status_breakdown = {item['status']: item['count'] for item in status_stats}
         
         # Appointment statistics
@@ -449,9 +446,11 @@ class CallLogViewSet(viewsets.ModelViewSet):
         total_calls = CallLog.objects.count()
         
         # Status breakdown
-        status_stats = CallLog.objects.filter(status__isnull=False).values('status').annotate(
-            count=Count('id')
-        )
+        from django.db.models import Count
+        status_stats = (CallLog.objects
+                        .filter(status__isnull=False)
+                        .values('status')
+                        .annotate(count=Count('id')))
         status_breakdown = {item['status']: item['count'] for item in status_stats}
         
         # Calculate success rate (reached + appointment_scheduled)
@@ -489,7 +488,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def agent_performance(self, request):
         """Get agent performance analytics"""
-        from django.db.models import Avg, Count
+        from django.db.models import Avg, Count, Q
         
         # Group by agent and get performance metrics
         agent_stats = CallLog.objects.values(
@@ -757,9 +756,9 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def daily_stats(self, request):
         """Get daily call statistics"""
-        from django.db.models import Count, Avg, Sum
+        from django.db.models import Avg, Sum, Count
         from django.utils import timezone
-        from datetime import timedelta, date
+        from datetime import timedelta
         
         # Get number of days from query parameter (default: 30)
         days = int(request.query_params.get('days', 30))
@@ -982,16 +981,31 @@ class CallTaskViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
     
     def perform_create(self, serializer):
-        """Ensure user can only create call tasks for their workspaces"""
+        """Create CallTask via unified helper using target_ref only (no raw phone)."""
+        from core.utils.calltask_utils import create_call_task_safely
         user = self.request.user
-        workspace = serializer.validated_data.get('workspace')
-        
+        validated = serializer.validated_data
+        workspace = validated.get('workspace')
+
         # Validate workspace access for non-superusers
         if not user.is_superuser and workspace not in user.mapping_user_workspaces.all():
             raise PermissionDenied("You can only create call tasks for your workspaces")
-        
-        # Set next_call to immediate (now) for all new call tasks
-        serializer.save(next_call=timezone.now())
+
+        agent = validated.get('agent')
+        target_ref = validated.get('target_ref')
+
+        if not target_ref:
+            raise ValueError("target_ref is required and must be lead:<uuid> or test_user:<uuid>")
+
+        call_task = create_call_task_safely(
+            agent=agent,
+            workspace=workspace,
+            target_ref=target_ref,
+            next_call=timezone.now(),
+        )
+
+        # Bind created instance to serializer for response
+        serializer.instance = call_task
     
     @extend_schema(
         summary="🚀 Trigger a call manually",
@@ -1131,15 +1145,14 @@ def make_test_call(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Create CallTask entry - that's it!
-    call_task = CallTask.objects.create(
-        status=CallStatus.SCHEDULED,
-        attempts=0,
-        phone=user_phone,
-        workspace=agent.workspace,
-        lead=None,  # null=True for test calls
+    # Create CallTask via unified helper using test_user target_ref
+    from core.utils.calltask_utils import create_call_task_safely
+    target_ref = f"test_user:{user.id}"
+    call_task = create_call_task_safely(
         agent=agent,
-        next_call=timezone.now()  # immediate execution
+        workspace=agent.workspace,
+        target_ref=target_ref,
+        next_call=timezone.now(),
     )
     
     # Return success response

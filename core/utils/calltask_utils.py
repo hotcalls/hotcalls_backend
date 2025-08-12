@@ -8,7 +8,10 @@ automatically updating or deleting CallTasks based on call outcomes.
 import logging
 from datetime import timedelta
 from django.utils import timezone
+from django.utils import timezone as dj_timezone
+from django.db import connection, transaction
 from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -298,45 +301,96 @@ def parse_target_ref(target_ref: str) -> tuple[str, str]:
         return ("lead", target_ref.split(":", 1)[1])
     if target_ref.startswith("test_user:"):
         return ("test_user", target_ref.split(":", 1)[1])
-    if target_ref.startswith("raw_phone:"):
-        return ("raw_phone", target_ref.split(":", 1)[1])
-    if target_ref.startswith("external:"):
-        return ("external", target_ref.split(":", 1)[1])
     return ("", target_ref)
 
 
 def resolve_call_target(target_ref: str) -> dict:
     """
     Resolve target_ref to a concrete dialing target without performing any calls.
-    NOTE: Not used by the call flow yet. Present for future use.
+    Assumes target_ref has been pre-validated to allowed schemes (lead, test_user).
     Returns dict with keys: { 'phone': str, 'lead': Lead|None, 'user': User|None, 'meta': dict }
     """
     scheme, value = parse_target_ref(target_ref)
-    result = { 'phone': None, 'lead': None, 'user': None, 'meta': {} }
-    
-    try:
-        if scheme == "lead":
+
+    if scheme == "lead":
+        try:
             lead = Lead.objects.get(id=value)
-            result['lead'] = lead
-            result['phone'] = lead.phone
-        elif scheme == "test_user":
+        except Lead.DoesNotExist:
+            raise ValueError(f"Lead not found for target_ref: {target_ref}")
+        if not lead.phone:
+            raise ValueError(f"Lead has no phone number: {lead.id}")
+        return { 'phone': lead.phone, 'lead': lead, 'user': None, 'meta': {} }
+
+    if scheme == "test_user":
+        try:
             user = User.objects.get(id=value)
-            result['user'] = user
-            result['phone'] = user.phone
-        elif scheme == "raw_phone":
-            result['phone'] = value
-        elif scheme == "external":
-            # Placeholder for future external system resolution, e.g., CRM
-            system_and_id = value.split(":", 1)
-            system = system_and_id[0]
-            external_id = system_and_id[1] if len(system_and_id) > 1 else ""
-            result['meta'] = { 'external_system': system, 'external_id': external_id }
-            # Leave phone None; external resolver would fetch it
-        else:
-            # Unknown format; treat as raw phone if it looks like E.164
-            result['phone'] = value if value.startswith('+') else None
-    except (Lead.DoesNotExist, User.DoesNotExist):
-        # Keep result with None phone; caller should handle
-        pass
-    
-    return result
+        except User.DoesNotExist:
+            raise ValueError(f"User not found for target_ref: {target_ref}")
+        if not getattr(user, 'phone', None):
+            raise ValueError(f"Test user has no phone number: {user.id}")
+        return { 'phone': user.phone, 'lead': None, 'user': user, 'meta': {} }
+
+    # Any other scheme is unsupported in the current system
+    raise ValueError("Unsupported target_ref scheme. Allowed: lead:<uuid>, test_user:<uuid>")
+
+
+# ==========================
+# Centralized CallTask Create
+# ==========================
+
+def _hash_to_bigint(value: str) -> int:
+    """Hash a string deterministically into a signed 63-bit integer for pg_advisory locks."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    num = int(digest, 16)
+    return num % (2**63 - 1)
+
+
+def _advisory_lock_for_calltask(agent_id: str, workspace_id: str, target_ref: str):
+    """Acquire a transaction-scoped advisory lock to serialize CallTask creation for a given target_ref."""
+    lock_str = f"calltask|{workspace_id}|{agent_id}|{target_ref}"
+    lock_key = _hash_to_bigint(lock_str)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
+
+
+def create_call_task_safely(*, agent, workspace, target_ref: str, next_call=None) -> CallTask:
+    """
+    Create a CallTask in a race-safe, unified way.
+
+    - target_ref is REQUIRED and must be one of: lead:<uuid>, test_user:<uuid>
+    - Phone number is resolved from target_ref at creation time and stored on the CallTask
+    - Status is ALWAYS set to SCHEDULED; attempts is set to 0
+    - Uses a transaction-scoped Postgres advisory lock keyed by (workspace, agent, target_ref)
+    """
+    if not target_ref:
+        raise ValueError("target_ref is required (lead:<uuid> or test_user:<uuid>)")
+
+    scheme, _ = parse_target_ref(target_ref)
+    if scheme not in ("lead", "test_user"):
+        raise ValueError("Unsupported target_ref scheme. Allowed: lead:<uuid>, test_user:<uuid>")
+
+    resolved = resolve_call_target(target_ref)
+    phone = resolved.get("phone")
+    lead = resolved.get("lead")
+
+    if not phone:
+        raise ValueError(f"Cannot resolve phone from target_ref: {target_ref}")
+
+    if next_call is None:
+        next_call = dj_timezone.now()
+
+    with transaction.atomic():
+        _advisory_lock_for_calltask(str(agent.agent_id), str(workspace.id), target_ref)
+
+        call_task = CallTask.objects.create(
+            status=CallStatus.SCHEDULED,
+            attempts=0,
+            phone=phone,
+            workspace=workspace,
+            lead=lead,
+            agent=agent,
+            next_call=next_call,
+            target_ref=target_ref,
+        )
+
+    return call_task

@@ -327,16 +327,27 @@ class CallTaskSerializer(serializers.ModelSerializer):
     agent_name = serializers.CharField(source='agent.name', read_only=True)
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
     lead_name = serializers.CharField(source='lead.name', read_only=True)
+    # New: canonical target reference is required for creation
+    target_ref = serializers.CharField(write_only=True, required=True, help_text="Canonical target (lead:<uuid> or test_user:<uuid>)")
     
     class Meta:
         model = CallTask
         fields = [
             'id', 'status', 'attempts', 'phone', 'next_call',
             'agent', 'agent_name', 'workspace', 'workspace_name',
-            'lead', 'lead_name',
+            'lead', 'lead_name', 'target_ref',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'phone', 'lead', 'status', 'attempts', 'next_call']
+
+    def validate_target_ref(self, value: str) -> str:
+        """Allow only lead:<uuid> or test_user:<uuid> schemes."""
+        if not value or ':' not in value:
+            raise serializers.ValidationError("target_ref must be provided as 'lead:<uuid>' or 'test_user:<uuid>'")
+        scheme = value.split(':', 1)[0]
+        if scheme not in ('lead', 'test_user'):
+            raise serializers.ValidationError("Unsupported target_ref scheme. Allowed: lead:<uuid>, test_user:<uuid>")
+        return value
 
 
 class CallTaskTriggerSerializer(serializers.Serializer):
