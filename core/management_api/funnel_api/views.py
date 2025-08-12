@@ -51,7 +51,8 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             'meta_lead_form',
             'meta_lead_form__meta_integration'
         ).prefetch_related(
-            'agent'  # Removed agent__voice to avoid null reference errors
+            'agent',  # Removed agent__voice to avoid null reference errors
+            'webhook_source'  # Add webhook_source for source type detection
         ).order_by('-created_at')
         
         return queryset
