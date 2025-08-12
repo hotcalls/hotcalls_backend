@@ -21,6 +21,18 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count']
+    
+    def to_representation(self, instance):
+        """Override to safely calculate has_agent field"""
+        data = super().to_representation(instance)
+        
+        # Safely calculate has_agent
+        try:
+            data['has_agent'] = hasattr(instance, 'agent') and instance.agent is not None
+        except Exception:
+            data['has_agent'] = False
+            
+        return data
 
 
 class LeadFunnelCreateSerializer(serializers.ModelSerializer):

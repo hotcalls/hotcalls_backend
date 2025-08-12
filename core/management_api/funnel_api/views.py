@@ -49,8 +49,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             'meta_lead_form',
             'meta_lead_form__meta_integration'
         ).prefetch_related(
-            'agent',  # Reverse OneToOne relation
-            'agent__voice'  # Nested relation through agent
+            'agent'  # Removed agent__voice to avoid null reference errors
         ).annotate(
             lead_count=Count('leads')
         ).order_by('-created_at')
