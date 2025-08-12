@@ -114,6 +114,25 @@ class WebhookLeadSourceViewSet(viewsets.ModelViewSet):
         from secrets import token_urlsafe
         source.token = token_urlsafe(48)
         source.save(update_fields=['token', 'updated_at'])
-        return Response({'token': source.token}, status=status.HTTP_200_OK)
+        return Response({'token': source.token, 'url': WebhookLeadSourceSerializer(source, context={'request': request}).data['url']}, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Delete webhook source")
+    def destroy(self, request, pk=None):
+        try:
+            source = WebhookLeadSource.objects.get(pk=pk)
+        except WebhookLeadSource.DoesNotExist:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.user not in source.workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Delete the funnel (which cascades to the source)
+        funnel = source.lead_funnel
+        if funnel:
+            funnel.delete()  # This will cascade delete the WebhookLeadSource
+        else:
+            source.delete()  # Fallback if no funnel
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
