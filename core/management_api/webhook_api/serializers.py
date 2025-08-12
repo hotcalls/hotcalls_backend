@@ -32,8 +32,16 @@ class WebhookLeadSourceSerializer(serializers.ModelSerializer):
 
     def get_url(self, obj: WebhookLeadSource):
         request = self.context.get('request')
-        base = request.build_absolute_uri('/') if request else ''
-        base = base.rstrip('/')
+        if request:
+            # Force HTTPS for external webhook URLs since nginx enforces SSL redirect
+            base = request.build_absolute_uri('/')
+            # Replace http:// with https:// to match nginx SSL enforcement
+            if base.startswith('http://'):
+                base = base.replace('http://', 'https://', 1)
+            base = base.rstrip('/')
+        else:
+            # Fallback if no request context
+            base = 'https://app.hotcalls.de'
         return f"{base}/api/webhooks/leads/{obj.public_key}/"
 
     def get_required_headers(self, obj: WebhookLeadSource):
