@@ -118,6 +118,8 @@ class WebhookLeadSourceViewSet(viewsets.ModelViewSet):
 
     @extend_schema(summary="Delete webhook source")
     def destroy(self, request, pk=None):
+        from django.db import transaction
+        
         try:
             source = WebhookLeadSource.objects.get(pk=pk)
         except WebhookLeadSource.DoesNotExist:
@@ -126,13 +128,15 @@ class WebhookLeadSourceViewSet(viewsets.ModelViewSet):
         if request.user not in source.workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
             return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
 
-        # Delete the funnel (which cascades to the source)
-        funnel = source.lead_funnel
-        if funnel:
-            funnel.delete()  # This will cascade delete the WebhookLeadSource
-        else:
-            source.delete()  # Fallback if no funnel
-
+        # Atomic delete to ensure consistency
+        with transaction.atomic():
+            funnel = source.lead_funnel
+            if funnel:
+                # Delete both to ensure clean removal
+                funnel.delete()  # This should cascade delete the WebhookLeadSource
+            source.delete()  # Explicit delete to be sure
+            
+        logger.info(f"Deleted webhook source {source.id} and associated funnel {funnel.id if funnel else 'None'}")
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
