@@ -22,6 +22,7 @@ from .serializers import (
 )
 from .filters import CallLogFilter, CallTaskFilter
 from .permissions import CallLogPermission, CallLogAnalyticsPermission, CallTaskPermission
+from core.utils.calltask_utils import create_call_task_safely
 
 
 @extend_schema_view(
@@ -990,8 +991,17 @@ class CallTaskViewSet(viewsets.ModelViewSet):
         if not user.is_superuser and workspace not in user.mapping_user_workspaces.all():
             raise PermissionDenied("You can only create call tasks for your workspaces")
         
-        # Set next_call to immediate (now) for all new call tasks
-        serializer.save(next_call=timezone.now())
+        # Centralized creation with advisory lock
+        data = serializer.validated_data
+        create_call_task_safely(
+            agent=data['agent'],
+            workspace=data['workspace'],
+            phone=data['phone'],
+            lead=data.get('lead'),
+            target_ref=data.get('target_ref'),
+            status=data.get('status', CallStatus.SCHEDULED),
+            next_call=timezone.now(),
+        )
     
     @extend_schema(
         summary="🚀 Trigger a call manually",
@@ -1131,15 +1141,15 @@ def make_test_call(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Create CallTask entry - that's it!
-    call_task = CallTask.objects.create(
-        status=CallStatus.SCHEDULED,
-        attempts=0,
-        phone=user_phone,
-        workspace=agent.workspace,
-        lead=None,  # null=True for test calls
+    # Create CallTask entry via centralized helper
+    call_task = create_call_task_safely(
         agent=agent,
-        next_call=timezone.now()  # immediate execution
+        workspace=agent.workspace,
+        phone=user_phone,
+        lead=None,
+        target_ref=f"test_user:{str(user.id)}",
+        status=CallStatus.SCHEDULED,
+        next_call=timezone.now(),
     )
     
     # Return success response

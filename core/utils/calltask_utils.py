@@ -9,6 +9,9 @@ import logging
 from datetime import timedelta
 from django.utils import timezone
 from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
+from django.db import connection, transaction
+from django.utils import timezone as dj_timezone
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -340,3 +343,68 @@ def resolve_call_target(target_ref: str) -> dict:
         pass
     
     return result
+
+
+# ==========================
+# Centralized CallTask Create
+# ==========================
+
+OPEN_STATUSES = {
+    CallStatus.SCHEDULED,
+    CallStatus.CALL_TRIGGERED,
+    CallStatus.IN_PROGRESS,
+    CallStatus.RETRY,
+    CallStatus.WAITING,
+}
+
+
+def _hash_to_bigint(value: str) -> int:
+    """Hash a string deterministically into a signed 63-bit integer for pg_advisory locks."""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    num = int(digest, 16)
+    return num % (2**63 - 1)
+
+
+def _advisory_lock_for_calltask(agent_id: str, workspace_id: str, key: str):
+    """Acquire a transaction-scoped advisory lock to serialize CallTask creation for a given key."""
+    lock_str = f"calltask|{workspace_id}|{agent_id}|{key}"
+    lock_key = _hash_to_bigint(lock_str)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [lock_key])
+
+
+def create_call_task_safely(*, agent, workspace, phone: str, lead=None, target_ref: str | None = None,
+                             status: str = CallStatus.SCHEDULED, next_call=None) -> CallTask:
+    """
+    Centralized CallTask creation with race-condition safety.
+    - Uses Postgres advisory transaction lock scoped to (workspace, agent, target_key)
+    - Ensures consistent defaults and field population
+    - Does NOT deduplicate: lock simply prevents concurrent duplicates in the same moment
+    - Does not resolve target_ref; current dialing uses phone only
+    """
+    if not phone:
+        raise ValueError("phone is required to create a CallTask")
+
+    # Derive a stable lock key dimension (prefer target_ref, else phone)
+    target_key = target_ref or f"raw_phone:{phone}"
+
+    if next_call is None:
+        next_call = dj_timezone.now()
+
+    with transaction.atomic():
+        # Serialize competing creations for the same (agent, workspace, target_key)
+        _advisory_lock_for_calltask(str(agent.agent_id), str(workspace.id), target_key)
+
+        # Create the task (no dedup check; lock ensures single creator within txn)
+        call_task = CallTask.objects.create(
+            status=status,
+            attempts=0,
+            phone=phone,
+            workspace=workspace,
+            lead=lead,
+            agent=agent,
+            next_call=next_call,
+            target_ref=target_ref,
+        )
+
+    return call_task
