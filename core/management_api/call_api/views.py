@@ -842,8 +842,12 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Get validated data
         validated_data = serializer.validated_data
         
-        # Fixed SIP trunk ID
-        SIP_TRUNK_ID = "ST_F5KZ4yNHBegK"
+        # Get dynamic SIP trunk ID from agent's phone number
+        sip_trunk_id = None
+        if agent.phone_number and agent.phone_number.sip_trunk:
+            sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
+        if not sip_trunk_id:
+            sip_trunk_id = "ST_F5KZ4yNHBegK"  # Fallback to original fixed trunk
         
         # Retrieve agent
         try:
@@ -889,10 +893,10 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Make the outbound call using SYNC wrapper
         # THIS IS NOT ASYNC - IT'S A SYNCHRONOUS CALL!
         result = make_outbound_call_sync(
-            sip_trunk_id=SIP_TRUNK_ID,
+            sip_trunk_id=sip_trunk_id,  # Now dynamic per agent
             agent_config=agent_config,
             lead_data=lead_data,
-            from_number="",  # Not used anymore
+            from_number=agent.phone_number.phonenumber if agent.phone_number else "",  # Agent's caller ID
             campaign_id="",  # Not used anymore
             call_reason=None  # Not used anymore
         )

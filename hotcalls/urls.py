@@ -110,6 +110,9 @@ urlpatterns = [
     # Meta Webhooks (for Meta to call)
     path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
     
+    # Jambonz Webhooks (for Jambonz to call)
+    path('api/integrations/jambonz/', include(('core.management_api.jambonz_api.urls', 'jambonz_webhooks'), namespace='jambonz_webhooks')),
+    
     # Workspace Invitation Templates (Public + Authenticated)
     path('invitations/<str:token>/', invitation_detail, name='invitation_detail'),
     path('invitations/<str:token>/accept/', accept_invitation, name='accept_invitation'),

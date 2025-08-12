@@ -92,8 +92,9 @@ async def _make_call_async(
         participant_identity = f"phone_{lead_data['phone'].replace('+', '')}"
         participant_name = f"Outbound Call to {lead_data['phone']}"
         
+        # Use dynamic sip_trunk_id passed from Django
         request = CreateSIPParticipantRequest(
-            sip_trunk_id=sip_trunk_id,
+            sip_trunk_id=sip_trunk_id,  # Now dynamic per agent
             sip_call_to=lead_data['phone'],
             room_name=room_name,
             participant_identity=participant_identity,
