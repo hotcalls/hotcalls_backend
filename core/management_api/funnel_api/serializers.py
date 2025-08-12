@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 from core.models import LeadFunnel, Agent, MetaLeadForm, Workspace
 from core.management_api.agent_api.serializers import AgentBasicSerializer
 from core.management_api.meta_api.serializers import MetaLeadFormSerializer
@@ -9,8 +10,8 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
     agent = AgentBasicSerializer(read_only=True)
     meta_lead_form = MetaLeadFormSerializer(read_only=True)
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
-    has_agent = serializers.BooleanField(read_only=True)
-    lead_count = serializers.IntegerField(read_only=True)
+    has_agent = serializers.SerializerMethodField()
+    lead_count = serializers.SerializerMethodField()
     
     class Meta:
         model = LeadFunnel
@@ -22,16 +23,21 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count']
     
-    def to_representation(self, instance):
-        data = super().to_representation(instance)
-        
-        # Simple safe has_agent calculation
+    @extend_schema_field(serializers.BooleanField)
+    def get_has_agent(self, obj) -> bool:
+        """Check if this funnel has an assigned agent"""
         try:
-            data['has_agent'] = bool(getattr(instance, 'agent', None))
+            return hasattr(obj, 'agent') and obj.agent is not None
         except Exception:
-            data['has_agent'] = False
-            
-        return data
+            return False
+    
+    @extend_schema_field(serializers.IntegerField)
+    def get_lead_count(self, obj) -> int:
+        """Get count of leads from this funnel"""
+        try:
+            return obj.leads.count()
+        except Exception:
+            return 0
 
 
 class LeadFunnelCreateSerializer(serializers.ModelSerializer):
