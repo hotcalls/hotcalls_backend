@@ -12,16 +12,18 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
     has_agent = serializers.SerializerMethodField()
     lead_count = serializers.SerializerMethodField()
+    source_type = serializers.SerializerMethodField()
+    source_type_display = serializers.SerializerMethodField()
     
     class Meta:
         model = LeadFunnel
         fields = [
             'id', 'name', 'workspace', 'workspace_name',
             'meta_lead_form', 'agent', 'has_agent',
-            'is_active', 'lead_count',
+            'is_active', 'lead_count', 'source_type', 'source_type_display',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count', 'source_type', 'source_type_display']
     
     @extend_schema_field(serializers.BooleanField)
     def get_has_agent(self, obj) -> bool:
@@ -38,6 +40,32 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
             return obj.leads.count()
         except Exception:
             return 0
+    
+    @extend_schema_field(serializers.CharField)
+    def get_source_type(self, obj) -> str:
+        """Get the source type of this funnel"""
+        try:
+            if hasattr(obj, 'meta_lead_form') and obj.meta_lead_form:
+                return 'meta'
+            elif hasattr(obj, 'webhook_source') and obj.webhook_source:
+                return 'webhook'
+            else:
+                return 'unknown'
+        except Exception:
+            return 'unknown'
+    
+    @extend_schema_field(serializers.CharField)
+    def get_source_type_display(self, obj) -> str:
+        """Get the display name for the source type"""
+        try:
+            if hasattr(obj, 'meta_lead_form') and obj.meta_lead_form:
+                return 'Meta Lead Ads'
+            elif hasattr(obj, 'webhook_source') and obj.webhook_source:
+                return 'Webhook'
+            else:
+                return 'Unbekannt'
+        except Exception:
+            return 'Unbekannt'
 
 
 class LeadFunnelCreateSerializer(serializers.ModelSerializer):
