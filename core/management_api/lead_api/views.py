@@ -382,6 +382,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                 # Email detection
                 email_val = None
                 email_key = None
+                raw_email_fallback = None
                 for k, v in pairs:
                     if k in EMAIL_FIELDS:
                         e = validate_email_strict(v)
@@ -400,6 +401,8 @@ class LeadViewSet(viewsets.ModelViewSet):
                 if not email_val:
                     for k, v in pairs:
                         if '@' in v:
+                            # Keep raw as fallback, also try strict
+                            raw_email_fallback = v
                             e = validate_email_strict(v)
                             if e:
                                 email_val = e
@@ -409,6 +412,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                 # Phone detection
                 phone_val = None
                 phone_key = None
+                raw_phone_candidate = None
                 for k, v in pairs:
                     if k in PHONE_FIELDS:
                         p = normalize_phone_e164(v, default_region='DE')
@@ -434,9 +438,12 @@ class LeadViewSet(viewsets.ModelViewSet):
                     # Fallback: if only full exists
                     if full:
                         name_first = full
+                # Validate presence (Meta-like tolerance): allow raw fallbacks if strict failed
+                email_to_save = email_val or raw_email_fallback or ''
+                phone_to_save = phone_val or raw_phone_candidate or ''
 
-                # Validate required fields
-                if not (name_first and email_val and phone_val):
+                # Validate required fields (must have name + email + phone, but email/phone may be raw)
+                if not (name_first and email_to_save and phone_to_save):
                     errors.append({
                         'index': index,
                         'error': 'Missing or invalid required fields (name/email/phone)'
@@ -466,8 +473,8 @@ class LeadViewSet(viewsets.ModelViewSet):
                 lead = Lead.objects.create(
                     name=name_first,
                     surname=name_surname or '',
-                    email=email_val,
-                    phone=phone_val,
+                    email=email_to_save,
+                    phone=phone_to_save,
                     workspace=assigned_workspace if isinstance(assigned_workspace, Workspace) else None,
                     integration_provider='manual',
                     variables=variables,
