@@ -46,8 +46,6 @@ services:
       # Override for Docker networking
       - DB_HOST=db
       - REDIS_HOST=redis
-      # Stripe webhook signing secret (local development)
-      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
     ports:
       - "8000:8000"
     volumes:
@@ -97,11 +95,11 @@ services:
     working_dir: /app/outboundagent
     env_file: .env
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
+      - AGENT_DB_HOST=db
+      - AGENT_DB_PORT=5432
+      - AGENT_DB_NAME=${DB_NAME}
+      - AGENT_DB_USER=${DB_USER}
+      - AGENT_DB_PASSWORD=${DB_PASSWORD}
       - MCP_SERVER_URL=http://mcp:8000
     depends_on:
       db:

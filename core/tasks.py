@@ -270,35 +270,19 @@ def trigger_call(self, call_task_id):
             # Test call (lead is null) - skip quota enforcement
             logger.info(f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}")
 
-        # 🚀 Preflight: ensure a valid LiveKitAgent token exists before dispatch/dial
-        try:
-            from core.models import LiveKitAgent
-            from core.utils.calltask_utils import reschedule_task_preflight_failed
-            from django.db import transaction as dj_tx
-            has_valid_token = LiveKitAgent.objects.filter(expires_at__gt=timezone.now()).exists()
-            if not has_valid_token:
-                # Reschedule without increment and exit early (avoid dispatch/dial)
-                with dj_tx.atomic():
-                    call_task = CallTask.objects.select_for_update().get(id=call_task_id)
-                    reschedule_task_preflight_failed(call_task, 'token_invalid')
-                return {
-                    "success": False,
-                    "call_task_id": call_task_id,
-                    "message": "Preflight failed: no valid LiveKitAgent token",
-                    "result": {"reasons": ["token_invalid"]},
-                }
-        except Exception as preflight_err:
-            logger.error(f"⚠️ Preflight check failed unexpectedly: {preflight_err}")
-            # Fail-closed: reschedule without increment
-            from core.utils.calltask_utils import reschedule_task_preflight_failed
-            from django.db import transaction as dj_tx
+        # 🚀 Preflight: ensure a valid LiveKitAgent token exists before dispatch/dial (strict)
+        from core.models import LiveKitAgent
+        from core.utils.calltask_utils import reschedule_task_preflight_failed
+        from django.db import transaction as dj_tx
+        has_valid_token = LiveKitAgent.objects.filter(expires_at__gt=timezone.now()).exists()
+        if not has_valid_token:
             with dj_tx.atomic():
                 call_task = CallTask.objects.select_for_update().get(id=call_task_id)
                 reschedule_task_preflight_failed(call_task, 'token_invalid')
             return {
                 "success": False,
                 "call_task_id": call_task_id,
-                "message": "Preflight internal error",
+                "message": "Preflight failed: no valid LiveKitAgent token",
                 "result": {"reasons": ["token_invalid"]},
             }
 
