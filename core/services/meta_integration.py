@@ -11,6 +11,12 @@ from django.utils import timezone
 from django.db import transaction
 
 from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
+from core.utils.validators import (
+    validate_email_strict,
+    normalize_phone_e164,
+    extract_name,
+    _normalize_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -452,13 +458,53 @@ class MetaIntegrationService:
             
             # Map fields to lead model
             mapped_data = self._map_lead_fields(field_data)
-            
+
+            # Enforce hard gate: require valid name, email and phone
+            raw_name = (mapped_data.get('name') or '').strip()
+            raw_surname = (mapped_data.get('surname') or '').strip()
+            raw_email = mapped_data.get('email') or ''
+            raw_phone = mapped_data.get('phone') or ''
+
+            # Email validation
+            email = validate_email_strict(raw_email)
+            # Phone normalization to strict +<digits>
+            phone = normalize_phone_e164(raw_phone, default_region='DE')
+
+            # Name handling: allow one-word names
+            if raw_name and not raw_surname:
+                name_parts = raw_name.split()
+                if len(name_parts) >= 2:
+                    name_first = name_parts[0]
+                    name_surname = ' '.join(name_parts[1:])
+                else:
+                    name_first = raw_name
+                    name_surname = ''
+            else:
+                name_first = raw_name
+                name_surname = raw_surname
+
+            if not (name_first and email and phone):
+                logger.info(
+                    "Lead ignored - invalid or missing required fields",
+                    extra={
+                        'leadgen_id': leadgen_id,
+                        'form_id': form_id,
+                        'workspace_id': integration.workspace.id,
+                        'email_valid': bool(email),
+                        'phone_valid': bool(phone),
+                        'name_present': bool(name_first),
+                        'reason': 'ignored_invalid_fields'
+                    }
+                )
+                self._update_lead_stats(integration.workspace, 'ignored_invalid_fields')
+                return None
+
             # ATOMIC: Create Lead record with funnel reference
             lead = Lead.objects.create(
-                name=mapped_data.get('name', 'Meta Lead'),
-                surname=mapped_data.get('surname', ''),
-                email=mapped_data.get('email', f'lead-{leadgen_id}@meta.local'),
-                phone=mapped_data.get('phone', ''),
+                name=name_first,
+                surname=name_surname,
+                email=email,
+                phone=phone,
                 workspace=integration.workspace,
                 integration_provider='meta',
                 variables=mapped_data.get('variables', {}),
@@ -530,23 +576,24 @@ class MetaIntegrationService:
         
         Handles 100,000+ users and any Meta form configuration:
         - Prioritized field matching (person > company > custom)
-        - Fuzzy string matching for field names
+        - Synonym-based matching with value validation (email/phone)
         - Comprehensive logging for debugging
-        - Fallback strategies for unknown fields
+        - Fallback strategies for unknown fields → variables.custom
         """
-        mapped_data = {
+        mapped_data: Dict = {
             'name': '',
             'surname': '',
             'email': '',
             'phone': '',
-            'variables': {}
+            'variables': {
+                'custom': {},
+                'matched_keys': {}
+            }
         }
-        
-        # Track processed fields for debugging
-        processed_fields = []
-        unmatched_fields = []
-        
-        # PRIORITY 1: Exact person field matches (highest confidence)
+
+        processed_fields: List[str] = []
+        unmatched_fields: List[str] = []
+
         PERSON_NAME_FIELDS = {
             'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
             'firstname', 'fname', 'forename'
@@ -556,11 +603,9 @@ class MetaIntegrationService:
             'lastname', 'lname', 'surname', 'family'
         }
         FULL_NAME_FIELDS = {
-            'full_name', 'complete_name', 'name', 'display_name',
+            'full_name', 'fullname', 'name', 'display_name',
             'person_name', 'customer_name', 'user_name'
         }
-        
-        # PRIORITY 2: Contact field matches
         EMAIL_FIELDS = {
             'email', 'email_address', 'e_mail', 'mail', 'contact_email',
             'user_email', 'customer_email', 'business_email', 'work_email'
@@ -570,116 +615,112 @@ class MetaIntegrationService:
             'cell', 'handy', 'contact_phone', 'mobile_number',
             'cell_phone', 'phone_mobile', 'tel'
         }
-        
-        # PRIORITY 3: Business/Company fields (goes to variables, NOT name!)
         BUSINESS_FIELDS = {
             'company', 'company_name', 'business', 'business_name',
             'organization', 'firm', 'enterprise', 'corporation',
             'unternehmen', 'firma', 'entreprise', 'empresa'
         }
-        
+
+        pairs: List[Tuple[str, str]] = []
         for field in field_data:
-            field_name = field.get('name', '').strip()
-            field_values = field.get('values', [])
-            field_value = field_values[0].strip() if field_values else ''
-            
-            if not field_name or not field_value:
+            name_raw = str(field.get('name') or field.get('key') or '').strip()
+            values = field.get('values') or field.get('value')
+            value_raw = ''
+            if isinstance(values, list):
+                value_raw = str(values[0]).strip() if values else ''
+            elif values is not None:
+                value_raw = str(values).strip()
+            if not name_raw or not value_raw:
                 continue
-                
-            field_name_lower = field_name.lower().replace('_', '').replace('-', '').replace(' ', '')
-            field_name_clean = field_name.lower()
-            
-            matched = False
-            
-            # STEP 1: Priority person fields (EXACT match)
-            if field_name_clean in PERSON_NAME_FIELDS:
-                if not mapped_data['name']:  # Only if not already set
-                    mapped_data['name'] = field_value
-                    processed_fields.append(f"✅ PERSON_NAME: {field_name} → name")
-                    matched = True
-                    
-            elif field_name_clean in PERSON_SURNAME_FIELDS:
-                mapped_data['surname'] = field_value
-                processed_fields.append(f"✅ PERSON_SURNAME: {field_name} → surname")
-                matched = True
-                
-            elif field_name_clean in FULL_NAME_FIELDS:
-                if not mapped_data['name']:  # Only if no first_name found
-                    # Try to split full name
-                    name_parts = field_value.split()
-                    if len(name_parts) >= 2:
-                        mapped_data['name'] = name_parts[0]
-                        mapped_data['surname'] = ' '.join(name_parts[1:])
-                        processed_fields.append(f"✅ FULL_NAME_SPLIT: {field_name} → name+surname")
-                    else:
-                        mapped_data['name'] = field_value
-                        processed_fields.append(f"✅ FULL_NAME: {field_name} → name")
-                    matched = True
-                    
-            # STEP 2: Contact fields
-            elif field_name_clean in EMAIL_FIELDS:
-                mapped_data['email'] = field_value
-                processed_fields.append(f"✅ EMAIL: {field_name} → email")
-                matched = True
-                
-            elif field_name_clean in PHONE_FIELDS:
-                mapped_data['phone'] = field_value
-                processed_fields.append(f"✅ PHONE: {field_name} → phone")
-                matched = True
-                
-            # STEP 3: Business fields (to variables, NOT name!)
-            elif field_name_clean in BUSINESS_FIELDS:
-                mapped_data['variables'][field_name] = field_value
-                processed_fields.append(f"✅ BUSINESS: {field_name} → variables")
-                matched = True
-                
-            # STEP 4: Fuzzy matching for unknown fields
-            elif not matched:
-                # Fuzzy email detection
-                if any(indicator in field_name_lower for indicator in ['mail', '@']) or '@' in field_value:
-                    if not mapped_data['email']:
-                        mapped_data['email'] = field_value
-                        processed_fields.append(f"🔍 FUZZY_EMAIL: {field_name} → email")
-                        matched = True
-                        
-                # Fuzzy phone detection  
-                elif any(indicator in field_name_lower for indicator in ['phone', 'tel', 'mobile', 'handy']) or \
-                     any(char in field_value for char in ['+', '(', ')', '-']) and field_value.replace('+', '').replace('(', '').replace(')', '').replace('-', '').replace(' ', '').isdigit():
-                    if not mapped_data['phone']:
-                        mapped_data['phone'] = field_value
-                        processed_fields.append(f"🔍 FUZZY_PHONE: {field_name} → phone")
-                        matched = True
-                        
-                # Fuzzy name detection (very careful!)
-                elif 'name' in field_name_lower and not any(business in field_name_lower for business in ['company', 'business', 'firm', 'org']):
-                    if not mapped_data['name']:
-                        mapped_data['name'] = field_value
-                        processed_fields.append(f"🔍 FUZZY_NAME: {field_name} → name")
-                        matched = True
-            
-            # STEP 5: Everything else goes to variables
-            if not matched:
-                mapped_data['variables'][field_name] = field_value
-                unmatched_fields.append(f"📝 VARIABLE: {field_name} = {field_value}")
-        
-        # Enhanced logging for production debugging
+            k = _normalize_key(name_raw)
+            pairs.append((k, value_raw))
+
+        # pick candidates
+        first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
+        last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
+        full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
+
+        email_val = None
+        email_key = None
+        for k, v in pairs:
+            if k in EMAIL_FIELDS:
+                e = validate_email_strict(v)
+                if e:
+                    email_val = e
+                    email_key = k
+                    break
+        if not email_val:
+            for k, v in pairs:
+                if '@' in v:
+                    e = validate_email_strict(v)
+                    if e:
+                        email_val = e
+                        email_key = k
+                        break
+
+        phone_val = None
+        phone_key = None
+        for k, v in pairs:
+            if k in PHONE_FIELDS:
+                p = normalize_phone_e164(v, default_region='DE')
+                if p:
+                    phone_val = p
+                    phone_key = k
+                    break
+        if not phone_val:
+            for k, v in pairs:
+                p = normalize_phone_e164(v, default_region='DE')
+                if p:
+                    phone_val = p
+                    phone_key = k
+                    break
+
+        name_triplet = extract_name(first, last, full)
+        if name_triplet:
+            mapped_data['name'], mapped_data['surname'] = name_triplet[0], name_triplet[1]
+        if email_val:
+            mapped_data['email'] = email_val
+        if phone_val:
+            mapped_data['phone'] = phone_val
+
+        matched_keys = set(filter(None, [
+            next((k for k, v in pairs if v == first), None),
+            next((k for k, v in pairs if v == last), None),
+            next((k for k, v in pairs if v == full), None),
+            email_key,
+            phone_key,
+        ]))
+
+        for k, v in pairs:
+            if k in BUSINESS_FIELDS:
+                mapped_data['variables']['custom'][k] = v
+                continue
+            if k in matched_keys:
+                continue
+            mapped_data['variables']['custom'][k] = v
+
+        mapped_data['variables']['matched_keys'] = {
+            'first_name': first or '',
+            'last_name': last or '',
+            'full_name': full or '',
+            'email': email_key or '',
+            'phone': phone_key or '',
+        }
+
         logger.info(
-            f"Meta field mapping completed",
+            "Meta field mapping completed",
             extra={
                 'total_fields': len(field_data),
-                'processed_fields': processed_fields,
-                'unmatched_fields': unmatched_fields,
                 'final_mapping': {
                     'name': mapped_data['name'],
                     'surname': mapped_data['surname'],
-                    'email': mapped_data['email'],
-                    'phone': mapped_data['phone'],
-                    'variables_count': len(mapped_data['variables'])
+                    'email_present': bool(mapped_data['email']),
+                    'phone_present': bool(mapped_data['phone']),
+                    'custom_keys': list(mapped_data['variables'].get('custom', {}).keys()),
                 },
-                'raw_field_data': field_data  # For debugging new field types
             }
         )
-        
+
         return mapped_data
     
     def refresh_access_token(self, integration: MetaIntegration) -> bool:
