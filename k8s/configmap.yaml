@@ -19,6 +19,7 @@ data:
   TIME_ZONE: "${TIME_ZONE}"
   ALLOWED_HOSTS: "${ALLOWED_HOSTS}"
   BASE_URL: "${BASE_URL}"
+  FRONTEND_URL: "${FRONTEND_URL}"
   
   # Database configuration (non-sensitive)
   DB_ENGINE: "django.db.backends.postgresql"

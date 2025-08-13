@@ -443,14 +443,14 @@ class MetaWebhookView(viewsets.ViewSet):
                     'status': 'processed_with_agent'
                 }
             else:
-                # Lead was ignored (no active agent or funnel)
-                logger.info(f"Lead {leadgen_id} ignored - no active agent/funnel")
+                # Lead was ignored (no active agent/funnel or invalid fields)
+                logger.info(f"Lead {leadgen_id} ignored - no active agent/funnel or invalid fields")
                 return {
                     'lead_id': None,
                     'meta_leadgen_id': leadgen_id,
                     'form_id': form_id,
                     'workspace': str(meta_integration.workspace.id),
-                    'status': 'ignored_no_agent'
+                    'status': 'ignored_invalid_fields'
                 }
             
         except Exception as e:

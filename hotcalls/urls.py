@@ -111,6 +111,12 @@ urlpatterns = [
     
     # Jambonz Webhooks (for Jambonz to call)
     path('api/integrations/jambonz/', include(('core.management_api.jambonz_api.urls', 'jambonz_webhooks'), namespace='jambonz_webhooks')),
+
+    # Custom Webhook inbound (for user-created webhook sources)
+    path('api/webhooks/', include(('core.management_api.webhook_api.webhook_urls', 'webhook_inbound'), namespace='webhook_inbound')),
+
+    # Webhook source management (CRUD)
+    path('api/webhook-sources/', include(('core.management_api.webhook_api.urls', 'webhook_sources'), namespace='webhook_sources')),
     
     # Workspace Invitation Templates (Public + Authenticated)
     path('invitations/<str:token>/', invitation_detail, name='invitation_detail'),

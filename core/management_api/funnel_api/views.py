@@ -51,7 +51,8 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             'meta_lead_form',
             'meta_lead_form__meta_integration'
         ).prefetch_related(
-            'agent'  # Removed agent__voice to avoid null reference errors
+            'agent',  # Removed agent__voice to avoid null reference errors
+            'webhook_source'  # Add webhook_source for source type detection
         ).order_by('-created_at')
         
         return queryset
@@ -257,6 +258,42 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         output_serializer = LeadFunnelSerializer(funnel)
         return Response(output_serializer.data)
     
+    @extend_schema(
+        summary="Get Funnel Statistics",
+        description="Get statistics for a specific funnel",
+        responses={
+            200: OpenApiResponse(
+                description="Funnel statistics"
+            )
+        }
+    )
+    @action(detail=True, methods=['get'])
+    def variables(self, request, pk=None):
+        """Return available variables (core + custom keys from recent leads)."""
+        funnel = self.get_object()
+        # Core variables always available
+        core_vars = [
+            {'key': 'first_name', 'label': 'Vorname', 'category': 'contact', 'type': 'string'},
+            {'key': 'last_name', 'label': 'Nachname', 'category': 'contact', 'type': 'string'},
+            {'key': 'full_name', 'label': 'Vollständiger Name', 'category': 'contact', 'type': 'string'},
+            {'key': 'email', 'label': 'E-Mail', 'category': 'contact', 'type': 'email'},
+            {'key': 'phone', 'label': 'Telefon', 'category': 'contact', 'type': 'phone'},
+        ]
+        # Collect custom keys from recent leads
+        recent = list(funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100])
+        custom_keys = set()
+        for vars_dict in recent:
+            if isinstance(vars_dict, dict):
+                custom = vars_dict.get('custom') or {}
+                if isinstance(custom, dict):
+                    for k in custom.keys():
+                        custom_keys.add(str(k))
+        custom_vars = [
+            {'key': f'custom.{k}', 'label': k.replace('_', ' ').title(), 'category': 'custom', 'type': 'string'}
+            for k in sorted(custom_keys)
+        ]
+        return Response(core_vars + custom_vars)
+
     @extend_schema(
         summary="Get Funnel Statistics",
         description="Get statistics for a specific funnel",

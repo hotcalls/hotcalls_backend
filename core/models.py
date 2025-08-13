@@ -92,6 +92,7 @@ INTEGRATION_PROVIDER_CHOICES = [
     ('meta', 'Meta (Facebook/Instagram)'),
     ('google', 'Google'),
     ('manual', 'Manual Entry'),
+    ('custom-webhook', 'Custom Webhook'),
 ]
 
 META_INTEGRATION_STATUS_CHOICES = [
@@ -1549,6 +1550,56 @@ class LeadFunnel(models.Model):
     def lead_count(self):
         """Get count of leads from this funnel"""
         return self.leads.count()
+
+
+class WebhookLeadSource(models.Model):
+    """
+    Custom webhook source that feeds leads into a LeadFunnel.
+    Authentication for inbound requests uses a Bearer token.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='webhook_lead_sources'
+    )
+    lead_funnel = models.OneToOneField(
+        'LeadFunnel',
+        on_delete=models.CASCADE,
+        related_name='webhook_source',
+        help_text='Lead funnel connected to this webhook source'
+    )
+    name = models.CharField(max_length=255, help_text='Display name for this webhook source')
+    public_key = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text='Public identifier used in the inbound webhook URL'
+    )
+    token = models.CharField(
+        max_length=128,
+        help_text='Bearer token required in Authorization header'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['public_key']),
+        ]
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        # Auto-generate public_key and token if not set
+        if not self.public_key:
+            # 32 chars urlsafe then stripped to 32 for URL compactness
+            self.public_key = secrets.token_urlsafe(24).replace('-', '').replace('_', '')[:32]
+        if not self.token:
+            self.token = secrets.token_urlsafe(48)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"WebhookLeadSource {self.name} ({self.workspace.workspace_name})"
 
 
 class LeadProcessingStats(models.Model):

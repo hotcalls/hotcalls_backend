@@ -364,6 +364,12 @@ variable "app_base_url" {
   default     = "http://localhost:8000"
 }
 
+variable "app_frontend_url" {
+  description = "Frontend URL for OAuth redirects from .env"
+  type        = string
+  default     = "http://localhost:5173"
+}
+
 variable "container_image_tag" {
   description = "Docker image tag for deployments"
   type        = string
