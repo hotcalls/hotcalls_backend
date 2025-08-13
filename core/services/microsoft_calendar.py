@@ -257,6 +257,57 @@ class MicrosoftCalendarService:
                                 read2_json = read2.json() or {}
                                 if read2_json.get('onlineMeeting'):
                                     data['onlineMeeting'] = read2_json.get('onlineMeeting')
+
+                    # Final fallback: try /me/onlineMeetings (requires OnlineMeetings.* scope; best-effort)
+                    if not (isinstance(data.get('onlineMeeting'), dict) and data['onlineMeeting'].get('joinUrl')):
+                        try:
+                            om_list = self._request(
+                                'GET',
+                                'https://graph.microsoft.com/v1.0/me/onlineMeetings',
+                                params={'$top': '20', '$orderby': 'creationDateTime desc'}
+                            )
+                            if om_list.ok:
+                                om_json = om_list.json() or {}
+                                items = om_json.get('value', [])
+                                # Match by time window overlap and subject, if verfügbar
+                                start_str = payload.get('start')
+                                end_str = payload.get('end')
+                                subj = (payload.get('subject') or payload.get('summary') or '').strip()
+
+                                def iso_parse(s: str):
+                                    try:
+                                        from datetime import datetime
+                                        # Accept 'Z' by replacing
+                                        return datetime.fromisoformat(s.replace('Z', '+00:00'))
+                                    except Exception:
+                                        return None
+
+                                start_dt = iso_parse(start_str) if start_str else None
+                                end_dt = iso_parse(end_str) if end_str else None
+
+                                best = None
+                                for it in items:
+                                    s = it.get('startDateTime') or {}
+                                    e = it.get('endDateTime') or {}
+                                    sdt = iso_parse(s.get('dateTime', '') if isinstance(s, dict) else '')
+                                    edt = iso_parse(e.get('dateTime', '') if isinstance(e, dict) else '')
+                                    title = (it.get('subject') or '').strip()
+                                    if not sdt or not edt:
+                                        continue
+                                    # Overlap check, tolerate few minutes drift
+                                    overlap = True
+                                    if start_dt and end_dt:
+                                        overlap = (sdt <= end_dt) and (edt >= start_dt)
+                                    title_match = True if not subj else (subj.lower() in title.lower() or title.lower() in subj.lower())
+                                    if overlap and title_match:
+                                        best = it
+                                        break
+
+                                if best and best.get('joinWebUrl'):
+                                    data['onlineMeeting'] = data.get('onlineMeeting') or {}
+                                    data['onlineMeeting']['joinUrl'] = best['joinWebUrl']
+                        except Exception:
+                            pass
             except Exception:
                 # Do not fail booking if link cannot be read; the event is created and invitations are sent by provider
                 pass
