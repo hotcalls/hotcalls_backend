@@ -110,17 +110,18 @@ class CalendarViewSet(viewsets.ModelViewSet):
         # Check if this is an MCP request
         if hasattr(self.request, 'google_mcp_agent'):
             # MCP agents can see all active calendars
-            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar')
-            
+            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar', 'microsoft_calendar')
+
         user = self.request.user
-        if user.is_staff:
-            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar')
-        else:
-            # Regular users can only see calendars in their workspaces and only active calendars
-            return Calendar.objects.filter(
-                workspace__users=user,
-                active=True
-            ).select_related('workspace').prefetch_related('google_calendar')
+        # Superusers may see all calendars; everyone else is scoped to their workspaces
+        if user.is_superuser:
+            return Calendar.objects.filter(active=True).select_related('workspace').prefetch_related('google_calendar', 'microsoft_calendar')
+
+        # Staff and regular users: only calendars in the user's workspaces
+        return Calendar.objects.filter(
+            workspace__users=user,
+            active=True
+        ).select_related('workspace').prefetch_related('google_calendar', 'microsoft_calendar')
     
     # 🎯 GOOGLE OAUTH ENDPOINTS
     
