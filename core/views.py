@@ -82,11 +82,8 @@ def accept_invitation(request, token):
         # Auto-accept the invitation and show success
         try:
             invitation.accept(request.user)
-            context = {
-                'workspace_name': invitation.workspace.workspace_name,
-                'workspace_id': str(invitation.workspace.id),
-            }
-            return render(request, 'invitations/invitation_success.html', context)
+            # Redirect to SPA dashboard with workspace selection and skip welcome flow
+            return redirect(f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1")
         except ValueError as e:
             context = {'error_message': str(e)}
             return render(request, 'invitations/invitation_error.html', context, status=400)
@@ -111,11 +108,7 @@ def accept_invitation(request, token):
     # Accept the invitation
     try:
         invitation.accept(request.user)
-        context = {
-            'workspace_name': invitation.workspace.workspace_name,
-            'workspace_id': str(invitation.workspace.id),
-        }
-        return render(request, 'invitations/invitation_success.html', context)
+        return redirect(f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1")
     except ValueError as e:
         context = {'error_message': str(e)}
         return render(request, 'invitations/invitation_error.html', context, status=400)
