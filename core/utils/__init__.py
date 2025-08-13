@@ -318,6 +318,12 @@ def send_workspace_invitation_email(invitation, request=None):
     try:
         # Build invitation URLs
         base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
+        # Always route users through the SPA login first with next/invited_workspace/skip_welcome params
+        login_first_url = (
+            f"{base_url}/login?next=/invitations/{invitation.token}/accept/"
+            f"&invited_workspace={invitation.workspace.id}&skip_welcome=1"
+        )
+        # Keep legacy paths for reference (unused in email, but kept for clarity)
         invitation_url = f"{base_url}/invitations/{invitation.token}/"
         accept_url = f"{base_url}/invitations/{invitation.token}/accept/"
         
@@ -400,7 +406,7 @@ def send_workspace_invitation_email(invitation, request=None):
                     <p>Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.</p>
                     
                 <p style="text-align: center;">
-                    <a href="{accept_url}" class="button">🎯 Einladung jetzt annehmen</a>
+                    <a href="{login_first_url}" class="button">🎯 Einladung jetzt annehmen</a>
                 </p>
                 
                 <p style="text-align: center; margin: 20px 0; font-size: 14px; color: #666;">
@@ -408,7 +414,7 @@ def send_workspace_invitation_email(invitation, request=None):
                 </p>
                 
                 <p>Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
-                <p><a href="{invitation_url}" class="link">{invitation_url}</a></p>
+                <p><a href="{login_first_url}" class="link">{login_first_url}</a></p>
                     
                     <div class="important">
                         <p><strong>Wichtig:</strong> Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.</p>
@@ -440,11 +446,8 @@ Hallo!
 
 Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.
 
-🎯 EINLADUNG ANNEHMEN:
-{accept_url}
-
-Oder besuche die Einladungsseite:
-{invitation_url}
+🎯 EINLADUNG ANNEHMEN (Login erforderlich):
+{login_first_url}
 
 Wichtig: Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.
 

@@ -24,8 +24,14 @@ def invitation_detail(request, token):
         }
         return render(request, 'invitations/invitation_error.html', context, status=404)
 
-    # Always redirect to the login page with next pointing to acceptance URL
-    return redirect(f"/login?next=/invitations/{token}/accept/")
+    # Always redirect to the login page with next pointing to acceptance URL,
+    # and include invited_workspace + skip_welcome to enforce post-login routing
+    try:
+        invitation = WorkspaceInvitation.objects.get(token=token)
+        invited_workspace_param = f"&invited_workspace={invitation.workspace.id}&skip_welcome=1"
+    except WorkspaceInvitation.DoesNotExist:
+        invited_workspace_param = ""
+    return redirect(f"/login?next=/invitations/{token}/accept/{invited_workspace_param}")
 
 
 @require_http_methods(["GET", "POST"])
@@ -58,7 +64,10 @@ def accept_invitation(request, token):
         return render(request, 'invitations/invitation_auto_accept.html', {
             'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
             'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
-            'login_redirect': f"/login?next={request.get_full_path()}"
+            'login_redirect': (
+                f"/login?next=/invitations/{token}/accept/"
+                f"&invited_workspace={invitation.workspace.id}&skip_welcome=1"
+            )
         })
     
     # Handle POST requests (from invitation detail form)
