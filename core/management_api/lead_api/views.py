@@ -18,6 +18,7 @@ from core.utils.validators import (
     _normalize_key,
 )
 import uuid
+import re
 
 
 @extend_schema_view(
@@ -427,6 +428,27 @@ class LeadViewSet(viewsets.ModelViewSet):
                             phone_val = p
                             phone_key = k
                             break
+                if not phone_val:
+                    # Fallback: accept first phone-like string (prefer known phone fields), minimal sanitization
+                    def _digits_count(s: str) -> int:
+                        return sum(ch.isdigit() for ch in s)
+
+                    candidate = None
+                    # Prefer values from known phone fields
+                    for k, v in pairs:
+                        if (k in PHONE_FIELDS or any(t in k for t in ['phone', 'telefon', 'tel', 'mobile', 'handy'])) and _digits_count(v) >= 6:
+                            candidate = re.sub(r"[^0-9+]", "", v)
+                            phone_key = k
+                            break
+                    # Otherwise any field with 6+ digits
+                    if candidate is None:
+                        for k, v in pairs:
+                            if _digits_count(v) >= 6:
+                                candidate = re.sub(r"[^0-9+]", "", v)
+                                phone_key = k
+                                break
+                    if candidate:
+                        raw_phone_candidate = candidate
 
                 # Name resolution
                 name_first = ''
