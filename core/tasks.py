@@ -295,16 +295,41 @@ def trigger_call(self, call_task_id):
                     "result": call_result,
                 }
             else:
-                # Regular retry logic for ALL failures
+                # Check if it's a token issue (don't count as attempt)
+                if call_result.get("abort_reason") == "token_missing":
+                    # Use the existing utility for preflight failures
+                    from core.utils.calltask_utils import reschedule_task_preflight_failed
+                    reschedule_task_preflight_failed(call_task, hint="token_missing")
+                    logger.warning(f"📅 Task {call_task_id} rescheduled due to missing token (attempts stay at {call_task.attempts})")
+                    return {
+                        "success": False,
+                        "call_task_id": call_task_id,
+                        "message": "No token available - rescheduled without incrementing attempts",
+                        "result": call_result,
+                        "attempts": call_task.attempts,
+                    }
+                
+                # Regular retry logic for actual call failures
                 max_retries = agent.max_retries if agent else 3
                 if call_task.attempts < max_retries:
                     call_task.increment_retries(max_retries)
                     call_task.status = CallStatus.RETRY
-                    call_task.next_call = timezone.now() + timedelta(
-                        minutes=agent.retry_interval if agent else 30
-                    )
+                    
+                    # Use the utility to calculate next call time properly
+                    from core.utils.calltask_utils import calculate_next_call_time
+                    call_task.next_call = calculate_next_call_time(agent, timezone.now())
+                    
+                    # Add retry reason for the failure
+                    retry_reasons = call_task.retry_reasons or []
+                    retry_reasons.append({
+                        'reason': 'call_failed',
+                        'hint': call_result.get('error', 'Unknown error'),
+                        'at': timezone.now().isoformat()
+                    })
+                    call_task.retry_reasons = retry_reasons
+                    
                     call_task.save(
-                        update_fields=["status", "attempts", "next_call", "updated_at"]
+                        update_fields=["status", "attempts", "next_call", "retry_reasons", "updated_at"]
                     )
                 else:
                     # Max retries reached - delete the task

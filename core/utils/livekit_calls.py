@@ -75,15 +75,20 @@ async def _make_call_async(
         # Step 0: Check if the agent has a valid token BEFORE dispatching
         agent_name = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
         
-        # Import Django models here to check token
+        # Import Django models and sync_to_async for async context
         from django.utils import timezone
         from core.models import LiveKitAgent
+        from asgiref.sync import sync_to_async
         
-        # Check if this specific agent has a valid token
-        has_valid_token = LiveKitAgent.objects.filter(
-            name=agent_name,
-            expires_at__gt=timezone.now()
-        ).exists()
+        # Check if this specific agent has a valid token (using sync_to_async for Django ORM)
+        @sync_to_async
+        def check_agent_token():
+            return LiveKitAgent.objects.filter(
+                name=agent_name,
+                expires_at__gt=timezone.now()
+            ).exists()
+        
+        has_valid_token = await check_agent_token()
         
         if not has_valid_token:
             print(f"❌ Agent {agent_name} has no valid token - ABORTING CALL to {lead_data['phone']}")
