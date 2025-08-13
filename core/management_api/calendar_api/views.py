@@ -10,18 +10,17 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 from django.db import transaction
 
-from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace, GoogleCalendarMCPAgent
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace
 from core.services.google_calendar import GoogleCalendarService, GoogleOAuthService, CalendarServiceFactory
 from .serializers import (
     CalendarSerializer, GoogleCalendarConnectionSerializer,
     CalendarConfigurationSerializer, CalendarConfigurationCreateSerializer,
     GoogleOAuthCallbackSerializer, AvailabilityRequestSerializer,
     AvailabilityResponseSerializer, BookingRequestSerializer,
-    BookingResponseSerializer, GoogleCalendarMCPAgentListSerializer,
-    GoogleCalendarMCPTokenRequestSerializer, GoogleCalendarMCPTokenResponseSerializer
+    BookingResponseSerializer
 )
 from .filters import CalendarFilter, CalendarConfigurationFilter
-from .permissions import CalendarPermission, CalendarConfigurationPermission, GoogleCalendarMCPPermission, SuperuserOnlyPermission, GoogleCalendarMCPPermission
+from .permissions import CalendarPermission, CalendarConfigurationPermission, SuperuserOnlyPermission, CalendarLiveKitPermission
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +91,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
     - Event creation capabilities
     """
     queryset = Calendar.objects.all()
-    permission_classes = [GoogleCalendarMCPPermission]
+    permission_classes = [CalendarLiveKitPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarFilter
     search_fields = ['name', 'workspace__workspace_name']
@@ -709,7 +708,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     - Calendar conflict checking
     """
     queryset = CalendarConfiguration.objects.all()
-    permission_classes = [GoogleCalendarMCPPermission]
+    permission_classes = [CalendarLiveKitPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarConfigurationFilter
     search_fields = ['calendar__name', 'calendar__workspace__workspace_name']
@@ -1333,159 +1332,4 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         return event_data 
 
 
-# ===== GOOGLE CALENDAR MCP TOKEN MANAGEMENT =====
-
-@extend_schema_view(
-    list=extend_schema(
-        summary="📋 List Google Calendar MCP agents",
-        description="""
-        List all Google Calendar MCP agents (without exposing tokens).
-        
-        **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot access
-        - **❌ Staff Members**: Cannot access
-        - **✅ Superuser ONLY**: Can view agent list
-        
-        **📊 Information Shown**:
-        - Agent ID and name
-        - Creation and expiration dates
-        - Token validity status
-        - **NO token values exposed**
-        """,
-        responses={
-            200: OpenApiResponse(
-                response=GoogleCalendarMCPAgentListSerializer(many=True),
-                description="✅ Google Calendar MCP agents retrieved successfully"
-            ),
-            403: OpenApiResponse(description="🚫 Superuser access required")
-        },
-        tags=["Google Calendar MCP Token Management"]
-    ),
-    destroy=extend_schema(
-        summary="🗑️ Delete Google Calendar MCP token",
-        description="""
-        Delete a Google Calendar MCP agent token permanently.
-        
-        **🔐 Permission Requirements**:
-        - **❌ Regular Users**: Cannot access
-        - **❌ Staff Members**: Cannot access
-        - **✅ Superuser ONLY**: Can delete tokens
-        
-        **⚠️ Warning**:
-        - This permanently deletes the agent token
-        - Any MCP systems using this token will lose authentication
-        - Cannot be undone - token must be regenerated if needed
-        """,
-        responses={
-            204: OpenApiResponse(description="✅ Token deleted successfully"),
-            403: OpenApiResponse(description="🚫 Superuser access required"),
-            404: OpenApiResponse(description="🚫 Token not found")
-        },
-        tags=["Google Calendar MCP Token Management"]
-    ),
-    create=extend_schema(exclude=True),  # Hidden - use generate_token instead
-    update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
-    partial_update=extend_schema(exclude=True),  # Hidden - tokens cannot be updated
-)
-class GoogleCalendarMCPTokenViewSet(viewsets.ModelViewSet):
-    """
-    🔐 **Google Calendar MCP Token Management (Superuser Only)**
-    
-    Manages Google Calendar MCP authentication tokens with strict access control:
-    - **🚫 Staff and Regular Users**: No access
-    - **✅ Superuser Only**: Can generate and manage tokens
-    """
-    queryset = GoogleCalendarMCPAgent.objects.all().order_by('-created_at')
-    serializer_class = GoogleCalendarMCPAgentListSerializer
-    permission_classes = [SuperuserOnlyPermission]
-    
-    def create(self, request, *args, **kwargs):
-        """Block direct creation - use generate_token action instead"""
-        return Response(
-            {'detail': 'Use /generate_token/ endpoint to create tokens'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
-    
-    def update(self, request, *args, **kwargs):
-        """Block updates - tokens should be replaced via generate_token"""
-        return Response(
-            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
-    
-    def partial_update(self, request, *args, **kwargs):
-        """Block partial updates"""
-        return Response(
-            {'detail': 'Tokens cannot be updated. Use /generate_token/ to replace.'}, 
-            status=status.HTTP_405_METHOD_NOT_ALLOWED
-        )
-    
-    @extend_schema(
-        summary="🔑 Generate Google Calendar MCP token",
-        description="""
-        Generate a new Google Calendar MCP authentication token for an agent.
-        
-        **🔐 Access Control**:
-        - **❌ Regular Users**: Cannot access
-        - **❌ Staff Members**: Cannot access  
-        - **✅ Superuser ONLY**: Can generate tokens
-        
-        **📝 Token Management**:
-        - Each agent name can have only ONE active token
-        - If agent already exists, old token is replaced
-        - Token expires after 1 year
-        - Secure random string generation
-        
-        **🔄 Replacement Logic**:
-        - Existing agent → Replace token, extend expiration
-        - New agent → Create new record with fresh token
-        
-        **🛡️ Security Features**:
-        - 64-character URL-safe random tokens
-        - Automatic expiration handling
-        - Unique constraints on agent names and tokens
-        """,
-        request=GoogleCalendarMCPTokenRequestSerializer,
-        responses={
-            201: OpenApiResponse(
-                response=GoogleCalendarMCPTokenResponseSerializer,
-                description="✅ Token generated successfully"
-            ),
-            400: OpenApiResponse(description="❌ Validation error"),
-            403: OpenApiResponse(description="🚫 Superuser access required")
-        },
-        tags=["Google Calendar MCP Token Management"]
-    )
-    @action(detail=False, methods=['post'])
-    def generate_token(self, request):
-        """
-        Generate or replace a Google Calendar MCP authentication token for an agent.
-        
-        Only superusers can access this endpoint.
-        Each agent name can have only one active token.
-        """
-        serializer = GoogleCalendarMCPTokenRequestSerializer(data=request.data)
-        
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        agent_name = serializer.validated_data['agent_name']
-        
-        with transaction.atomic():
-            # Check if agent already exists
-            try:
-                agent = GoogleCalendarMCPAgent.objects.get(name=agent_name)
-                # Replace existing token
-                agent.token = GoogleCalendarMCPAgent.generate_token()
-                agent.expires_at = timezone.now() + timezone.timedelta(days=365)
-                agent.save(update_fields=['token', 'expires_at'])
-                
-            except GoogleCalendarMCPAgent.DoesNotExist:
-                # Create new agent
-                agent = GoogleCalendarMCPAgent.objects.create(name=agent_name)
-        
-        response_serializer = GoogleCalendarMCPTokenResponseSerializer(agent)
-        return Response(response_serializer.data, status=status.HTTP_201_CREATED) 
-
-# MOVED TO: /api/google-calendar-mcp/tokens/current-token/
-# See core.management_api.google_calendar_mcp_api.views for the new implementation 
+## Google Calendar MCP token management removed in unified LiveKit-only flow

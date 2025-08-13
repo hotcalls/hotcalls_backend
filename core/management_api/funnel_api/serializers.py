@@ -106,7 +106,14 @@ class LeadProcessingStatsSerializer(serializers.ModelSerializer):
             'total_ignored', 'processing_rate',
             'created_at', 'updated_at'
         ]
-        read_only_fields = '__all__'
+        read_only_fields = [
+            'id', 'workspace', 'workspace_name', 'date',
+            'total_received', 'processed_with_agent',
+            'ignored_no_funnel', 'ignored_no_agent',
+            'ignored_inactive_agent', 'ignored_inactive_funnel',
+            'total_ignored', 'processing_rate',
+            'created_at', 'updated_at'
+        ]
 
 
 class AssignAgentSerializer(serializers.Serializer):

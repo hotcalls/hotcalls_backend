@@ -13,6 +13,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
@@ -50,7 +51,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
+      - .:/app:delegated
       - static_volume:/app/staticfiles
     depends_on:
       db:
@@ -61,6 +62,93 @@ services:
       sh -c "python manage.py migrate &&
              python manage.py collectstatic --noinput &&
              python manage.py runserver 0.0.0.0:8000"
+  frontend:
+    image: node:18-bullseye
+    working_dir: /app/frontend
+    env_file: .env
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WDS_SOCKET_PORT=5173
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app/frontend:delegated
+      - /app/frontend/node_modules
+    command: bash -lc "npm install && npm run dev -- --host 0.0.0.0"
+
+  mcp:
+    image: python:3.12-slim
+    working_dir: /app/google-calendar-mcp
+    env_file: .env
+    environment:
+      - CALENDAR_API_URL=http://backend:8000
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8001:8000"
+    depends_on:
+      backend:
+        condition: service_started
+    volumes:
+      - ./google-calendar-mcp:/app/google-calendar-mcp:delegated
+    command: bash -lc "pip install -e . || true; pip install watchfiles && python -m watchfiles 'python server.py'"
+
+  outboundagent:
+    image: python:3.11-slim
+    working_dir: /app/outboundagent
+    env_file: .env
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - MCP_SERVER_URL=http://mcp:8000
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./outboundagent:/app/outboundagent:delegated
+    command: bash -lc "pip install -r requirements.txt && pip install watchfiles && python -m watchfiles 'python agent.py start'"
+
+  celery:
+    build:
+      context: .
+      target: development
+    env_file: .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
+      - ENVIRONMENT=development
+      - DB_HOST=db
+      - REDIS_HOST=redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app:delegated
+    command: >
+      bash -lc "celery -A hotcalls worker -l info -Q celery"
+
+  celery-beat:
+    build:
+      context: .
+      target: development
+    env_file: .env
+    environment:
+      - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
+      - ENVIRONMENT=development
+      - DB_HOST=db
+      - REDIS_HOST=redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app:delegated
+    command: >
+      bash -lc "celery -A hotcalls beat -l info"
 
 
 volumes:

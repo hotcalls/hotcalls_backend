@@ -33,12 +33,8 @@ spec:
         envFrom:
         - configMapRef:
             name: ${PROJECT_PREFIX}-google-calendar-mcp-config
-        - secretRef:
-            name: ${PROJECT_PREFIX}-google-calendar-mcp-secrets
         env:
-        # Additional environment variables for clarity
-        - name: AGENT_NAME
-          value: "${MCP_AGENT_NAME}"
+        # No additional MCP env; token passed from agent via header/param
         resources:
           requests:
             memory: ${GOOGLE_CALENDAR_MCP_MEMORY_REQUEST}

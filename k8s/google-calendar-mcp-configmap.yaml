@@ -11,20 +11,16 @@ data:
   # MCP Server Configuration
   MCP_HOST: "${MCP_HOST}"
   MCP_PORT: "${MCP_PORT}"
-  MCP_TRANSPORT: "${MCP_TRANSPORT}"
-  MCP_AGENT_NAME: "${MCP_AGENT_NAME}"
+  # Transport/agent name removed in unified LiveKit flow
   
   # API Configuration
   API_BASE_URL: "${API_BASE_URL}"
   
   # Database Configuration (shared with backend)
-  DB_HOST: "${DB_HOST}"
-  DB_PORT: "${DB_PORT}"
-  DB_NAME: "${DB_NAME}"
-  DB_USER: "${DB_USER}"
+  # Not required for MCP anymore
   
   # Environment
   ENVIRONMENT: "${ENVIRONMENT}"
   
   # Debug settings
-  POSTGRES_ENABLED: "true"
+  POSTGRES_ENABLED: "false"

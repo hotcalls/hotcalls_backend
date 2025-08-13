@@ -1352,12 +1352,19 @@ setup_kubernetes_environment() {
     export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
     export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
     
-    # Base64 encode Google Calendar MCP secrets for Kubernetes
-    export DB_PASSWORD_B64="$(echo -n "${DB_PASSWORD}" | base64)"
-    export DB_HOST_B64="$(echo -n "${DB_HOST}" | base64)"
-    export DB_PORT_B64="$(echo -n "${DB_PORT:-5432}" | base64)"
-    export DB_NAME_B64="$(echo -n "${DB_NAME}" | base64)"
-    export DB_USER_B64="$(echo -n "${DB_USER}" | base64)"
+    # Outbound agent requires DB access (read-only recommended). Provide Base64 for secrets.
+    # Prefer AGENT_DB_* if set; otherwise fall back to DB_*.
+    : "${AGENT_DB_HOST:=${DB_HOST}}"
+    : "${AGENT_DB_PORT:=${DB_PORT:-5432}}"
+    : "${AGENT_DB_NAME:=${DB_NAME}}"
+    : "${AGENT_DB_USER:=${DB_USER}}"
+    : "${AGENT_DB_PASSWORD:=${DB_PASSWORD}}"
+
+    export DB_HOST_B64="$(echo -n "${AGENT_DB_HOST}" | base64)"
+    export DB_PORT_B64="$(echo -n "${AGENT_DB_PORT}" | base64)"
+    export DB_NAME_B64="$(echo -n "${AGENT_DB_NAME}" | base64)"
+    export DB_USER_B64="$(echo -n "${AGENT_DB_USER}" | base64)"
+    export DB_PASSWORD_B64="$(echo -n "${AGENT_DB_PASSWORD}" | base64)"
     
     # LiveKit Agent Configuration: Managed via database (no setup needed)
     
@@ -1902,6 +1909,29 @@ EOF
     fi
 }
 
+# Create outbound agent read-only DB user (idempotent)
+create_agent_ro_user() {
+    log_info "Ensuring outbound agent read-only DB user exists..."
+
+    NAMESPACE="${PROJECT_NAME}-${ENVIRONMENT}"
+
+    if [[ -z "${AGENT_DB_USER:-}" || -z "${AGENT_DB_PASSWORD:-}" ]]; then
+        log_info "AGENT_DB_USER/AGENT_DB_PASSWORD not set. Skipping agent RO user creation."
+        return 0
+    fi
+
+    # Exec into backend pod (has psql) to run SQL
+    BACKEND_POD=$(kubectl get pods -n "$NAMESPACE" -l app.kubernetes.io/component=backend -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+    if [[ -z "$BACKEND_POD" ]]; then
+        log_warning "Backend pod not found; cannot create agent RO user now."
+        return 0
+    fi
+
+    log_info "Creating/ensuring agent RO user inside Postgres..."
+    kubectl exec "$BACKEND_POD" -n "$NAMESPACE" -- bash -lc "psql \"postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=${DB_SSLMODE}\" -v ON_ERROR_STOP=1 -c \"DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${AGENT_DB_USER}') THEN CREATE ROLE \"${AGENT_DB_USER}\" LOGIN PASSWORD '${AGENT_DB_PASSWORD}'; END IF; END$$;\" -c \"GRANT CONNECT ON DATABASE \"${DB_NAME}\" TO \"${AGENT_DB_USER}\";\" -c \"GRANT USAGE ON SCHEMA public TO \"${AGENT_DB_USER}\";\" -c \"GRANT SELECT ON TABLE public.core_livekit_agent TO \"${AGENT_DB_USER}\";\"" || true
+
+    log_success "Agent read-only user ensured."
+}
 # Install nginx ingress controller if not present
 install_ingress_controller() {
     log_info "Checking for nginx ingress controller..."
@@ -2539,6 +2569,7 @@ main() {
         
         build_and_push_images
         deploy_kubernetes
+        create_agent_ro_user
         wait_for_deployment
         verify_database_connection
         show_status
@@ -2589,6 +2620,7 @@ main() {
         
         build_and_push_images
         deploy_kubernetes
+        create_agent_ro_user
         wait_for_deployment
         verify_database_connection
         show_status

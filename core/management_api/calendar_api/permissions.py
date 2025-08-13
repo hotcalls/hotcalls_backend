@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from core.models import GoogleCalendarMCPAgent
+from core.models import LiveKitAgent
 
 
 class CalendarPermission(permissions.BasePermission):
@@ -71,89 +71,56 @@ class CalendarConfigurationPermission(permissions.BasePermission):
         return False 
 
 
-class GoogleCalendarMCPPermission(permissions.BasePermission):
+class CalendarLiveKitPermission(permissions.BasePermission):
     """
-    Permission class for Google Calendar MCP agents using PURE token-based authentication.
-    
-    **🔑 MCP Authentication (Primary):**
-    - Uses HTTP_X_GOOGLE_MCP_TOKEN header for authentication
-    - Validates token against core_google_calendar_mcp_agent table
-    - NO Django user authentication required for MCP requests
-    - Grants full access when valid MCP token is provided
-    
-    **👤 Fallback Authentication (Secondary):**
-    - Falls back to normal Django authentication for non-MCP requests
-    - Maintains backward compatibility for regular users
+    Unified permission for Calendar APIs.
+    - Primary path: LiveKit token via HTTP_X_LIVEKIT_TOKEN header (bypasses Django auth)
+    - Otherwise: fall back to standard Django user auth for regular users
     """
-    
+
     def has_permission(self, request, view):
-        # PRIMARY: Check for MCP token authentication first
-        if self._is_valid_mcp_request(request):
-            # MCP token valid - grant full access, NO Django auth needed
+        # Primary: allow requests authenticated via LiveKit token
+        if self._is_valid_livekit_request(request):
             return True
-        
-        # FALLBACK: Only check Django auth if NOT an MCP request
-        # This allows MCP to completely bypass Django authentication
+
+        # Otherwise require normal Django auth
         if not (request.user and request.user.is_authenticated):
             return False
-        
-        # Regular Django auth logic for non-MCP requests
+
+        # Read access for authenticated users
         if request.method in permissions.SAFE_METHODS:
             return True
-        
-        # Allow all authenticated users to access Google OAuth functionality
+
+        # Allow authenticated users to initiate Google OAuth flow
         if hasattr(view, 'action') and view.action in ['get_google_auth_url']:
             return True
-        
+
+        # Write access requires staff
         return request.user.is_staff
-    
+
     def has_object_permission(self, request, view, obj):
-        # PRIMARY: MCP requests get full object-level permissions
-        if self._is_valid_mcp_request(request):
-            # MCP token grants full access to all objects
+        # LiveKit requests get full object-level permissions
+        if self._is_valid_livekit_request(request):
             return True
-            
-        # FALLBACK: Regular Django auth logic for non-MCP requests
+
+        # Regular Django auth logic for non-LiveKit requests
         if request.method in permissions.SAFE_METHODS:
             return request.user and request.user.is_authenticated
-        
+
         return request.user.is_staff
-    
-    def _is_valid_mcp_request(self, request):
-        """
-        Check if request has valid Google Calendar MCP token.
-        
-        **🔍 Token Validation Process:**
-        1. Extract HTTP_X_GOOGLE_MCP_TOKEN from headers
-        2. Query core_google_calendar_mcp_agent table for matching token
-        3. Verify token has not expired (expires_at > now)
-        4. Store agent info in request for potential logging
-        
-        **✅ Returns True:** Valid MCP token found and not expired
-        **❌ Returns False:** No token, invalid token, or expired token
-        """
-        mcp_token = request.META.get('HTTP_X_GOOGLE_MCP_TOKEN')
-        
-        if not mcp_token:
+
+    def _is_valid_livekit_request(self, request) -> bool:
+        """Validate LiveKit token header against LiveKitAgent tokens."""
+        token = request.META.get('HTTP_X_LIVEKIT_TOKEN')
+        if not token:
             return False
-        
         try:
-            from core.models import GoogleCalendarMCPAgent
-            
-            # Find MCP agent with this token (SQL query to core_google_calendar_mcp_agent)
-            agent = GoogleCalendarMCPAgent.objects.get(token=mcp_token)
-            
-            # Check if token is still valid (not expired)
+            agent = LiveKitAgent.objects.get(token=token)
             if not agent.is_valid():
                 return False
-            
-            # Store agent info in request for potential use/logging
-            request.google_mcp_agent = agent
+            request.livekit_agent = agent
             return True
-            
-        except GoogleCalendarMCPAgent.DoesNotExist:
-            return False
-        except Exception as e:
+        except LiveKitAgent.DoesNotExist:
             return False
 
 

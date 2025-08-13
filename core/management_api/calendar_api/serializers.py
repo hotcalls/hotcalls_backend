@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace, GoogleCalendarMCPAgent
+from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, GoogleCalendar, Workspace
 
 
 class GoogleCalendarDetailSerializer(serializers.ModelSerializer):
@@ -274,43 +274,4 @@ class BookingResponseSerializer(serializers.Serializer):
     config_name = serializers.CharField() 
 
 
-# ===== GOOGLE CALENDAR MCP TOKEN MANAGEMENT =====
-
-class GoogleCalendarMCPTokenRequestSerializer(serializers.Serializer):
-    """Serializer for Google Calendar MCP token generation request"""
-    
-    agent_name = serializers.CharField(
-        max_length=255, 
-        help_text="Unique MCP agent name for Google Calendar authentication",
-        required=True
-    )
-    
-    def validate_agent_name(self, value):
-        """Ensure agent name is not empty and stripped"""
-        if not value or not value.strip():
-            raise serializers.ValidationError("Agent name cannot be empty")
-        return value.strip()
-
-
-class GoogleCalendarMCPTokenResponseSerializer(serializers.ModelSerializer):
-    """Serializer for Google Calendar MCP token response"""
-    
-    class Meta:
-        model = GoogleCalendarMCPAgent
-        fields = ['id', 'name', 'token', 'created_at', 'expires_at']
-        read_only_fields = ['id', 'token', 'created_at', 'expires_at']
-
-
-class GoogleCalendarMCPAgentListSerializer(serializers.ModelSerializer):
-    """Serializer for listing Google Calendar MCP agents (no token exposure)"""
-    
-    is_valid = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = GoogleCalendarMCPAgent
-        fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
-        read_only_fields = ['id', 'name', 'created_at', 'expires_at', 'is_valid']
-    
-    def get_is_valid(self, obj):
-        """Check if the MCP agent token is still valid"""
-        return obj.is_valid() 
+## Google Calendar MCP token serializers removed in unified LiveKit-only flow
