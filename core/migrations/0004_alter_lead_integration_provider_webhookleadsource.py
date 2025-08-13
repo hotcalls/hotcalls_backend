@@ -8,7 +8,8 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0003_add_lead_processing_stats'),
+        # Previous intermediate migrations were squashed into 0001_initial
+        ('core', '0001_initial'),
     ]
 
     operations = [

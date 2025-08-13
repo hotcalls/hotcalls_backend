@@ -60,6 +60,7 @@ RETRY_WITHOUT_INCREMENT_REASONS = [
     DisconnectionReason.ERROR_HOTCALLS,                  # HotCalls system error
     DisconnectionReason.ERROR_UNKNOWN,                 # Unknown system error
     DisconnectionReason.REGISTERED_CALL_TIMEOUT,       # System timeout
+    DisconnectionReason.PREFLIGHT_CALL_LOG_FAILED,     # Preflight gate failed
 ]
 
 
@@ -178,6 +179,39 @@ def handle_retry_without_increment(call_task, call_log):
     call_task.save(update_fields=['status', 'next_call'])
     
     logger.info(f"CallTask {call_task.id} retrying without increment at {call_task.next_call} (technical failure: {call_log.disconnection_reason})")
+
+
+def reschedule_task_preflight_failed(call_task: CallTask, hint: str) -> CallTask:
+    """
+    Reschedule a CallTask due to preflight failure WITHOUT incrementing attempts.
+
+    Appends an entry to `retry_reasons` with
+    { "reason": DisconnectionReason.PREFLIGHT_CALL_LOG_FAILED, "hint": hint, "at": iso8601 }.
+
+    Args:
+        call_task: CallTask to update
+        hint: one of "token_missing", "token_invalid", "token_mismatch"
+
+    Returns:
+        The updated CallTask instance
+    """
+    agent = call_task.agent
+    # Keep attempts unchanged
+    call_task.status = CallStatus.RETRY
+    call_task.next_call = calculate_next_call_time(agent, timezone.now())
+
+    entry = {
+        'reason': DisconnectionReason.PREFLIGHT_CALL_LOG_FAILED,
+        'hint': hint,
+        'at': timezone.now().isoformat()
+    }
+    reasons_list = call_task.retry_reasons or []
+    reasons_list.append(entry)
+    call_task.retry_reasons = reasons_list
+
+    call_task.save(update_fields=['status', 'next_call', 'retry_reasons', 'updated_at'])
+    logger.info(f"CallTask {call_task.id} rescheduled (preflight failed: {hint}); next_call={call_task.next_call}")
+    return call_task
 
 
 def calculate_next_call_time(agent, base_time):

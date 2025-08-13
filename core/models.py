@@ -50,6 +50,8 @@ class DisconnectionReason(models.TextChoices):
     ERROR_UNKNOWN = 'error_unknown', 'Unknown Error'
     ERROR_USER_NOT_JOINED = 'error_user_not_joined', 'User Not Joined'
     REGISTERED_CALL_TIMEOUT = 'registered_call_timeout', 'Registered Call Timeout'
+    # Preflight
+    PREFLIGHT_CALL_LOG_FAILED = 'preflight_call_log_failed', 'Preflight Call Log Failed'
 
 
 # Enum Choices
@@ -1807,6 +1809,8 @@ class CallTask(models.Model):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Retry reason history (append-only)
+    retry_reasons = models.JSONField(default=list, help_text="Append-only list of retry reason dicts: {reason, hint, at}")
     
     class Meta:
         ordering = ['-created_at']

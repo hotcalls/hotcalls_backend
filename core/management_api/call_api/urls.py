@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CallLogViewSet, CallTaskViewSet, make_test_call
+from .views import CallLogViewSet, CallTaskViewSet, make_test_call, preflight
 
 # Create router and register viewsets
 router = DefaultRouter()
@@ -11,4 +11,6 @@ urlpatterns = [
     path('', include(router.urls)),
     # Direct test call endpoint for easier frontend access
     path('make_test_call/', make_test_call, name='make_test_call'),
+    # Preflight endpoint for outbound agent
+    path('preflight/', preflight, name='preflight'),
 ] 

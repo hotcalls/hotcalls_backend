@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-# no module-level Count import to avoid lints; import Count locally where needed
+# Avoid unused Count import at module level; import where needed
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
 from django.utils import timezone
@@ -9,6 +9,7 @@ from django.core.exceptions import PermissionDenied
 import logging
 
 from core.models import CallLog, Agent, Lead, CallTask, CallStatus
+from core.models import LiveKitAgent
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer, 
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
@@ -856,7 +857,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def duration_distribution(self, request):
         """Get call duration distribution analysis"""
-        from django.db.models import Count, Q
+        from django.db.models import Q
         
         total_calls = CallLog.objects.count()
         
@@ -1160,5 +1161,84 @@ def make_test_call(request):
         'success': True,
         'call_task_id': str(call_task.id)
     }, status=status.HTTP_201_CREATED)
+
+
+# ======= Preflight Endpoint ========
+@extend_schema(
+    summary="🧪 Outbound call preflight",
+    description="Validate that the agent has a valid LiveKit call-log token before starting a call."
+                " No auth required; used internally by outbound agent.",
+    request=dict,
+    responses={
+        204: OpenApiResponse(description="Preflight OK"),
+        404: OpenApiResponse(description="CallTask not found"),
+        503: OpenApiResponse(description="Preflight failed; task rescheduled without attempt increment")
+    },
+    tags=["Call Management"]
+)
+@api_view(['POST'])
+@permission_classes([permissions.AllowAny])
+def preflight(request):
+    """Single gate to allow/deny starting an outbound call.
+
+    Request JSON: { "task_id": str, "token_sha256": str }
+    Behavior:
+      - If token is present, valid, and matches an active LiveKitAgent, return 204.
+      - Otherwise: set task to RETRY without increment, compute next_call, append retry_reasons,
+        and return 503 with reasons.
+    """
+    try:
+        payload = request.data or {}
+        task_id = payload.get('task_id')
+        token_sha256 = (payload.get('token_sha256') or '').strip().lower()
+        if not task_id:
+            return Response({'error': 'task_id required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Load task
+        try:
+            call_task = CallTask.objects.select_related('agent').get(id=task_id)
+        except CallTask.DoesNotExist:
+            return Response({'error': 'CallTask not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Evaluate token conditions
+        reasons = []
+        if token_sha256 == "":
+            reasons.append('token_missing')
+            matched_agent = None
+        else:
+            matched_agent = None
+            for agent in LiveKitAgent.objects.all():
+                import hashlib
+                h = hashlib.sha256(agent.token.encode('utf-8')).hexdigest()
+                if h == token_sha256:
+                    matched_agent = agent
+                    break
+            if matched_agent is None:
+                reasons.append('token_mismatch')
+            elif not matched_agent.is_valid():
+                reasons.append('token_invalid')
+
+        if not reasons:
+            # Happy path
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        # Unhappy path: reschedule without increment
+        from core.utils.calltask_utils import reschedule_task_preflight_failed
+        from django.db import transaction
+        with transaction.atomic():
+            call_task.refresh_from_db()
+            reschedule_task_preflight_failed(call_task, reasons[0])
+
+        retry_minutes = getattr(call_task.agent, 'retry_interval', 30)
+        return Response({
+            'action': 'rescheduled',
+            'task_id': str(call_task.id),
+            'retry_in_minutes': retry_minutes,
+            'reasons': reasons
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    except Exception as e:
+        logger.error(f"Preflight endpoint error: {e}")
+        return Response({'error': 'internal_error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
  

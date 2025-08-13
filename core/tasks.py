@@ -223,6 +223,7 @@ def trigger_call(self, call_task_id):
             "zip_code": lead.zip_code if lead else "",
             "country": lead.country if lead else "",
             "notes": lead.notes if lead else "Test call",
+            "call_task_id": str(call_task.id),
             "metadata": lead.metadata
             if lead
             else {"test_call": True, "call_task_id": str(call_task.id)},
@@ -270,7 +271,39 @@ def trigger_call(self, call_task_id):
             # Test call (lead is null) - skip quota enforcement
             logger.info(f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}")
 
-        # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
+        # 🚀 Preflight: ensure a valid LiveKitAgent token exists before dispatch/dial
+        try:
+            from core.models import LiveKitAgent
+            from core.utils.calltask_utils import reschedule_task_preflight_failed
+            from django.db import transaction as dj_tx
+            has_valid_token = LiveKitAgent.objects.filter(expires_at__gt=timezone.now()).exists()
+            if not has_valid_token:
+                # Reschedule without increment and exit early (avoid dispatch/dial)
+                with dj_tx.atomic():
+                    call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                    reschedule_task_preflight_failed(call_task, 'token_invalid')
+                return {
+                    "success": False,
+                    "call_task_id": call_task_id,
+                    "message": "Preflight failed: no valid LiveKitAgent token",
+                    "result": {"reasons": ["token_invalid"]},
+                }
+        except Exception as preflight_err:
+            logger.error(f"⚠️ Preflight check failed unexpectedly: {preflight_err}")
+            # Fail-closed: reschedule without increment
+            from core.utils.calltask_utils import reschedule_task_preflight_failed
+            from django.db import transaction as dj_tx
+            with dj_tx.atomic():
+                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                reschedule_task_preflight_failed(call_task, 'token_invalid')
+            return {
+                "success": False,
+                "call_task_id": call_task_id,
+                "message": "Preflight internal error",
+                "result": {"reasons": ["token_invalid"]},
+            }
+
+        # 🚀 Quota OK & Preflight OK - Place the outbound call (synchronous wait inside worker)
         call_result = asyncio.run(
             _make_call_async(
                 sip_trunk_id=sip_trunk_id,

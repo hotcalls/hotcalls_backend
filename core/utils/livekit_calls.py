@@ -43,6 +43,7 @@ async def _make_call_async(
         "to_number": lead_data.get("phone", ""),
         "from_number": from_number,
         "correlation_id": f"hotcalls-{uuid.uuid4().hex[:8]}",
+        "call_task_id": lead_data.get("call_task_id", ""),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sip_provider": "jambonz",
         
