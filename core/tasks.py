@@ -235,7 +235,6 @@ def trigger_call(self, call_task_id):
             else getattr(workspace, "phone_number", None)
             or os.getenv("DEFAULT_FROM_NUMBER")
         )
-        campaign_id = str(workspace.id)
 
         # 🎯 QUOTA ENFORCEMENT: Skip quotas for test calls (lead is null)
         if lead is not None:
@@ -310,8 +309,6 @@ def trigger_call(self, call_task_id):
                 agent_config=agent_config,
                 lead_data=lead_data,
                 from_number=from_number,
-                campaign_id=campaign_id,
-                call_reason=None,
             )
         )
 

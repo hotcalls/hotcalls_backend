@@ -16,8 +16,6 @@ async def _make_call_async(
     agent_config: dict,
     lead_data: dict,
     from_number: str,
-    campaign_id: str,
-    call_reason: str = None
 ):
     """
     Internal async function to make the actual LiveKit call
@@ -112,7 +110,7 @@ async def _make_call_async(
             "sip_call_id": participant.sip_call_id,
             "to_number": lead_data['phone'],
             "agent_name": os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent"),
-            "campaign_id": campaign_id
+
         }
         
     except Exception as e:
@@ -121,7 +119,7 @@ async def _make_call_async(
             "error": str(e),
             "to_number": lead_data['phone'],
             "agent_name": os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent"),
-            "campaign_id": campaign_id
+
         }
     finally:
         await livekit_api.aclose() 

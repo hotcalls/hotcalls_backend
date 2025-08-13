@@ -533,7 +533,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             "email": "",
             "phone": validated_data['phone'],  # Always use provided phone as fallback
             "lead_source": "",
-            "campaign_id": "",
+            
             "meta_data": {}
         }
         
@@ -547,7 +547,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
                     "email": lead.email,
                     "phone": lead.phone,
                     "lead_source": getattr(lead, 'lead_source', ''),
-                    "campaign_id": getattr(lead, 'campaign_id', ''),
+                    
                     "meta_data": lead.meta_data or {}
                 })
             except Lead.DoesNotExist:
@@ -559,7 +559,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             request_lead_data = validated_data['lead_data']
             
             # Update basic fields
-            for field in ['name', 'surname', 'email', 'phone', 'lead_source', 'campaign_id']:
+            for field in ['name', 'surname', 'email', 'phone', 'lead_source']:
                 if field in request_lead_data:
                     lead_data[field] = request_lead_data[field]
             
