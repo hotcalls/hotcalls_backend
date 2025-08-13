@@ -295,20 +295,7 @@ def trigger_call(self, call_task_id):
                     "result": call_result,
                 }
             else:
-                # Check if failure is due to missing token (don't count as attempt)
-                if call_result.get("abort_reason") == "token_missing":
-                    from core.utils.calltask_utils import reschedule_task_preflight_failed
-                    reschedule_task_preflight_failed(call_task, 'token_missing')
-                    logger.warning(f"📅 Task {call_task_id} rescheduled due to missing token (not counted as attempt)")
-                    return {
-                        "success": False,
-                        "call_task_id": call_task_id,
-                        "message": "Call aborted - agent token missing",
-                        "result": call_result,
-                        "attempts": call_task.attempts,
-                    }
-                
-                # Regular retry logic for other failures
+                # Regular retry logic for ALL failures
                 max_retries = agent.max_retries if agent else 3
                 if call_task.attempts < max_retries:
                     call_task.increment_retries(max_retries)
@@ -320,8 +307,17 @@ def trigger_call(self, call_task_id):
                         update_fields=["status", "attempts", "next_call", "updated_at"]
                     )
                 else:
-                    call_task.status = CallStatus.WAITING
-                    call_task.save(update_fields=["status", "updated_at"])
+                    # Max retries reached - delete the task
+                    logger.warning(f"🗑️ CallTask {call_task_id} reached max retries ({max_retries}) - deleting task")
+                    final_attempts = call_task.attempts
+                    call_task.delete()
+                    return {
+                        "success": False,
+                        "call_task_id": call_task_id,
+                        "message": f"Call failed – max retries ({max_retries}) reached, task deleted",
+                        "result": call_result,
+                        "attempts": final_attempts,
+                    }
                 return {
                     "success": False,
                     "call_task_id": call_task_id,
