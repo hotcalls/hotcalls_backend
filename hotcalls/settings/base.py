@@ -120,6 +120,10 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'hotcalls.wsgi.application'
 
+# Authentication redirect target for non-API views (used by invitation templates)
+# Route users to the SPA login so they see the normal Hotcalls login UI
+LOGIN_URL = '/login'
+
 # Database configuration - FAIL FAST if not configured!
 # In staging/production, these MUST come from environment variables
 if ENVIRONMENT != 'development':
@@ -546,5 +550,6 @@ MS_SCOPES = [
     'User.Read',
     'Calendars.ReadWrite',
     'MailboxSettings.Read',
+    'OnlineMeetings.Read',
     # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
 ]

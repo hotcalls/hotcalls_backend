@@ -1347,6 +1347,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             }
 
             # Extract joinUrl if provider created one
+            join_url = None
             if config.meeting_type == 'online':
                 # Google may return hangoutLink or conferenceData; MS returns onlineMeeting.joinUrl
                 join_url = (
@@ -1358,6 +1359,19 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                     meeting_details['meeting_link'] = join_url
             elif config.meeting_type == 'in_person' and config.meeting_address:
                 meeting_details['address'] = config.meeting_address
+
+            # Add Microsoft-specific signal for Teams creation result
+            if main_calendar.provider == 'outlook':
+                meeting_details['teams_added'] = created_event.get('teams_added', True)
+
+            # meeting_status handling per spec
+            meeting_status = 'ready'
+            if config.meeting_type == 'online':
+                if main_calendar.provider == 'outlook' and not created_event.get('teams_added', True):
+                    meeting_status = 'no_license'
+                elif not join_url:
+                    meeting_status = 'pending'
+            meeting_details['meeting_status'] = meeting_status
             
             # Prepare response
             end_time = start_time + timedelta(minutes=duration_minutes)
@@ -1712,8 +1726,13 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         # Flag for provider online meeting creation (no manual override in our flow)
         event_data['wants_online_meeting'] = (config.meeting_type == 'online')
 
-        event_data['body'] = event_description
-        event_data['description'] = event_description
+        # Keep body minimal for online meetings to avoid overwriting Teams-injected block
+        if config.meeting_type == 'online':
+            event_data['body'] = ' '
+            event_data['description'] = ' '
+        else:
+            event_data['body'] = event_description
+            event_data['description'] = event_description
 
         return event_data
 

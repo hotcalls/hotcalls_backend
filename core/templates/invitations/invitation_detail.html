@@ -231,11 +231,11 @@
                     <div class="status-message expired">
                         ❌ Diese Einladung wurde an {{ invitation.email }} gesendet, aber Sie sind als {{ user.email }} angemeldet.
                     </div>
-                    <a href="/auth/logout/" class="button secondary">Mit anderem Account anmelden</a>
+                    <a href="/login?next=/invitations/{{ invitation.token }}/accept/" class="button secondary">Mit anderem Account anmelden</a>
                 {% endif %}
             {% else %}
-                <a href="/auth/login/?next=/invitations/{{ invitation.token }}/" class="button">Anmelden um anzunehmen</a>
-                <a href="/auth/signup/?next=/invitations/{{ invitation.token }}/" class="button secondary">Konto erstellen</a>
+                <a href="/login?next=/invitations/{{ invitation.token }}/accept/" class="button">Anmelden um anzunehmen</a>
+                <a href="/signup?next=/invitations/{{ invitation.token }}/" class="button secondary">Konto erstellen</a>
             {% endif %}
         {% else %}
             <div class="status-message expired">

@@ -35,8 +35,9 @@ class MicrosoftOAuthService:
             'code_challenge': code_challenge,
             'code_challenge_method': 'S256',
         }
-        if intent:
-            params['prompt'] = 'select_account'
+        # Force re-consent so newly added scopes (e.g., OnlineMeetings.Read) are granted
+        # Keep it simple: always require consent
+        params['prompt'] = 'consent'
 
         return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize?{urlencode(params)}"
 
@@ -238,76 +239,92 @@ class MicrosoftCalendarService:
                 return data
             resp.raise_for_status()
             data = resp.json()
+            # mark teams_added when we attempted teams
+            if payload.get('teams'):
+                data['teams_added'] = True
 
             # Best-effort: fetch onlineMeeting.joinUrl after creation, as Graph may not include it in POST response
             try:
                 if payload.get('teams') and isinstance(data, dict) and data.get('id'):
                     event_id = data.get('id')
                     read_url = f'https://graph.microsoft.com/v1.0/me/events/{event_id}'
-                    # First try $select=onlineMeeting
-                    read = self._request('GET', read_url, params={'$select': 'onlineMeeting'})
-                    if read.ok:
-                        read_json = read.json() or {}
-                        if read_json.get('onlineMeeting'):
-                            data['onlineMeeting'] = read_json.get('onlineMeeting')
-                        else:
-                            # Fallback attempt with $expand
-                            read2 = self._request('GET', read_url, params={'$expand': 'onlineMeeting'})
-                            if read2.ok:
-                                read2_json = read2.json() or {}
-                                if read2_json.get('onlineMeeting'):
-                                    data['onlineMeeting'] = read2_json.get('onlineMeeting')
 
-                    # Final fallback: try /me/onlineMeetings (requires OnlineMeetings.* scope; best-effort)
-                    if not (isinstance(data.get('onlineMeeting'), dict) and data['onlineMeeting'].get('joinUrl')):
+                    def try_read_join_url_once() -> str | None:
+                        # First try $select=onlineMeeting
+                        read = self._request('GET', read_url, params={'$select': 'onlineMeeting'})
+                        if read.ok:
+                            read_json = read.json() or {}
+                            if read_json.get('onlineMeeting'):
+                                data['onlineMeeting'] = read_json.get('onlineMeeting')
+                                join = (data.get('onlineMeeting') or {}).get('joinUrl')
+                                if join:
+                                    return join
+                        # Fallback attempt with $expand
+                        read2 = self._request('GET', read_url, params={'$expand': 'onlineMeeting'})
+                        if read2.ok:
+                            read2_json = read2.json() or {}
+                            if read2_json.get('onlineMeeting'):
+                                data['onlineMeeting'] = read2_json.get('onlineMeeting')
+                                join = (data.get('onlineMeeting') or {}).get('joinUrl')
+                                if join:
+                                    return join
+                        return None
+
+                    def try_read_from_online_meetings() -> str | None:
                         try:
                             om_list = self._request(
-                                'GET',
-                                'https://graph.microsoft.com/v1.0/me/onlineMeetings',
+                                'GET', 'https://graph.microsoft.com/v1.0/me/onlineMeetings',
                                 params={'$top': '20', '$orderby': 'creationDateTime desc'}
                             )
-                            if om_list.ok:
-                                om_json = om_list.json() or {}
-                                items = om_json.get('value', [])
-                                # Match by time window overlap and subject, if verfügbar
-                                start_str = payload.get('start')
-                                end_str = payload.get('end')
-                                subj = (payload.get('subject') or payload.get('summary') or '').strip()
+                            if not om_list.ok:
+                                return None
+                            om_json = om_list.json() or {}
+                            items = om_json.get('value', [])
+                            start_str = payload.get('start')
+                            end_str = payload.get('end')
+                            subj = (payload.get('subject') or payload.get('summary') or '').strip()
 
-                                def iso_parse(s: str):
-                                    try:
-                                        from datetime import datetime
-                                        # Accept 'Z' by replacing
-                                        return datetime.fromisoformat(s.replace('Z', '+00:00'))
-                                    except Exception:
-                                        return None
+                            def iso_parse(s: str):
+                                try:
+                                    from datetime import datetime
+                                    return datetime.fromisoformat(s.replace('Z', '+00:00'))
+                                except Exception:
+                                    return None
 
-                                start_dt = iso_parse(start_str) if start_str else None
-                                end_dt = iso_parse(end_str) if end_str else None
-
-                                best = None
-                                for it in items:
-                                    s = it.get('startDateTime') or {}
-                                    e = it.get('endDateTime') or {}
-                                    sdt = iso_parse(s.get('dateTime', '') if isinstance(s, dict) else '')
-                                    edt = iso_parse(e.get('dateTime', '') if isinstance(e, dict) else '')
-                                    title = (it.get('subject') or '').strip()
-                                    if not sdt or not edt:
-                                        continue
-                                    # Overlap check, tolerate few minutes drift
-                                    overlap = True
-                                    if start_dt and end_dt:
-                                        overlap = (sdt <= end_dt) and (edt >= start_dt)
-                                    title_match = True if not subj else (subj.lower() in title.lower() or title.lower() in subj.lower())
-                                    if overlap and title_match:
-                                        best = it
-                                        break
-
-                                if best and best.get('joinWebUrl'):
-                                    data['onlineMeeting'] = data.get('onlineMeeting') or {}
-                                    data['onlineMeeting']['joinUrl'] = best['joinWebUrl']
+                            start_dt = iso_parse(start_str) if start_str else None
+                            end_dt = iso_parse(end_str) if end_str else None
+                            for it in items:
+                                s = it.get('startDateTime') or {}
+                                e = it.get('endDateTime') or {}
+                                sdt = iso_parse(s.get('dateTime', '') if isinstance(s, dict) else '')
+                                edt = iso_parse(e.get('dateTime', '') if isinstance(e, dict) else '')
+                                title = (it.get('subject') or '').strip()
+                                if not sdt or not edt:
+                                    continue
+                                overlap = True
+                                if start_dt and end_dt:
+                                    overlap = (sdt <= end_dt) and (edt >= start_dt)
+                                title_match = True if not subj else (subj.lower() in title.lower() or title.lower() in subj.lower())
+                                if overlap and title_match:
+                                    return it.get('joinUrl') or it.get('joinWebUrl')
+                            return None
                         except Exception:
-                            pass
+                            return None
+
+                    # Poll: ~3s, ~15s, ~60s (3 + 12 + 45)
+                    join_url = (data.get('onlineMeeting') or {}).get('joinUrl')
+                    if not join_url:
+                        import time
+                        for delay in [0, 3, 12, 45]:
+                            if delay:
+                                time.sleep(delay)
+                            join_url = try_read_join_url_once() or try_read_from_online_meetings()
+                            if join_url:
+                                data['onlineMeeting'] = data.get('onlineMeeting') or {}
+                                data['onlineMeeting']['joinUrl'] = join_url
+                                break
+                    if not ((data.get('onlineMeeting') or {}).get('joinUrl')):
+                        logger.warning(f"MS Teams joinUrl not available yet for event {event_id}; returning pending")
             except Exception:
                 # Do not fail booking if link cannot be read; the event is created and invitations are sent by provider
                 pass

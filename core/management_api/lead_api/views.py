@@ -4,13 +4,20 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
-from core.models import Lead, CallLog
+from core.models import Lead, CallLog, Workspace
 from .serializers import (
     LeadSerializer, LeadCreateSerializer, LeadBulkCreateSerializer,
     LeadMetaDataUpdateSerializer, LeadStatsSerializer
 )
 from .filters import LeadFilter
 from .permissions import LeadPermission, LeadBulkPermission
+from core.utils.validators import (
+    validate_email_strict,
+    normalize_phone_e164,
+    extract_name,
+    _normalize_key,
+)
+import uuid
 
 
 @extend_schema_view(
@@ -284,39 +291,202 @@ class LeadViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
-        """Create multiple leads in bulk"""
+        """Create multiple leads in bulk with CSV-style mapping and batch tagging."""
         serializer = LeadBulkCreateSerializer(data=request.data)
-        if serializer.is_valid():
-            leads_data = serializer.validated_data['leads']
-            created_leads = []
-            errors = []
-            
-            for index, lead_data in enumerate(leads_data):
-                try:
-                    lead_serializer = LeadCreateSerializer(data=lead_data)
-                    if lead_serializer.is_valid():
-                        lead = lead_serializer.save()
-                        created_leads.append(lead)
-                    else:
-                        errors.append({
-                            'index': index,
-                            'error': lead_serializer.errors
-                        })
-                except Exception as e:
+
+        # Prefer raw list from request for CSV-style flexible payloads
+        raw_leads = request.data.get('leads', None)
+        if isinstance(raw_leads, list):
+            pass
+        else:
+            # Fallback to strict validation path if no raw list provided
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            raw_leads = serializer.validated_data['leads']
+
+        # Determine workspace auto-assignment (exactly one workspace for user)
+        user = request.user
+        assigned_workspace = None
+        try:
+            workspaces_qs = getattr(user, 'mapping_user_workspaces', None)
+            if workspaces_qs is not None and workspaces_qs.count() == 1:
+                assigned_workspace = workspaces_qs.first()
+        except Exception:
+            assigned_workspace = None
+
+        # Generate one batch id for this upload
+        import_batch_id = str(uuid.uuid4())
+
+        created_leads = []
+        errors = []
+        detected_variable_keys = set()
+
+        # Field synonym sets aligned with Meta mapping logic
+        PERSON_NAME_FIELDS = {
+            'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
+            'firstname', 'fname', 'forename', 'first'
+        }
+        PERSON_SURNAME_FIELDS = {
+            'last_name', 'family_name', 'nachname', 'nom', 'apellido',
+            'lastname', 'lname', 'surname', 'family', 'last'
+        }
+        FULL_NAME_FIELDS = {
+            'full_name', 'fullname', 'name', 'display_name', 'person_name',
+            'customer_name', 'user_name', 'client_name', 'contact_name',
+            'vollstandiger_name', 'kontakt_name'
+        }
+        EMAIL_FIELDS = {
+            'email', 'email_address', 'e_mail', 'mail', 'contact_email',
+            'user_email', 'customer_email', 'business_email', 'work_email',
+            'email_adresse', 'e_mail_adresse', 'emailadresse', 'kontakt_email',
+            'kontaktmail'
+        }
+        PHONE_FIELDS = {
+            'phone', 'phone_number', 'telephone', 'telefon', 'mobile',
+            'cell', 'handy', 'contact_phone', 'mobile_number', 'cell_phone',
+            'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
+            'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
+            'telefono', 'telefone', 'handynummer'
+        }
+
+        for index, row in enumerate(raw_leads):
+            try:
+                # Normalize keys and collect pairs
+                pairs = []  # List[Tuple[str, str]]
+                if isinstance(row, dict):
+                    for k, v in row.items():
+                        if v is None:
+                            continue
+                        v_str = str(v).strip()
+                        if not v_str:
+                            continue
+                        k_norm = _normalize_key(str(k))
+                        pairs.append((k_norm, v_str))
+                else:
+                    errors.append({'index': index, 'error': 'Invalid row format'})
+                    continue
+
+                # Pick candidates similar to Meta mapping
+                first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
+                last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
+                full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
+
+                # Heuristic: any key containing "name" but not business tokens
+                if not full:
+                    BUSINESS_TOKENS = {'company', 'business', 'firma', 'unternehmen', 'organization', 'org', 'brand'}
+                    for k, v in pairs:
+                        if 'name' in k and not any(tok in k for tok in BUSINESS_TOKENS):
+                            full = v
+                            break
+
+                # Email detection
+                email_val = None
+                email_key = None
+                for k, v in pairs:
+                    if k in EMAIL_FIELDS:
+                        e = validate_email_strict(v)
+                        if e:
+                            email_val = e
+                            email_key = k
+                            break
+                if not email_val:
+                    for k, v in pairs:
+                        if ('email' in k or 'mail' in k) and v:
+                            e = validate_email_strict(v)
+                            if e:
+                                email_val = e
+                                email_key = k
+                                break
+                if not email_val:
+                    for k, v in pairs:
+                        if '@' in v:
+                            e = validate_email_strict(v)
+                            if e:
+                                email_val = e
+                                email_key = k
+                                break
+
+                # Phone detection
+                phone_val = None
+                phone_key = None
+                for k, v in pairs:
+                    if k in PHONE_FIELDS:
+                        p = normalize_phone_e164(v, default_region='DE')
+                        if p:
+                            phone_val = p
+                            phone_key = k
+                            break
+                if not phone_val:
+                    for k, v in pairs:
+                        p = normalize_phone_e164(v, default_region='DE')
+                        if p:
+                            phone_val = p
+                            phone_key = k
+                            break
+
+                # Name resolution
+                name_first = ''
+                name_surname = ''
+                name_triplet = extract_name(first, last, full)
+                if name_triplet:
+                    name_first, name_surname, _ = name_triplet
+                else:
+                    # Fallback: if only full exists
+                    if full:
+                        name_first = full
+
+                # Validate required fields
+                if not (name_first and email_val and phone_val):
                     errors.append({
                         'index': index,
-                        'error': str(e)
+                        'error': 'Missing or invalid required fields (name/email/phone)'
                     })
-            
-            return Response({
-                'total_leads': len(leads_data),
-                'successful_creates': len(created_leads),
-                'failed_creates': len(errors),
-                'errors': errors,
-                'created_lead_ids': [str(lead.id) for lead in created_leads]
-            }, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                    continue
+
+                # Build variables from remaining keys
+                used_keys = {k for k in [email_key, phone_key] if k}
+                # Mark name-related keys as used
+                used_keys.update(PERSON_NAME_FIELDS)
+                used_keys.update(PERSON_SURNAME_FIELDS)
+                used_keys.update(FULL_NAME_FIELDS)
+
+                variables = {}
+                for k, v in pairs:
+                    if k not in used_keys:
+                        variables[k] = v
+
+                if variables:
+                    detected_variable_keys.update(variables.keys())
+
+                meta_data = {
+                    'source': 'csv',
+                    'import_batch_id': import_batch_id,
+                }
+
+                lead = Lead.objects.create(
+                    name=name_first,
+                    surname=name_surname or '',
+                    email=email_val,
+                    phone=phone_val,
+                    workspace=assigned_workspace if isinstance(assigned_workspace, Workspace) else None,
+                    integration_provider='manual',
+                    variables=variables,
+                    meta_data=meta_data,
+                )
+                created_leads.append(lead)
+
+            except Exception as e:
+                errors.append({'index': index, 'error': str(e)})
+
+        return Response({
+            'total_leads': len(raw_leads),
+            'successful_creates': len(created_leads),
+            'failed_creates': len(errors),
+            'errors': errors,
+            'created_lead_ids': [str(lead.id) for lead in created_leads],
+            'import_batch_id': import_batch_id,
+            'detected_variable_keys': sorted(list(detected_variable_keys)),
+        }, status=status.HTTP_201_CREATED)
     
     @extend_schema(
         summary="🏷️ Update lead metadata",
