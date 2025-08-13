@@ -109,6 +109,9 @@ urlpatterns = [
     # Meta Webhooks (for Meta to call)
     path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
     
+    # Microsoft Graph Webhooks
+    path('api/webhooks/microsoft', include(('core.management_api.microsoft_api.urls', 'microsoft_webhooks'), namespace='microsoft_webhooks')),
+
     # Jambonz Webhooks (for Jambonz to call)
     path('api/integrations/jambonz/', include(('core.management_api.jambonz_api.urls', 'jambonz_webhooks'), namespace='jambonz_webhooks')),
 

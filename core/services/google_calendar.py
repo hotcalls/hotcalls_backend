@@ -481,5 +481,11 @@ class CalendarServiceFactory:
             if not hasattr(calendar, 'google_calendar'):
                 raise ValueError(f"Google calendar data not found for calendar {calendar.id}")
             return GoogleCalendarService(calendar.google_calendar)
+        elif calendar.provider == 'outlook':
+            # Lazy import to avoid circular dependencies if MS service is created later
+            from core.services.microsoft_calendar import MicrosoftCalendarService  # type: ignore
+            if not hasattr(calendar, 'microsoft_calendar'):
+                raise ValueError(f"Microsoft calendar data not found for calendar {calendar.id}")
+            return MicrosoftCalendarService(calendar.microsoft_calendar)
         else:
             raise ValueError(f"Unsupported calendar provider: {calendar.provider}") 

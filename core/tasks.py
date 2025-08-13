@@ -708,6 +708,69 @@ def refresh_google_calendar_connections(self):
     """)
     
     return results
+@shared_task(bind=True, max_retries=3)
+def refresh_microsoft_calendar_connections(self):
+    """
+    Refresh Microsoft Calendar OAuth tokens 30 days before expiry.
+    Uses MicrosoftCalendarConnection model; mirrors Google refresh behavior.
+    """
+    from core.models import MicrosoftCalendarConnection
+    from core.services.microsoft_calendar import MicrosoftOAuthService
+    now = timezone.now()
+    refresh_threshold = now + timedelta(days=30)
+    connections = MicrosoftCalendarConnection.objects.filter(
+        token_expires_at__lt=refresh_threshold,
+        token_expires_at__gt=now,
+        active=True,
+        refresh_token__isnull=False
+    ).exclude(refresh_token='')
+    results = {
+        'total_checked': connections.count(),
+        'refreshed_successfully': 0,
+        'failed_refresh': 0,
+        'needs_reauth': [],
+        'errors': []
+    }
+    for connection in connections:
+        try:
+            token = MicrosoftOAuthService.refresh_tokens(connection.refresh_token)
+            connection.access_token = token.get('access_token')
+            connection.refresh_token = token.get('refresh_token') or connection.refresh_token
+            connection.token_expires_at = timezone.now() + timedelta(seconds=int(token.get('expires_in', 3600)))
+            connection.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'updated_at'])
+            results['refreshed_successfully'] += 1
+        except Exception as e:
+            error_msg = str(e)
+            results['failed_refresh'] += 1
+            results['errors'].append({'connection': connection.primary_email, 'error': error_msg})
+            if any(k in error_msg.lower() for k in ['invalid_grant', 'refresh_token', 'authorization']):
+                results['needs_reauth'].append(connection.primary_email)
+                connection.active = False
+                connection.save(update_fields=['active', 'updated_at'])
+    return results
+
+
+@shared_task(bind=True, max_retries=3)
+def renew_microsoft_subscriptions(self):
+    """
+    Renew Microsoft subscriptions 24–48h before expiration.
+    Mirrors Google-like maintenance behavior for Graph subscriptions.
+    """
+    from core.models import MicrosoftSubscription
+    from core.services.microsoft_calendar import MicrosoftCalendarService
+    now = timezone.now()
+    renew_threshold = now + timedelta(hours=48)
+    subs = MicrosoftSubscription.objects.select_related('connection').filter(expiration_at__lt=renew_threshold)
+    results = {'total_checked': subs.count(), 'renewed': 0, 'failed': 0, 'errors': []}
+    for sub in subs:
+        try:
+            ms = MicrosoftCalendarService(sub.connection)
+            ms.renew_subscription(sub.subscription_id)
+            results['renewed'] += 1
+        except Exception as e:
+            results['failed'] += 1
+            results['errors'].append({'subscription': sub.subscription_id, 'error': str(e)})
+    return results
 
 
 @shared_task(bind=True, max_retries=3)

@@ -598,25 +598,35 @@ class MetaIntegrationService:
         unmatched_fields: List[str] = []
 
         PERSON_NAME_FIELDS = {
+            # First/Given name variants (multi-language)
             'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
-            'firstname', 'fname', 'forename'
+            'firstname', 'fname', 'forename', 'first'
         }
         PERSON_SURNAME_FIELDS = {
+            # Last/Family name variants (multi-language)
             'last_name', 'family_name', 'nachname', 'nom', 'apellido',
-            'lastname', 'lname', 'surname', 'family'
+            'lastname', 'lname', 'surname', 'family', 'last'
         }
         FULL_NAME_FIELDS = {
-            'full_name', 'fullname', 'name', 'display_name',
-            'person_name', 'customer_name', 'user_name'
+            # Full name and contact name variants (multi-language)
+            'full_name', 'fullname', 'name', 'display_name', 'person_name',
+            'customer_name', 'user_name', 'client_name', 'contact_name',
+            'vollstandiger_name', 'kontakt_name'
         }
         EMAIL_FIELDS = {
+            # Email variants (multi-language)
             'email', 'email_address', 'e_mail', 'mail', 'contact_email',
-            'user_email', 'customer_email', 'business_email', 'work_email'
+            'user_email', 'customer_email', 'business_email', 'work_email',
+            'email_adresse', 'e_mail_adresse', 'emailadresse', 'kontakt_email',
+            'kontaktmail'
         }
         PHONE_FIELDS = {
+            # Phone variants (multi-language)
             'phone', 'phone_number', 'telephone', 'telefon', 'mobile',
-            'cell', 'handy', 'contact_phone', 'mobile_number',
-            'cell_phone', 'phone_mobile', 'tel'
+            'cell', 'handy', 'contact_phone', 'mobile_number', 'cell_phone',
+            'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
+            'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
+            'telefono', 'telefone', 'handynummer'
         }
         BUSINESS_FIELDS = {
             'company', 'company_name', 'business', 'business_name',
@@ -643,6 +653,14 @@ class MetaIntegrationService:
         last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
         full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
 
+        # Heuristic: any key containing "name" (but not company/business) is a full name
+        if not full:
+            BUSINESS_TOKENS = {'company', 'business', 'firma', 'unternehmen', 'organization', 'org', 'brand'}
+            for k, v in pairs:
+                if 'name' in k and not any(tok in k for tok in BUSINESS_TOKENS):
+                    full = v
+                    break
+
         email_val = None
         email_key = None
         for k, v in pairs:
@@ -652,6 +670,15 @@ class MetaIntegrationService:
                     email_val = e
                     email_key = k
                     break
+        if not email_val:
+            # Heuristic: keys containing 'email' or 'mail'
+            for k, v in pairs:
+                if ('email' in k or 'mail' in k) and v:
+                    e = validate_email_strict(v)
+                    if e:
+                        email_val = e
+                        email_key = k
+                        break
         if not email_val:
             for k, v in pairs:
                 if '@' in v:
@@ -690,7 +717,7 @@ class MetaIntegrationService:
             candidate = None
             # Prefer values from known phone fields
             for k, v in pairs:
-                if k in PHONE_FIELDS and _digits_count(v) >= 6:
+                if (k in PHONE_FIELDS or any(t in k for t in ['phone', 'telefon', 'tel', 'mobile', 'handy'])) and _digits_count(v) >= 6:
                     candidate = re.sub(r"[^0-9+]", "", v)
                     phone_key = k
                     break

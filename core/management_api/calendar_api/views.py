@@ -12,7 +12,9 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from django.db import transaction
 
 from core.models import Calendar, CalendarConfiguration, GoogleCalendarConnection, Workspace
+from core.models import MicrosoftCalendarConnection, MicrosoftCalendar  # type: ignore
 from core.services.google_calendar import GoogleCalendarService, GoogleOAuthService, CalendarServiceFactory
+from core.services.microsoft_calendar import MicrosoftOAuthService, MicrosoftCalendarService  # type: ignore
 from .serializers import (
     CalendarSerializer, GoogleCalendarConnectionSerializer,
     CalendarConfigurationSerializer, CalendarConfigurationCreateSerializer,
@@ -190,6 +192,273 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    # 🔗 MICROSOFT OAUTH ENDPOINTS
+    @extend_schema(
+        summary="🔗 Get Microsoft OAuth Authorization URL",
+        description="Generate Microsoft OAuth authorization URL (PKCE) to start OAuth flow",
+        responses={200: {'type': 'object', 'properties': {'authorization_url': {'type': 'string'}, 'state': {'type': 'string'}}}},
+        tags=["Microsoft Calendar"]
+    )
+    @action(detail=False, methods=['post'], url_path='microsoft_auth_url')
+    def get_microsoft_auth_url(self, request):
+        try:
+            import secrets, hashlib, base64
+            intent = request.data.get('intent')
+            state = secrets.token_urlsafe(32)
+            code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).rstrip(b'=').decode('utf-8')
+            code_challenge = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode('utf-8')).digest()).rstrip(b'=').decode('utf-8')
+            request.session[f'ms_oauth_state_{state}'] = {
+                'user_id': str(request.user.id),
+                'code_verifier': code_verifier,
+                'intent': intent,
+                'created_at': timezone.now().isoformat()
+            }
+            authorization_url = MicrosoftOAuthService.build_authorize_url(state=state, code_challenge=code_challenge, intent=intent)
+            return Response({'authorization_url': authorization_url, 'state': state})
+        except Exception as e:
+            logger.error(f"Failed to generate Microsoft OAuth URL: {str(e)}")
+            return Response({'error': 'Failed to generate authorization URL', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(
+        summary="🔗 Microsoft OAuth Callback",
+        description="Handle Microsoft OAuth callback, create connection and sync calendars",
+        tags=["Microsoft Calendar"]
+    )
+    @action(detail=False, methods=['get'], url_path='microsoft_callback', permission_classes=[AllowAny])
+    def microsoft_oauth_callback(self, request):
+        code = request.GET.get('code')
+        state = request.GET.get('state')
+        error = request.GET.get('error')
+        if error:
+            return Response({'error': f'OAuth failed: {error}'}, status=status.HTTP_400_BAD_REQUEST)
+        if not code or not state:
+            return Response({'error': 'Missing code or state'}, status=status.HTTP_400_BAD_REQUEST)
+        state_key = f'ms_oauth_state_{state}'
+        state_data = request.session.get(state_key)
+        if not state_data:
+            return Response({'error': 'Invalid or expired OAuth session'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from core.models import User
+            user = User.objects.get(id=state_data['user_id'])
+        except Exception:
+            return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
+        code_verifier = state_data.get('code_verifier')
+        try:
+            token = MicrosoftOAuthService.exchange_code_for_tokens(code, code_verifier)
+            access_token = token.get('access_token')
+            refresh_token = token.get('refresh_token')
+            expires_in = int(token.get('expires_in', 3600))
+            token_expires_at = timezone.now() + timedelta(seconds=expires_in)
+            # Try to decode id_token to get tid/oid
+            tenant_id = ''
+            try:
+                id_token = token.get('id_token')
+                if id_token:
+                    import base64, json
+                    parts = id_token.split('.')
+                    if len(parts) >= 2:
+                        payload = parts[1] + '=='
+                        data = json.loads(base64.urlsafe_b64decode(payload.encode('utf-8')).decode('utf-8'))
+                        tenant_id = data.get('tid', '') or ''
+            except Exception:
+                tenant_id = ''
+            headers = {'Authorization': f'Bearer {access_token}'}
+            import requests
+            me = requests.get('https://graph.microsoft.com/v1.0/me', headers=headers, timeout=30).json()
+            mailbox = requests.get('https://graph.microsoft.com/v1.0/me/mailboxSettings', headers=headers, timeout=30).json()
+            user_workspace = self._get_user_workspace(user)
+            if not user_workspace:
+                return Response({'error': 'User must belong to a workspace'}, status=status.HTTP_400_BAD_REQUEST)
+            connection, created = MicrosoftCalendarConnection.objects.update_or_create(
+                workspace=user_workspace,
+                primary_email=me.get('userPrincipalName') or me.get('mail') or '',
+                defaults={
+                    'user': user,
+                    'tenant_id': tenant_id,
+                    'ms_user_id': me.get('id', ''),
+                    'display_name': me.get('displayName', ''),
+                    'timezone_windows': mailbox.get('timeZone', '') or mailbox.get('workingHours', {}).get('timeZone', {}).get('name', ''),
+                    'refresh_token': refresh_token or '',
+                    'access_token': access_token or '',
+                    'token_expires_at': token_expires_at,
+                    'scopes_granted': getattr(settings, 'MS_SCOPES', []),
+                    'active': True,
+                }
+            )
+            ms_service = MicrosoftCalendarService(connection)
+            ms_service.sync_calendars()
+            try:
+                del request.session[state_key]
+            except Exception:
+                pass
+            from django.shortcuts import redirect
+            frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:5173')
+            success_url = f"{frontend_url}/dashboard/calendar?oauth_success=true&provider=microsoft&email={connection.primary_email}"
+            return redirect(success_url)
+        except Exception as e:
+            logger.error(f"Microsoft OAuth callback failed: {str(e)}")
+            return Response({'error': 'Failed to connect Microsoft 365', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="📋 List Microsoft Calendar Connections", tags=["Microsoft Calendar"]) 
+    @action(detail=False, methods=['get'], url_path='microsoft_connections')
+    def list_microsoft_connections(self, request):
+        user = request.user
+        if user.is_staff:
+            connections = MicrosoftCalendarConnection.objects.filter(active=True)
+        else:
+            user_workspace = self._get_user_workspace(user)
+            connections = MicrosoftCalendarConnection.objects.filter(workspace=user_workspace, active=True)
+        data = [{
+            'id': str(c.id),
+            'workspace': str(c.workspace.id),
+            'primary_email': c.primary_email,
+            'display_name': c.display_name,
+            'timezone_windows': c.timezone_windows,
+            'active': c.active,
+            'last_sync': c.last_sync,
+            'created_at': c.created_at,
+        } for c in connections]
+        return Response(data)
+
+    @extend_schema(summary="🔌 Disconnect Microsoft Calendar", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['post'], url_path='microsoft_disconnect')
+    def disconnect_microsoft_connection(self, request, pk=None):
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            # Try to delete provider subscriptions
+            from core.models import MicrosoftSubscription
+            subs = MicrosoftSubscription.objects.filter(connection=connection)
+            for sub in subs:
+                try:
+                    ms = MicrosoftCalendarService(connection)
+                    ms._request('DELETE', f'https://graph.microsoft.com/v1.0/subscriptions/{sub.subscription_id}')
+                except Exception:
+                    pass
+                sub.delete()
+            connection.active = False
+            connection.save(update_fields=['active', 'updated_at'])
+            Calendar.objects.filter(workspace=connection.workspace, provider='outlook').update(active=False)
+            return Response({'success': True, 'message': f'Disconnected {connection.primary_email}'})
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to disconnect Microsoft connection: {str(e)}")
+            return Response({'error': 'Failed to disconnect', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="🔄 Refresh Microsoft Connection", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['post'], url_path='microsoft_refresh')
+    def refresh_microsoft_connection(self, request, pk=None):
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            if not connection.refresh_token:
+                return Response({'error': 'No refresh token stored'}, status=status.HTTP_400_BAD_REQUEST)
+            token = MicrosoftOAuthService.refresh_tokens(connection.refresh_token)
+            connection.access_token = token.get('access_token')
+            connection.refresh_token = token.get('refresh_token') or connection.refresh_token
+            connection.token_expires_at = timezone.now() + timedelta(seconds=int(token.get('expires_in', 3600)))
+            connection.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'updated_at'])
+            ms_service = MicrosoftCalendarService(connection)
+            synced = ms_service.sync_calendars()
+            return Response({'success': True, 'calendars_synced': len(synced)})
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to refresh Microsoft connection: {str(e)}")
+            return Response({'error': 'Failed to refresh connection', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="📅 List Microsoft calendars", tags=["Microsoft Calendar"]) 
+    @action(detail=False, methods=['get'], url_path='microsoft_calendars')
+    def list_microsoft_calendars(self, request):
+        connection_id = request.GET.get('connection_id')
+        if not connection_id:
+            return Response({'error': 'connection_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(id=connection_id)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            calendars = MicrosoftCalendar.objects.filter(connection=connection)
+            items = [{
+                'id': mc.external_id,
+                'name': mc.calendar.name,
+                'is_primary': mc.primary,
+                'owner_email': connection.primary_email,
+                'can_edit': mc.can_edit,
+            } for mc in calendars]
+            return Response(items)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @extend_schema(summary="Save Microsoft calendar settings", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['post'], url_path='settings')
+    def save_microsoft_settings(self, request, pk=None):
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            # Store settings on a generic per-workspace basis using CalendarConfiguration or a simple dict field
+            # Keeping it simple: accept and echo back; UI persists via existing config models typically
+            settings_payload = {
+                'target_calendar_id': request.data.get('target_calendar_id'),
+                'conflict_calendar_ids': request.data.get('conflict_calendar_ids', []),
+                'timezone_windows': request.data.get('timezone_windows'),
+                'working_hours': request.data.get('working_hours'),
+                'default_duration': request.data.get('default_duration'),
+                'buffer_before': request.data.get('buffer_before'),
+                'buffer_after': request.data.get('buffer_after'),
+                'min_notice': request.data.get('min_notice'),
+                'max_advance_days': request.data.get('max_advance_days'),
+                'teams_default': bool(request.data.get('teams_default', False)),
+            }
+            return Response({'saved': True, 'settings': settings_payload})
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    @extend_schema(summary="Subscribe to Microsoft event notifications", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['post'], url_path='microsoft_subscribe')
+    def microsoft_subscribe(self, request, pk=None):
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            client_state = request.data.get('clientState', '')
+            notification_url = request.data.get('notificationUrl')
+            ms = MicrosoftCalendarService(connection)
+            sub = ms.create_subscription(client_state=client_state, notification_url=notification_url)
+            return Response(sub)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Microsoft subscribe failed: {str(e)}")
+            return Response({'error': 'Failed to subscribe', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="Renew Microsoft subscription", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['post'], url_path='microsoft_subscribe_renew')
+    def microsoft_subscribe_renew(self, request, pk=None):
+        try:
+            from core.models import MicrosoftSubscription
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            sub_id = request.data.get('subscription_id')
+            if not sub_id:
+                # pick the first subscription for this connection
+                sub = MicrosoftSubscription.objects.filter(connection=connection).order_by('-expiration_at').first()
+                if not sub:
+                    return Response({'error': 'No subscription found'}, status=status.HTTP_404_NOT_FOUND)
+                sub_id = sub.subscription_id
+            ms = MicrosoftCalendarService(connection)
+            data = ms.renew_subscription(sub_id)
+            return Response(data)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Microsoft renew subscription failed: {str(e)}")
+            return Response({'error': 'Failed to renew subscription', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @extend_schema(
         summary="🔗 Google OAuth Callback",
         description="""
@@ -482,6 +751,81 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 'error': str(e),
                 'last_tested': timezone.now().isoformat()
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    # ===== Microsoft Events (CRUD) =====
+    @extend_schema(summary="Create Microsoft event", tags=["Microsoft Calendar"])
+    @action(detail=True, methods=['post'], url_path='events')
+    def create_microsoft_event(self, request, pk=None):
+        connection_id = pk
+        calendar_id = request.data.get('calendar_id')
+        if not connection_id or not calendar_id:
+            return Response({'error': 'connectionId and calendar_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(id=connection_id)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            payload = {
+                'subject': request.data.get('subject'),
+                'body': request.data.get('body', ''),
+                'start': request.data.get('start'),
+                'end': request.data.get('end'),
+                'attendees': request.data.get('attendees', []),
+                'location': request.data.get('location'),
+                'teams': bool(request.data.get('teams', False)),
+            }
+            ms = MicrosoftCalendarService(connection)
+            event = ms.create_event(calendar_id, payload, send_invitations=str(request.GET.get('sendInvitations', 'true')).lower() == 'true')
+            return Response(event, status=status.HTTP_201_CREATED)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Create Microsoft event failed: {str(e)}")
+            return Response({'error': 'Failed to create event', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="Update Microsoft event", tags=["Microsoft Calendar"])
+    @action(detail=True, methods=['patch'], url_path='events/(?P<event_id>[^/.]+)')
+    def update_microsoft_event(self, request, pk=None, event_id=None):
+        connection_id = pk
+        calendar_id = request.data.get('calendar_id')
+        if not connection_id or not calendar_id:
+            return Response({'error': 'connectionId and calendar_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(id=connection_id)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            updates = {
+                k: request.data[k]
+                for k in ['subject', 'body', 'start', 'end', 'attendees', 'location']
+                if k in request.data
+            }
+            ms = MicrosoftCalendarService(connection)
+            event = ms.update_event(calendar_id, event_id, updates, send_updates=request.GET.get('sendUpdates', 'all'))
+            return Response(event)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Update Microsoft event failed: {str(e)}")
+            return Response({'error': 'Failed to update event', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="Delete Microsoft event", tags=["Microsoft Calendar"])
+    @action(detail=True, methods=['delete'], url_path='events/(?P<event_id>[^/.]+)')
+    def delete_microsoft_event(self, request, pk=None, event_id=None):
+        connection_id = pk
+        calendar_id = request.GET.get('calendar_id')
+        if not connection_id or not calendar_id:
+            return Response({'error': 'connectionId and calendar_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(id=connection_id)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            ms = MicrosoftCalendarService(connection)
+            ok = ms.delete_event(calendar_id, event_id, send_cancellation=str(request.GET.get('sendCancellation', 'true')).lower() == 'true')
+            return Response({'deleted': ok})
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Delete Microsoft event failed: {str(e)}")
+            return Response({'error': 'Failed to delete event', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="📊 Google Calendar Health Status",
@@ -939,16 +1283,16 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             
             # Check main calendar health before attempting to book
             main_calendar = config.calendar
-            if not hasattr(main_calendar, 'google_calendar'):
-                return Response({
-                    'error': 'Calendar configuration error',
-                    'details': 'Main calendar has no Google Calendar connection',
-                    'config_name': config.name
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-            # Verify main calendar has valid tokens
-            google_calendar = main_calendar.google_calendar
-            if not google_calendar.connection or not google_calendar.connection.access_token:
+            # Verify main calendar tokens based on provider
+            if main_calendar.provider == 'google':
+                if not hasattr(main_calendar, 'google_calendar'):
+                    return Response({'error': 'Calendar configuration error', 'details': 'Missing Google calendar data', 'config_name': config.name}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                conn_ok = bool(main_calendar.google_calendar.connection and main_calendar.google_calendar.connection.access_token)
+            else:
+                if not hasattr(main_calendar, 'microsoft_calendar'):
+                    return Response({'error': 'Calendar configuration error', 'details': 'Missing Microsoft calendar data', 'config_name': config.name}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                conn_ok = bool(main_calendar.microsoft_calendar.connection and main_calendar.microsoft_calendar.connection.access_token)
+            if not conn_ok:
                 return Response({
                     'error': 'Main calendar authentication required',
                     'details': f'Calendar "{main_calendar.name}" needs re-authorization',
@@ -965,7 +1309,10 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             # Create event in main calendar
             try:
                 service = CalendarServiceFactory.get_service(main_calendar)
-                external_id = main_calendar.google_calendar.external_id
+                external_id = (
+                    main_calendar.google_calendar.external_id if main_calendar.provider == 'google'
+                    else main_calendar.microsoft_calendar.external_id
+                )
                 
                 # Create the event
                 created_event = service.create_event(external_id, event_data)
@@ -1068,24 +1415,36 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         for calendar_id in config.conflict_check_calendars:
             try:
                 conflict_calendar = Calendar.objects.select_related(
-                    'google_calendar__connection'
+                    'google_calendar__connection', 'microsoft_calendar__connection'
                 ).get(id=calendar_id)
                 
-                if not hasattr(conflict_calendar, 'google_calendar'):
-                    logger.warning(f"Calendar {calendar_id} has no google_calendar data")
+                # Ensure provider-specific data is present
+                if conflict_calendar.provider == 'google' and not hasattr(conflict_calendar, 'google_calendar'):
+                    logger.warning(f"Calendar {calendar_id} missing google_calendar data")
                     failed_calendars.append(conflict_calendar.name if hasattr(conflict_calendar, 'name') else str(calendar_id))
                     continue
-                
-                # Check if calendar has valid tokens before attempting API call
-                google_calendar = conflict_calendar.google_calendar
-                if not google_calendar.connection or not google_calendar.connection.access_token:
+                if conflict_calendar.provider == 'outlook' and not hasattr(conflict_calendar, 'microsoft_calendar'):
+                    logger.warning(f"Calendar {calendar_id} missing microsoft_calendar data")
+                    failed_calendars.append(conflict_calendar.name if hasattr(conflict_calendar, 'name') else str(calendar_id))
+                    continue
+
+                # Check tokens via provider
+                if conflict_calendar.provider == 'google':
+                    conn = conflict_calendar.google_calendar.connection
+                else:
+                    conn = conflict_calendar.microsoft_calendar.connection
+                if not conn or not getattr(conn, 'access_token', None):
                     logger.warning(f"Calendar {conflict_calendar.name} has no valid tokens - skipping availability check")
                     failed_calendars.append(conflict_calendar.name)
                     continue
-                
-                # Get GoogleCalendarService through existing factory
+
+                # Use provider-agnostic factory
                 service = CalendarServiceFactory.get_service(conflict_calendar)
-                external_id = conflict_calendar.google_calendar.external_id
+                external_id = (
+                    conflict_calendar.google_calendar.external_id
+                    if conflict_calendar.provider == 'google' else
+                    conflict_calendar.microsoft_calendar.external_id
+                )
                 
                 # Get busy times for this calendar
                 calendar_busy = service.check_availability(external_id, start_datetime, end_datetime)
@@ -1144,26 +1503,38 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
             
             try:
                 conflict_calendar = Calendar.objects.select_related(
-                    'google_calendar__connection'
+                    'google_calendar__connection', 'microsoft_calendar__connection'
                 ).get(id=calendar_id)
                 
                 calendar_name = conflict_calendar.name
                 
-                if not hasattr(conflict_calendar, 'google_calendar'):
+                # Ensure provider-specific data exists
+                if conflict_calendar.provider == 'google' and not hasattr(conflict_calendar, 'google_calendar'):
                     logger.warning(f"Calendar {calendar_name} has no google_calendar data")
                     failed_calendars.append(calendar_name)
                     continue
-                
-                # Check if calendar has valid tokens before attempting API call
-                google_calendar = conflict_calendar.google_calendar
-                if not google_calendar.connection or not google_calendar.connection.access_token:
+                if conflict_calendar.provider == 'outlook' and not hasattr(conflict_calendar, 'microsoft_calendar'):
+                    logger.warning(f"Calendar {calendar_name} has no microsoft_calendar data")
+                    failed_calendars.append(calendar_name)
+                    continue
+
+                # Check tokens
+                if conflict_calendar.provider == 'google':
+                    conn = conflict_calendar.google_calendar.connection
+                else:
+                    conn = conflict_calendar.microsoft_calendar.connection
+                if not conn or not getattr(conn, 'access_token', None):
                     logger.warning(f"Calendar {calendar_name} has no valid tokens - skipping availability check")
                     token_issues.append(calendar_name)
                     continue
-                
-                # Get GoogleCalendarService through existing factory
+
+                # Use provider-agnostic factory
                 service = CalendarServiceFactory.get_service(conflict_calendar)
-                external_id = conflict_calendar.google_calendar.external_id
+                external_id = (
+                    conflict_calendar.google_calendar.external_id
+                    if conflict_calendar.provider == 'google' else
+                    conflict_calendar.microsoft_calendar.external_id
+                )
                 
                 # Get busy times for this calendar
                 calendar_busy = service.check_availability(external_id, start_datetime, end_datetime)
@@ -1296,21 +1667,15 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
         return slots
     
     def _build_event_data(self, config: CalendarConfiguration, start_time, duration_minutes: int, title: str, attendee_email: str, attendee_name: str = None, description: str = None) -> dict:
-        """Build Google Calendar event data from config"""
+        """Build generic event data from config (usable by provider services)"""
         end_time = start_time + timedelta(minutes=duration_minutes)
         
-        # Base event data
+        # Base event data (generic shape)
         event_data = {
             'summary': title,
-            'start': {
-                'dateTime': start_time.isoformat(),
-                'timeZone': 'UTC'
-            },
-            'end': {
-                'dateTime': end_time.isoformat(), 
-                'timeZone': 'UTC'
-            },
-            'attendees': [{'email': attendee_email}]
+            'start': start_time.isoformat(),
+            'end': end_time.isoformat(),
+            'attendees': [{'email': attendee_email, 'name': attendee_name or attendee_email, 'type': 'required'}]
         }
         
         # Add attendee name if provided

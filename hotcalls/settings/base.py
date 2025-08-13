@@ -531,3 +531,20 @@ GOOGLE_SCOPES = [
     'https://www.googleapis.com/auth/userinfo.email',
     'openid'  # Required by Google OAuth for user identification
 ]
+
+# Microsoft 365 / Exchange Online OAuth Configuration
+# Keep it simple and similar to Google; values are read from environment.
+MS_CLIENT_ID = os.getenv('MS_CLIENT_ID', '')
+MS_CLIENT_SECRET = os.getenv('MS_CLIENT_SECRET', '')
+MS_AUTH_TENANT = os.getenv('MS_AUTH_TENANT', 'organizations')  # restrict to work/school accounts
+MS_REDIRECT_URI = f"{SITE_URL}/api/calendars/microsoft_callback/"
+MS_SCOPES = [
+    'openid',
+    'profile',
+    'email',
+    'offline_access',
+    'User.Read',
+    'Calendars.ReadWrite',
+    'MailboxSettings.Read',
+    # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
+]

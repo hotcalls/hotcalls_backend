@@ -3,8 +3,9 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
 from .models import (
-    GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
-    WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
+    GoogleCalendarConnection, GoogleCalendar,
+    MicrosoftCalendarConnection, MicrosoftCalendar,
+    WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation
 )
 from django.utils import timezone
@@ -308,6 +309,68 @@ class GoogleCalendarAdmin(admin.ModelAdmin):
     get_calendar_name.admin_order_field = 'calendar__name'
 
 
+@admin.register(MicrosoftCalendarConnection)
+class MicrosoftCalendarConnectionAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'primary_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
+    list_filter = ('active', 'workspace', 'last_sync', 'created_at')
+    search_fields = ('workspace__workspace_name', 'primary_email')
+    ordering = ('-created_at',)
+    readonly_fields = ('access_token', 'refresh_token', 'token_expires_at', 'scopes_granted', 'sync_errors', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Connection Info', {
+            'fields': ('workspace', 'user', 'primary_email', 'display_name', 'tenant_id', 'ms_user_id', 'timezone_windows', 'active')
+        }),
+        ('OAuth Tokens (Read Only)', {
+            'fields': ('access_token', 'refresh_token', 'token_expires_at', 'scopes_granted'),
+            'classes': ('collapse',)
+        }),
+        ('Sync Status', {
+            'fields': ('last_sync', 'sync_errors'),
+            'classes': ('collapse',)
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_calendars_count(self, obj):
+        return obj.calendars.count()
+    get_calendars_count.short_description = 'Calendars'
+
+
+@admin.register(MicrosoftCalendar)
+class MicrosoftCalendarAdmin(admin.ModelAdmin):
+    list_display = ('get_calendar_name', 'external_id', 'primary', 'can_edit', 'created_at')
+    list_filter = ('primary', 'created_at')
+    search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
+    ordering = ('-created_at',)
+    readonly_fields = ('external_id', 'created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Calendar Info', {
+            'fields': ('calendar', 'connection', 'external_id', 'primary', 'can_edit')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_calendar_name(self, obj):
+        return obj.calendar.name
+    get_calendar_name.short_description = 'Calendar Name'
+    get_calendar_name.admin_order_field = 'calendar__name'
+
+from .models import MicrosoftSubscription
+
+@admin.register(MicrosoftSubscription)
+class MicrosoftSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('subscription_id', 'connection', 'resource', 'expiration_at', 'created_at')
+    list_filter = ('resource', 'expiration_at', 'created_at')
+    search_fields = ('subscription_id', 'connection__primary_email', 'resource')
+    ordering = ('-created_at',)
 @admin.register(Calendar)
 class CalendarAdmin(admin.ModelAdmin):
     list_display = ('name', 'workspace', 'provider', 'active', 'get_configs_count', 'get_connection_status', 'created_at')
@@ -338,6 +401,11 @@ class CalendarAdmin(admin.ModelAdmin):
                     return '⚠️ Token Expired'
             else:
                 return '⚠️ No Token'
+        elif obj.provider == 'outlook' and hasattr(obj, 'microsoft_calendar'):
+            ms_cal = obj.microsoft_calendar
+            if ms_cal.connection and ms_cal.connection.active:
+                return '✅ Connected'
+            return '⚠️ Disconnected'
         return '❓ Unknown'
     get_connection_status.short_description = 'Status'
 

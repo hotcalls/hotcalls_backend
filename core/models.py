@@ -1301,6 +1301,105 @@ class GoogleCalendar(models.Model):
         return f"{self.calendar.name} ({self.external_id})"
 
 
+class MicrosoftCalendarConnection(models.Model):
+    """Microsoft 365/Exchange OAuth connection and API credentials"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar_connections'
+    )
+    workspace = models.ForeignKey(
+        'Workspace',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar_connections'
+    )
+
+    # Microsoft account and tenant identifiers
+    primary_email = models.EmailField(help_text="Primary UPN/email of the Microsoft account")
+    tenant_id = models.CharField(max_length=128, help_text="Azure AD Tenant ID (tid)")
+    ms_user_id = models.CharField(max_length=128, help_text="Microsoft user object ID (oid)")
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    timezone_windows = models.CharField(max_length=100, blank=True, default='', help_text="Windows time zone id (e.g., 'W. Europe Standard Time')")
+
+    # OAuth tokens
+    refresh_token = models.TextField(editable=False, help_text="OAuth refresh token (encrypted at rest)")
+    access_token = models.TextField(editable=False, help_text="OAuth access token (encrypted at rest)")
+    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    scopes_granted = models.JSONField(default=list, help_text="Granted OAuth scopes")
+
+    # Connection status
+    active = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    sync_errors = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['workspace', 'primary_email']
+        indexes = [
+            models.Index(fields=['workspace', 'active']),
+            models.Index(fields=['token_expires_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.primary_email}"
+
+
+class MicrosoftCalendar(models.Model):
+    """Microsoft-specific calendar metadata"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    calendar = models.OneToOneField(
+        'Calendar',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar'
+    )
+    connection = models.ForeignKey(
+        'MicrosoftCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='calendars',
+        null=True,
+        blank=True,
+        help_text="OAuth connection that provides access to this calendar"
+    )
+
+    # Graph Calendar fields
+    external_id = models.CharField(max_length=255, unique=True, help_text="Microsoft Calendar ID")
+    primary = models.BooleanField(default=False)
+    can_edit = models.BooleanField(default=True, help_text="Whether current user can edit this calendar")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.calendar.name} ({self.external_id})"
+
+
+class MicrosoftSubscription(models.Model):
+    """Microsoft Graph subscription (webhook) tracking for a connection"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        'MicrosoftCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='subscriptions'
+    )
+    subscription_id = models.CharField(max_length=255, unique=True)
+    resource = models.CharField(max_length=255, default='me/events')
+    client_state = models.CharField(max_length=255, blank=True, default='')
+    expiration_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['connection']),
+            models.Index(fields=['expiration_at'])
+        ]
+
+    def __str__(self):
+        return f"Sub {self.subscription_id} ({self.resource})"
+
 class CalendarConfiguration(models.Model):
     """Configuration settings for calendar scheduling"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
