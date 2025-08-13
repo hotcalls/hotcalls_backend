@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
-from core.models import Lead, CallLog, Workspace
+from core.models import Lead, CallLog, Workspace, LeadFunnel
 from .serializers import (
     LeadSerializer, LeadCreateSerializer, LeadBulkCreateSerializer,
     LeadMetaDataUpdateSerializer, LeadStatsSerializer
@@ -19,6 +19,7 @@ from core.utils.validators import (
 )
 import uuid
 import re
+from django.utils import timezone
 
 
 @extend_schema_view(
@@ -507,7 +508,24 @@ class LeadViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 errors.append({'index': index, 'error': str(e)})
 
-        return Response({
+        # If we successfully created leads and have a clear workspace, create a LeadFunnel for this CSV batch
+        lead_funnel_id = None
+        if created_leads and isinstance(assigned_workspace, Workspace):
+            try:
+                funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(created_leads)} Leads)"
+                funnel = LeadFunnel.objects.create(
+                    name=funnel_name,
+                    workspace=assigned_workspace,
+                    is_active=True,
+                )
+                lead_funnel_id = str(funnel.id)
+                # Attach all created leads to this funnel in bulk
+                Lead.objects.filter(id__in=[lead.id for lead in created_leads]).update(lead_funnel=funnel)
+            except Exception:
+                # If funnel creation fails, proceed without blocking the import
+                lead_funnel_id = None
+
+        response_payload = {
             'total_leads': len(raw_leads),
             'successful_creates': len(created_leads),
             'failed_creates': len(errors),
@@ -515,7 +533,12 @@ class LeadViewSet(viewsets.ModelViewSet):
             'created_lead_ids': [str(lead.id) for lead in created_leads],
             'import_batch_id': import_batch_id,
             'detected_variable_keys': sorted(list(detected_variable_keys)),
-        }, status=status.HTTP_201_CREATED)
+        }
+        # Additive, optional field: helps frontend to show the CSV source in Agent Config
+        if lead_funnel_id:
+            response_payload['lead_funnel_id'] = lead_funnel_id
+
+        return Response(response_payload, status=status.HTTP_201_CREATED)
     
     @extend_schema(
         summary="🏷️ Update lead metadata",

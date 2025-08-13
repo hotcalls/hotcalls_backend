@@ -32,7 +32,12 @@
           window.location.replace("{{ dashboard_redirect }}");
           return;
         }
-        // On error fall back to dashboard
+        // If unauthorized, force login with next back here
+        if (resp.status === 401) {
+          window.location.replace("{{ login_redirect }}");
+          return;
+        }
+        // On any other error, still send to dashboard to avoid blank page
         window.location.replace("{{ dashboard_redirect }}");
       } catch (e) {
         window.location.replace("{{ dashboard_redirect }}");
