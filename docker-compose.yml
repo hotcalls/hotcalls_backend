@@ -95,11 +95,12 @@ services:
     working_dir: /app/outboundagent
     env_file: .env
     environment:
-      - AGENT_DB_HOST=db
-      - AGENT_DB_PORT=5432
-      - AGENT_DB_NAME=${DB_NAME}
-      - AGENT_DB_USER=${DB_USER}
-      - AGENT_DB_PASSWORD=${DB_PASSWORD}
+      # Database: Use read-only user from .env, only override host for Docker
+      - DB_HOST=db  # Docker network override
+      - DB_PORT=${DB_PORT}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${AGENT_DB_USER}  # Read-only user from .env
+      - DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
       - MCP_SERVER_URL=http://mcp:8000
     depends_on:
       db:

@@ -72,8 +72,32 @@ async def _make_call_async(
         hotcalls_metadata["lead_data"]["surname"] = lead_data["surname"].replace('"', '').replace("'", "")
     
     try:
-        # Step 1: Dispatch the agent to the room first
+        # Step 0: Check if the agent has a valid token BEFORE dispatching
         agent_name = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
+        
+        # Import Django models here to check token
+        from django.utils import timezone
+        from core.models import LiveKitAgent
+        
+        # Check if this specific agent has a valid token
+        has_valid_token = LiveKitAgent.objects.filter(
+            name=agent_name,
+            expires_at__gt=timezone.now()
+        ).exists()
+        
+        if not has_valid_token:
+            print(f"❌ Agent {agent_name} has no valid token - ABORTING CALL to {lead_data['phone']}")
+            return {
+                "success": False,
+                "error": f"Agent {agent_name} has no valid token",
+                "to_number": lead_data['phone'],
+                "agent_name": agent_name,
+                "abort_reason": "token_missing"
+            }
+        
+        print(f"✅ Agent {agent_name} has valid token - proceeding with call to {lead_data['phone']}")
+        
+        # Step 1: Dispatch the agent to the room first
         print(f"Dispatching {agent_name} to room for call to {lead_data['phone']}...")
         
         dispatch = await livekit_api.agent_dispatch.create_dispatch(

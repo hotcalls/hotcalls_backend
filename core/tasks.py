@@ -270,23 +270,8 @@ def trigger_call(self, call_task_id):
             # Test call (lead is null) - skip quota enforcement
             logger.info(f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}")
 
-        # 🚀 Preflight: ensure a valid LiveKitAgent token exists before dispatch/dial (strict)
-        from core.models import LiveKitAgent
-        from core.utils.calltask_utils import reschedule_task_preflight_failed
-        from django.db import transaction as dj_tx
-        has_valid_token = LiveKitAgent.objects.filter(expires_at__gt=timezone.now()).exists()
-        if not has_valid_token:
-            with dj_tx.atomic():
-                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
-                reschedule_task_preflight_failed(call_task, 'token_invalid')
-            return {
-                "success": False,
-                "call_task_id": call_task_id,
-                "message": "Preflight failed: no valid LiveKitAgent token",
-                "result": {"reasons": ["token_invalid"]},
-            }
 
-        # 🚀 Quota OK & Preflight OK - Place the outbound call (synchronous wait inside worker)
+        # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
         call_result = asyncio.run(
             _make_call_async(
                 sip_trunk_id=sip_trunk_id,
@@ -310,7 +295,20 @@ def trigger_call(self, call_task_id):
                     "result": call_result,
                 }
             else:
-                # Retry logic
+                # Check if failure is due to missing token (don't count as attempt)
+                if call_result.get("abort_reason") == "token_missing":
+                    from core.utils.calltask_utils import reschedule_task_preflight_failed
+                    reschedule_task_preflight_failed(call_task, 'token_missing')
+                    logger.warning(f"📅 Task {call_task_id} rescheduled due to missing token (not counted as attempt)")
+                    return {
+                        "success": False,
+                        "call_task_id": call_task_id,
+                        "message": "Call aborted - agent token missing",
+                        "result": call_result,
+                        "attempts": call_task.attempts,
+                    }
+                
+                # Regular retry logic for other failures
                 max_retries = agent.max_retries if agent else 3
                 if call_task.attempts < max_retries:
                     call_task.increment_retries(max_retries)

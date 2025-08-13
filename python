@@ -1,4 +1,0 @@
-#!/bin/bash
-cd /Users/leopoppel/hotcalls
-source venv/bin/activate
-exec python "$@" 
