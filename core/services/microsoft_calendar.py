@@ -212,8 +212,8 @@ class MicrosoftCalendarService:
                     'type': a.get('type', 'required').capitalize()
                 })
             body = {
-                'subject': payload.get('subject', ''),
-                'body': {'contentType': 'HTML', 'content': payload.get('body', '')},
+                'subject': payload.get('subject') or payload.get('summary', ''),
+                'body': {'contentType': 'HTML', 'content': payload.get('body') or payload.get('description', '')},
                 'start': {'dateTime': payload.get('start'), 'timeZone': tz},
                 'end': {'dateTime': payload.get('end'), 'timeZone': tz},
                 'attendees': attendees,

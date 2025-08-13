@@ -1314,7 +1314,16 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                     main_calendar.google_calendar.external_id if main_calendar.provider == 'google'
                     else main_calendar.microsoft_calendar.external_id
                 )
-                
+
+                # Provider-specific online flags
+                if config.meeting_type == 'online':
+                    if main_calendar.provider == 'google':
+                        # Hint to Google layer to create Meet link (implemented in google service mapping)
+                        event_data['create_meet'] = True
+                    else:
+                        # Microsoft Teams
+                        event_data['teams'] = True
+
                 # Create the event
                 created_event = service.create_event(external_id, event_data)
                 
@@ -1336,9 +1345,17 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 'type': config.meeting_type,
                 'duration_minutes': duration_minutes
             }
-            
-            if config.meeting_type == 'online' and config.meeting_link:
-                meeting_details['meeting_link'] = config.meeting_link
+
+            # Extract joinUrl if provider created one
+            if config.meeting_type == 'online':
+                # Google may return hangoutLink or conferenceData; MS returns onlineMeeting.joinUrl
+                join_url = (
+                    created_event.get('hangoutLink') or
+                    (created_event.get('conferenceData', {}) or {}).get('entryPoints', [{}])[0].get('uri') or
+                    (created_event.get('onlineMeeting', {}) or {}).get('joinUrl')
+                )
+                if join_url:
+                    meeting_details['meeting_link'] = join_url
             elif config.meeting_type == 'in_person' and config.meeting_address:
                 meeting_details['address'] = config.meeting_address
             
@@ -1670,37 +1687,35 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     def _build_event_data(self, config: CalendarConfiguration, start_time, duration_minutes: int, title: str, attendee_email: str, attendee_name: str = None, description: str = None) -> dict:
         """Build generic event data from config (usable by provider services)"""
         end_time = start_time + timedelta(minutes=duration_minutes)
-        
-        # Base event data (generic shape)
+
         event_data = {
+            'subject': title,  # Microsoft uses subject; Google will map this to summary downstream
             'summary': title,
             'start': start_time.isoformat(),
             'end': end_time.isoformat(),
-            'attendees': [{'email': attendee_email, 'name': attendee_name or attendee_email, 'type': 'required'}]
+            'attendees': [{'email': attendee_email, 'name': attendee_name or attendee_email, 'type': 'required'}],
         }
-        
-        # Add attendee name if provided
+
         if attendee_name:
             event_data['attendees'][0]['displayName'] = attendee_name
-        
-        # Build description based on config and meeting type
+
+        # Base description
         event_description = f"Booking via {config.name}"
-        
         if description:
             event_description += f"\n\n{description}"
-        
-        # Add meeting type specific details
-        if config.meeting_type == 'online' and config.meeting_link:
-            event_description += f"\n\nJoin meeting: {config.meeting_link}"
-        elif config.meeting_type == 'in_person' and config.meeting_address:
+
+        # Location/online handling
+        if config.meeting_type == 'in_person' and config.meeting_address:
             event_data['location'] = config.meeting_address
             event_description += f"\n\nLocation: {config.meeting_address}"
-        elif config.meeting_type == 'phone':
-            event_description += "\n\nMeeting Type: Phone Call"
-        
+
+        # Flag for provider online meeting creation (no manual override in our flow)
+        event_data['wants_online_meeting'] = (config.meeting_type == 'online')
+
+        event_data['body'] = event_description
         event_data['description'] = event_description
-        
-        return event_data 
+
+        return event_data
 
 
 ## Google Calendar MCP token management removed in unified LiveKit-only flow
