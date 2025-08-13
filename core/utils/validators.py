@@ -39,16 +39,43 @@ def normalize_phone_e164(value: str, default_region: str = 'DE') -> Optional[str
     if not value:
         return None
     raw = str(value).strip()
-    # Convert leading 00 to +
-    if raw.startswith('00'):
-        raw = '+' + raw[2:]
+
+    # 1) Sanitize: allow only + and digits; strip labels like "DE "+49
+    #    Keep a single leading + if present, drop all other non-digits
+    if raw.count('+') > 1:
+        # keep only the first plus; drop others via cleaning
+        first_plus_index = raw.find('+')
+        raw = raw[first_plus_index:]  # slice from first +; cleaned below
+    cleaned = re.sub(r"[^0-9+]", "", raw)
+
+    # 2) Convert leading 00 to +
+    if cleaned.startswith('00'):
+        cleaned = '+' + cleaned[2:]
+
+    # 3) Heuristics for common DE inputs coming from split country code fields
+    #    - "49..." without + -> add '+'
+    #    - "1..." (missing national 0) -> prefix 0
+    #    - plain digits that are meant as national number -> ensure leading 0
+    if not cleaned.startswith('+'):
+        digits_only = re.sub(r"\D", "", cleaned)
+        if default_region == 'DE':
+            if digits_only.startswith('49'):
+                cleaned = '+' + digits_only
+            else:
+                # If it looks like a mobile starting with 1 and missing 0, add it
+                if not digits_only.startswith('0'):
+                    digits_only = '0' + digits_only
+                cleaned = digits_only
+        else:
+            cleaned = digits_only
+
     try:
         if phonenumbers is None:
             return None
-        if raw.startswith('+'):
-            num = phonenumbers.parse(raw, None)
+        if cleaned.startswith('+'):
+            num = phonenumbers.parse(cleaned, None)
         else:
-            num = phonenumbers.parse(raw, default_region or 'DE')
+            num = phonenumbers.parse(cleaned, default_region or 'DE')
         if not phonenumbers.is_possible_number(num):
             return None
         if not phonenumbers.is_valid_number(num):
