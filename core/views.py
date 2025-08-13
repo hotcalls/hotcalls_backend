@@ -67,29 +67,13 @@ def accept_invitation(request, token):
     
     # Handle GET requests (from email button)
     if request.method == 'GET':
-        # If user is not authenticated, redirect to login with return URL
-        if not request.user.is_authenticated:
-            from django.contrib.auth.views import redirect_to_login
-            return redirect_to_login(request.get_full_path())
-        
-        # If authenticated but wrong email, show error
-        if request.user.email != invitation.email:
-            context = {
-                'error_message': f'Diese Einladung wurde an {invitation.email} gesendet, aber Sie sind als {request.user.email} angemeldet.'
-            }
-            return render(request, 'invitations/invitation_error.html', context, status=403)
-        
-        # Auto-accept the invitation and show success
-        try:
-            invitation.accept(request.user)
-            # Redirect to SPA dashboard with workspace selection and skip welcome flow
-            return redirect(f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1")
-        except ValueError as e:
-            context = {'error_message': str(e)}
-            return render(request, 'invitations/invitation_error.html', context, status=400)
-        except Exception as e:
-            context = {'error_message': 'Ein unerwarteter Fehler ist aufgetreten beim Beitreten zum Workspace.'}
-            return render(request, 'invitations/invitation_error.html', context, status=500)
+        # Token-based auto-accept via SPA: Render a tiny page with JS that uses localStorage authToken
+        # to call the API endpoint and then redirects accordingly. If no token, redirect to SPA login.
+        return render(request, 'invitations/invitation_auto_accept.html', {
+            'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
+            'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
+            'login_redirect': f"/login?next={request.get_full_path()}"
+        })
     
     # Handle POST requests (from invitation detail form)
     if not request.user.is_authenticated:
