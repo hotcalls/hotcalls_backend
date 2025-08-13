@@ -237,7 +237,31 @@ class MicrosoftCalendarService:
                 data['teams_added'] = False
                 return data
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+
+            # Best-effort: fetch onlineMeeting.joinUrl after creation, as Graph may not include it in POST response
+            try:
+                if payload.get('teams') and isinstance(data, dict) and data.get('id'):
+                    event_id = data.get('id')
+                    read_url = f'https://graph.microsoft.com/v1.0/me/events/{event_id}'
+                    # First try $select=onlineMeeting
+                    read = self._request('GET', read_url, params={'$select': 'onlineMeeting'})
+                    if read.ok:
+                        read_json = read.json() or {}
+                        if read_json.get('onlineMeeting'):
+                            data['onlineMeeting'] = read_json.get('onlineMeeting')
+                        else:
+                            # Fallback attempt with $expand
+                            read2 = self._request('GET', read_url, params={'$expand': 'onlineMeeting'})
+                            if read2.ok:
+                                read2_json = read2.json() or {}
+                                if read2_json.get('onlineMeeting'):
+                                    data['onlineMeeting'] = read2_json.get('onlineMeeting')
+            except Exception:
+                # Do not fail booking if link cannot be read; the event is created and invitations are sent by provider
+                pass
+
+            return data
         except Exception as e:
             logger.error(f"Microsoft create_event failed: {str(e)}")
             raise
