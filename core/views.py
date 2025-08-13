@@ -53,26 +53,13 @@ def accept_invitation(request, token):
     
     # Handle GET requests (from email button)
     if request.method == 'GET':
-        # If not authenticated, send user to the standard login with a proper next parameter
-        if not request.user.is_authenticated:
-            return redirect(f"/login?next={request.get_full_path()}")
-
-        # If authenticated, verify email and accept immediately
-        if request.user.email != invitation.email:
-            context = {
-                'error_message': f'Diese Einladung wurde an {invitation.email} gesendet, aber Sie sind als {request.user.email} angemeldet.'
-            }
-            return render(request, 'invitations/invitation_error.html', context, status=403)
-
-        try:
-            invitation.accept(request.user)
-            return redirect(f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1")
-        except ValueError as e:
-            context = {'error_message': str(e)}
-            return render(request, 'invitations/invitation_error.html', context, status=400)
-        except Exception:
-            context = {'error_message': 'Ein unerwarteter Fehler ist aufgetreten beim Beitreten zum Workspace.'}
-            return render(request, 'invitations/invitation_error.html', context, status=500)
+        # Render tiny auto-accept page that uses localStorage authToken to call the API
+        # If no token, the page will redirect to SPA login with next back to this URL
+        return render(request, 'invitations/invitation_auto_accept.html', {
+            'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
+            'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
+            'login_redirect': f"/login?next={request.get_full_path()}"
+        })
     
     # Handle POST requests (from invitation detail form)
     if not request.user.is_authenticated:
