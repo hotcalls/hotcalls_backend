@@ -1227,7 +1227,8 @@ def preflight(request):
         from django.db import transaction
         with transaction.atomic():
             call_task.refresh_from_db()
-            reschedule_task_preflight_failed(call_task, reasons[0])
+            from core.utils.calltask_utils import reschedule_without_increment, DisconnectionReason
+            reschedule_without_increment(call_task, reason=DisconnectionReason.PREFLIGHT_CALL_LOG_FAILED, hint=reasons[0])
 
         retry_minutes = getattr(call_task.agent, 'retry_interval', 30)
         return Response({

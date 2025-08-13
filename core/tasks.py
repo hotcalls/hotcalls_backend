@@ -43,6 +43,7 @@ redis_client = redis.StrictRedis.from_url(REDIS_URL)
 # ─────────────────────────────
 logger = logging.getLogger(__name__)
 
+
 # ─────────────────────────────
 # Singleton (distributed‑lock) Celery base class
 # ─────────────────────────────
@@ -142,7 +143,7 @@ def trigger_call(self, call_task_id):
     Invoked **only** by `schedule_agent_call`.
 
     Flow:
-      1. Double‑check status is CALL_TRIGGERED.
+      1. Double-check status is CALL_TRIGGERED.
       2. Move to IN_PROGRESS (inside atomic tx).
       3. Check quotas (skip for test calls where lead is null).
       4. Launch the LiveKit outbound call (async).
@@ -150,9 +151,15 @@ def trigger_call(self, call_task_id):
          • If call launch fails     → RETRY / WAITING logic.
       6. External webhook / feedback loop will delete or close the task.
     """
-    # Local import to avoid circular dependencies
+    # Function-level imports (avoid inner-block imports; still avoids module-level cycles)
     from core.models import CallTask, CallStatus
     from core.utils.livekit_calls import _make_call_async
+    from core.utils.calltask_utils import (
+        handle_max_retries,
+        handle_call_success,
+        handle_call_failure,
+    )
+    from core.quotas import enforce_and_record, QuotaExceeded
 
     try:
         call_task = CallTask.objects.get(id=call_task_id)
@@ -180,6 +187,15 @@ def trigger_call(self, call_task_id):
                     "status": call_task.status,
                 }
 
+            # EARLY MAX-RETRIES GUARD (no defaults; uses agent config)
+            if handle_max_retries(call_task):
+                return {
+                    "success": False,
+                    "call_task_id": call_task_id,
+                    "message": "Max retries reached - task deleted before dispatch",
+                    "deleted": True,
+                }
+
             # Move to IN_PROGRESS
             call_task.status = CallStatus.IN_PROGRESS
             call_task.save(update_fields=["status", "updated_at"])
@@ -195,12 +211,10 @@ def trigger_call(self, call_task_id):
             sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
         if not sip_trunk_id:
             sip_trunk_id = os.getenv("TRUNK_ID")  # Fallback
-            
+
         agent_config = {
             "name": agent.name,
-            "voice_external_id": agent.voice.voice_external_id
-            if agent.voice
-            else None,
+            "voice_external_id": agent.voice.voice_external_id,
             "language": agent.language,
             "prompt": agent.prompt,
             "greeting_outbound": agent.greeting_outbound,
@@ -240,36 +254,41 @@ def trigger_call(self, call_task_id):
         if lead is not None:
             # Only enforce quotas for real calls with leads
             try:
-                from core.quotas import enforce_and_record, QuotaExceeded
-                
                 # Check quota without recording usage (amount=0)
                 enforce_and_record(
                     workspace=workspace,
                     route_name="internal:outbound_call",
                     http_method="POST",
-                    amount=0  # Just check status, don't pre-charge
+                    amount=0,  # Just check status, don't pre-charge
                 )
-                
+
             except QuotaExceeded as quota_err:
-                logger.warning(f"🚫 Call quota exceeded for workspace {workspace.id}: {quota_err}")
+                logger.warning(
+                    f"🚫 Call quota exceeded for workspace {workspace.id}: {quota_err}"
+                )
                 # DELETE this call task - quota exceeded
                 with transaction.atomic():
-                    call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                    call_task = CallTask.objects.select_for_update().get(
+                        id=call_task_id
+                    )
                     call_task.delete()
                 return {
                     "success": False,
                     "call_task_id": call_task_id,
-                    "error": "quota_exceeded", 
+                    "error": "quota_exceeded",
                     "message": f"Call task deleted - {quota_err}",
                 }
             except Exception as quota_err:
                 # Log error but don't block the call on quota system failures
-                logger.error(f"⚠️ Quota check failed for workspace {workspace.id}: {quota_err}")
+                logger.error(
+                    f"⚠️ Quota check failed for workspace {workspace.id}: {quota_err}"
+                )
                 # Allow call to proceed
         else:
             # Test call (lead is null) - skip quota enforcement
-            logger.info(f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}")
-
+            logger.info(
+                f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}"
+            )
 
         # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
         call_result = asyncio.run(
@@ -281,85 +300,29 @@ def trigger_call(self, call_task_id):
             )
         )
 
-        # Post‑call status handling
+        # Post‑call status handling - Use unified utilities
+
         with transaction.atomic():
             call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+
             if call_result.get("success"):
-                # SUCCESS: keep status as IN_PROGRESS until webhook cleans up
-                call_task.updated_at = timezone.now()
-                call_task.save(update_fields=["updated_at"])
-                return {
-                    "success": True,
-                    "call_task_id": call_task_id,
-                    "message": "Call launched; task remains IN_PROGRESS.",
-                    "result": call_result,
-                }
+                # SUCCESS: Use utility to handle success
+                return handle_call_success(call_task, call_result)
             else:
-                # Check if it's a token issue (don't count as attempt)
-                if call_result.get("abort_reason") == "token_missing":
-                    # Use the existing utility for preflight failures
-                    from core.utils.calltask_utils import reschedule_task_preflight_failed
-                    reschedule_task_preflight_failed(call_task, hint="token_missing")
-                    logger.warning(f"📅 Task {call_task_id} rescheduled due to missing token (attempts stay at {call_task.attempts})")
-                    return {
-                        "success": False,
-                        "call_task_id": call_task_id,
-                        "message": "No token available - rescheduled without incrementing attempts",
-                        "result": call_result,
-                        "attempts": call_task.attempts,
-                    }
-                
-                # Regular retry logic for actual call failures
-                max_retries = agent.max_retries if agent else 3
-                if call_task.attempts < max_retries:
-                    call_task.increment_retries(max_retries)
-                    call_task.status = CallStatus.RETRY
-                    
-                    # Use the utility to calculate next call time properly
-                    from core.utils.calltask_utils import calculate_next_call_time
-                    call_task.next_call = calculate_next_call_time(agent, timezone.now())
-                    
-                    # Add retry reason for the failure
-                    retry_reasons = call_task.retry_reasons or []
-                    retry_reasons.append({
-                        'reason': 'call_failed',
-                        'hint': call_result.get('error', 'Unknown error'),
-                        'at': timezone.now().isoformat()
-                    })
-                    call_task.retry_reasons = retry_reasons
-                    
-                    call_task.save(
-                        update_fields=["status", "attempts", "next_call", "retry_reasons", "updated_at"]
-                    )
-                else:
-                    # Max retries reached - delete the task
-                    logger.warning(f"🗑️ CallTask {call_task_id} reached max retries ({max_retries}) - deleting task")
-                    final_attempts = call_task.attempts
-                    call_task.delete()
-                    return {
-                        "success": False,
-                        "call_task_id": call_task_id,
-                        "message": f"Call failed – max retries ({max_retries}) reached, task deleted",
-                        "result": call_result,
-                        "attempts": final_attempts,
-                    }
-                return {
-                    "success": False,
-                    "call_task_id": call_task_id,
-                    "message": "Call failed – retry logic applied",
-                    "result": call_result,
-                    "attempts": call_task.attempts,
-                }
+                # FAILURE: Use unified failure handler (no defaults!)
+                error = call_result.get("error", "Unknown error")
+                abort_reason = call_result.get("abort_reason")
+                return handle_call_failure(call_task, error, abort_reason)
 
     except Exception as err:
         logger.error(f"❌ trigger_call exception for {call_task_id}: {err}")
         traceback.print_exc()
-        # Best‑effort reset to RETRY
+        # Reschedule without increment; early max-retries guard will handle deletion on next cycle
         try:
             with transaction.atomic():
                 call_task = CallTask.objects.select_for_update().get(id=call_task_id)
-                call_task.status = CallStatus.RETRY
-                call_task.save(update_fields=["status", "updated_at"])
+                result = handle_call_failure(call_task, str(err), "trigger_exception")
+                return result
         except Exception:
             pass
         return {"success": False, "error": str(err), "call_task_id": call_task_id}
@@ -382,9 +345,9 @@ def schedule_agent_call(self):
     fires `trigger_call.delay()` **only** when the promotion succeeded.
 
     Fully protected by:
-        • SingletonTask (task‑level)
-        • Redis lock (cluster‑level)
-        • Atomic UPDATE (row‑level)
+        • SingletonTask (task level)
+        • Redis lock (cluster level)
+        • Atomic UPDATE (row level)
     """
 
     # ② cluster‑wide Redis lock (belt‑and‑braces)
@@ -402,13 +365,14 @@ def schedule_agent_call(self):
 
         # Calculate concurrency limit from database (keeping existing approach)
         from core.models import LiveKitAgent
+
         agents = LiveKitAgent.objects.filter(expires_at__gt=timezone.now())
         total_concurrency = sum(agent.concurrency_per_agent for agent in agents)
-        concurrency_limit = max(total_concurrency, 1)  # At least 1 to prevent division by zero
+        concurrency_limit = max(
+            total_concurrency, 1
+        )  # At least 1 to prevent division by zero
 
-        in_progress = CallTask.objects.filter(
-            status=CallStatus.IN_PROGRESS
-        ).count()
+        in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
         available_slots = max(concurrency_limit - in_progress, 0)
 
         if available_slots == 0:
@@ -438,7 +402,9 @@ def schedule_agent_call(self):
                     output_field=IntegerField(),
                 )
             )
-            .order_by("priority", "next_call")[: available_slots * 2]  # over‑fetch a bit
+            .order_by("priority", "next_call")[
+                : available_slots * 2
+            ]  # over‑fetch a bit
         )
 
         triggered_ids = []
@@ -452,16 +418,14 @@ def schedule_agent_call(self):
                 continue
 
             # ③ atomic hand‑off
-            rows_updated = (
-                CallTask.objects.filter(
-                    id=task.id,
-                    status__in=[
-                        CallStatus.WAITING,
-                        CallStatus.SCHEDULED,
-                        CallStatus.RETRY,
-                    ],
-                ).update(status=CallStatus.CALL_TRIGGERED, updated_at=now)
-            )
+            rows_updated = CallTask.objects.filter(
+                id=task.id,
+                status__in=[
+                    CallStatus.WAITING,
+                    CallStatus.SCHEDULED,
+                    CallStatus.RETRY,
+                ],
+            ).update(status=CallStatus.CALL_TRIGGERED, updated_at=now)
             if rows_updated == 1:
                 trigger_call.delay(str(task.id))
                 triggered_ids.append(str(task.id))
@@ -535,38 +499,46 @@ def cleanup_stuck_call_tasks(self):
     except Exception as e:
         logger.error(f"❌ Cleanup stuck call tasks failed: {str(e)}")
         return {
-            'success': False,
-            'error': str(e),
-            'deleted_triggered': 0,
-            'deleted_progress': 0,
-            'total_deleted': 0,
-            'timestamp': timezone.now().isoformat()
+            "success": False,
+            "error": str(e),
+            "deleted_triggered": 0,
+            "deleted_progress": 0,
+            "total_deleted": 0,
+            "timestamp": timezone.now().isoformat(),
         }
 
 
 # ─────────────────────────────
 # 6) CallTask Feedback Loop
 # ─────────────────────────────
-@shared_task(bind=True, max_retries=3, default_retry_delay=60, name="core.tasks.update_calltask_from_calllog")
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    name="core.tasks.update_calltask_from_calllog",
+)
 def update_calltask_from_calllog(self, call_log_id):
     """
     Process CallLog and update/delete corresponding CallTask based on call outcome.
-    
-    This task provides the feedback loop between call completion (CallLog) and 
+
+    This task provides the feedback loop between call completion (CallLog) and
     call scheduling (CallTask). It automatically:
     - Deletes CallTasks for successful calls
     - Schedules retries for failed calls (with proper agent configuration)
     - Respects agent retry limits and working hours
-    
+
     Args:
         call_log_id (str): UUID of the CallLog to process
-        
+
     Returns:
         dict: Processing result with status and details
     """
     from core.models import CallLog
-    from core.utils.calltask_utils import find_related_calltask, process_calltask_feedback
-    
+    from core.utils.calltask_utils import (
+        find_related_calltask,
+        process_calltask_feedback,
+    )
+
     try:
         # Get the CallLog
         try:
@@ -574,89 +546,103 @@ def update_calltask_from_calllog(self, call_log_id):
         except CallLog.DoesNotExist:
             logger.error(f"CallLog {call_log_id} not found for feedback processing")
             return {
-                'success': False,
-                'error': 'CallLog not found',
-                'call_log_id': call_log_id
+                "success": False,
+                "error": "CallLog not found",
+                "call_log_id": call_log_id,
             }
-        
+
         # Find the related CallTask
         call_task = find_related_calltask(call_log)
-        
+
         if not call_task:
             # This is normal - not all CallLogs have corresponding CallTasks
             # (e.g., manual test calls, inbound calls, etc.)
-            logger.info(f"No CallTask found for CallLog {call_log_id} - likely a manual/test call")
+            logger.info(
+                f"No CallTask found for CallLog {call_log_id} - likely a manual/test call"
+            )
             return {
-                'success': True,
-                'action': 'no_calltask_found',
-                'call_log_id': call_log_id,
-                'lead_id': str(call_log.lead.id) if call_log.lead else None,
-                'agent_id': str(call_log.agent.agent_id),
-                'disconnection_reason': call_log.disconnection_reason
+                "success": True,
+                "action": "no_calltask_found",
+                "call_log_id": call_log_id,
+                "lead_id": str(call_log.lead.id) if call_log.lead else None,
+                "agent_id": str(call_log.agent.agent_id),
+                "disconnection_reason": call_log.disconnection_reason,
             }
-        
+
         # Process the feedback
         call_task_id = str(call_task.id)
         call_task_status_before = call_task.status
-        
+
         process_calltask_feedback(call_task, call_log)
-        
+
         # Check if CallTask was deleted (successful call)
         from core.models import CallTask
+
         try:
             updated_call_task = CallTask.objects.get(id=call_task_id)
             # CallTask still exists - it was updated
-            action = 'calltask_updated'
+            action = "calltask_updated"
             new_status = updated_call_task.status
-            next_call = updated_call_task.next_call.isoformat() if updated_call_task.next_call else None
+            next_call = (
+                updated_call_task.next_call.isoformat()
+                if updated_call_task.next_call
+                else None
+            )
         except CallTask.DoesNotExist:
             # CallTask was deleted - successful call
-            action = 'calltask_deleted'
+            action = "calltask_deleted"
             new_status = None
             next_call = None
-        
-        logger.info(f"CallTask feedback processed successfully: {action} for CallLog {call_log_id}")
-        
+
+        logger.info(
+            f"CallTask feedback processed successfully: {action} for CallLog {call_log_id}"
+        )
+
         return {
-            'success': True,
-            'action': action,
-            'call_log_id': call_log_id,
-            'call_task_id': call_task_id,
-            'status_before': call_task_status_before,
-            'status_after': new_status,
-            'next_call': next_call,
-            'disconnection_reason': call_log.disconnection_reason,
-            'agent_id': str(call_log.agent.agent_id),
-            'lead_id': str(call_log.lead.id) if call_log.lead else None
+            "success": True,
+            "action": action,
+            "call_log_id": call_log_id,
+            "call_task_id": call_task_id,
+            "status_before": call_task_status_before,
+            "status_after": new_status,
+            "next_call": next_call,
+            "disconnection_reason": call_log.disconnection_reason,
+            "agent_id": str(call_log.agent.agent_id),
+            "lead_id": str(call_log.lead.id) if call_log.lead else None,
         }
-        
+
     except Exception as exc:
         logger.error(f"CallTask feedback failed for CallLog {call_log_id}: {exc}")
-        
+
         # Retry with exponential backoff
         if self.request.retries < self.max_retries:
-            retry_delay = 60 * (2 ** self.request.retries)  # Exponential backoff
-            logger.info(f"Retrying CallTask feedback in {retry_delay}s (attempt {self.request.retries + 1})")
+            retry_delay = 60 * (2**self.request.retries)  # Exponential backoff
+            logger.info(
+                f"Retrying CallTask feedback in {retry_delay}s (attempt {self.request.retries + 1})"
+            )
             raise self.retry(exc=exc, countdown=retry_delay)
         else:
             # Max retries reached - log error and give up
-            logger.error(f"CallTask feedback failed permanently for CallLog {call_log_id} after {self.max_retries} retries")
+            logger.error(
+                f"CallTask feedback failed permanently for CallLog {call_log_id} after {self.max_retries} retries"
+            )
             return {
-                'success': False,
-                'error': str(exc),
-                'call_log_id': call_log_id,
-                'retries': self.request.retries
+                "success": False,
+                "error": str(exc),
+                "call_log_id": call_log_id,
+                "retries": self.request.retries,
             }
 
 
 # ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====
+
 
 @shared_task(bind=True, max_retries=3)
 def refresh_google_calendar_connections(self):
     """
     Refresh Google Calendar OAuth tokens 30 days before expiry.
     Uses GoogleCalendarConnection model for proper OAuth management.
-    
+
     Runs daily at midnight.
     """
     from core.models import GoogleCalendarConnection
@@ -666,80 +652,92 @@ def refresh_google_calendar_connections(self):
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     now = timezone.now()
     refresh_threshold = now + timedelta(days=30)  # Refresh 30 days before expiry
-    
+
     # Query connections that need refresh
     connections_to_refresh = GoogleCalendarConnection.objects.filter(
         token_expires_at__lt=refresh_threshold,
         token_expires_at__gt=now,  # Not already expired
         active=True,
-        refresh_token__isnull=False
-    ).exclude(refresh_token='')
-    
+        refresh_token__isnull=False,
+    ).exclude(refresh_token="")
+
     results = {
-        'total_checked': connections_to_refresh.count(),
-        'refreshed_successfully': 0,
-        'failed_refresh': 0,
-        'needs_reauth': [],
-        'errors': []
+        "total_checked": connections_to_refresh.count(),
+        "refreshed_successfully": 0,
+        "failed_refresh": 0,
+        "needs_reauth": [],
+        "errors": [],
     }
-    
-    logger.info(f"🔄 Starting Google OAuth token refresh for {results['total_checked']} connections")
-    
+
+    logger.info(
+        f"🔄 Starting Google OAuth token refresh for {results['total_checked']} connections"
+    )
+
     for connection in connections_to_refresh:
         try:
             # Create credentials object
             credentials = Credentials(
                 token=connection.access_token,
                 refresh_token=connection.refresh_token,
-                token_uri='https://oauth2.googleapis.com/token',
+                token_uri="https://oauth2.googleapis.com/token",
                 client_id=settings.GOOGLE_CLIENT_ID,
                 client_secret=settings.GOOGLE_CLIENT_SECRET,
-                scopes=connection.scopes
+                scopes=connection.scopes,
             )
-            
+
             # Refresh the token
             request = Request()
             credentials.refresh(request)
-            
+
             # Update connection with new tokens
             connection.access_token = credentials.token
-            connection.token_expires_at = timezone.make_aware(credentials.expiry) if credentials.expiry else None
-            connection.save(update_fields=['access_token', 'token_expires_at', 'updated_at'])
-            
-            results['refreshed_successfully'] += 1
+            connection.token_expires_at = (
+                timezone.make_aware(credentials.expiry) if credentials.expiry else None
+            )
+            connection.save(
+                update_fields=["access_token", "token_expires_at", "updated_at"]
+            )
+
+            results["refreshed_successfully"] += 1
             logger.info(f"✅ Refreshed token for {connection.account_email}")
-            
+
         except Exception as e:
             error_msg = str(e)
-            results['failed_refresh'] += 1
-            results['errors'].append({
-                'connection': connection.account_email,
-                'error': error_msg
-            })
-            
+            results["failed_refresh"] += 1
+            results["errors"].append(
+                {"connection": connection.account_email, "error": error_msg}
+            )
+
             # Check if re-auth is needed
-            if any(keyword in error_msg.lower() for keyword in ['invalid_grant', 'refresh_token', 'authorization']):
-                results['needs_reauth'].append(connection.account_email)
-                logger.error(f"🚨 Re-authorization needed for {connection.account_email}: {error_msg}")
-                
+            if any(
+                keyword in error_msg.lower()
+                for keyword in ["invalid_grant", "refresh_token", "authorization"]
+            ):
+                results["needs_reauth"].append(connection.account_email)
+                logger.error(
+                    f"🚨 Re-authorization needed for {connection.account_email}: {error_msg}"
+                )
+
                 # Mark connection as inactive
                 connection.active = False
-                connection.save(update_fields=['active', 'updated_at'])
+                connection.save(update_fields=["active", "updated_at"])
             else:
-                logger.error(f"❌ Unexpected error refreshing {connection.account_email}: {error_msg}")
-    
+                logger.error(
+                    f"❌ Unexpected error refreshing {connection.account_email}: {error_msg}"
+                )
+
     logger.info(f"""
     🔄 Google Token Refresh Summary:
-    ✅ Successfully refreshed: {results['refreshed_successfully']}
-    ❌ Failed to refresh: {results['failed_refresh']}
-    🚨 Need re-authorization: {len(results['needs_reauth'])}
+    ✅ Successfully refreshed: {results["refreshed_successfully"]}
+    ❌ Failed to refresh: {results["failed_refresh"]}
+    🚨 Need re-authorization: {len(results["needs_reauth"])}
     """)
-    
+
     return results
 
 
@@ -747,7 +745,7 @@ def refresh_google_calendar_connections(self):
 def refresh_meta_tokens(self):
     """
     Refresh Meta (Facebook/Instagram) OAuth tokens 30 days before expiry.
-    
+
     Runs daily at midnight.
     """
     from core.models import MetaIntegration
@@ -755,72 +753,89 @@ def refresh_meta_tokens(self):
     from django.utils import timezone
     from datetime import timedelta
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     now = timezone.now()
     refresh_threshold = now + timedelta(days=30)  # Refresh 30 days before expiry
-    
+
     # Query integrations that need refresh
     integrations_to_refresh = MetaIntegration.objects.filter(
         access_token_expires_at__lt=refresh_threshold,
         access_token_expires_at__gt=now,  # Not already expired
-        status='active'
+        status="active",
     )
-    
+
     results = {
-        'total_checked': integrations_to_refresh.count(),
-        'refreshed_successfully': 0,
-        'failed_refresh': 0,
-        'needs_reauth': [],
-        'errors': []
+        "total_checked": integrations_to_refresh.count(),
+        "refreshed_successfully": 0,
+        "failed_refresh": 0,
+        "needs_reauth": [],
+        "errors": [],
     }
-    
-    logger.info(f"🔄 Starting Meta OAuth token refresh for {results['total_checked']} integrations")
-    
+
+    logger.info(
+        f"🔄 Starting Meta OAuth token refresh for {results['total_checked']} integrations"
+    )
+
     meta_service = MetaIntegrationService()
-    
+
     for integration in integrations_to_refresh:
         try:
             # Meta uses long-lived tokens that last 60 days
             # Refresh by exchanging the current token for a new long-lived token
             token_data = meta_service.get_long_lived_token(integration.access_token)
-            
+
             # Update integration with new token
-            integration.access_token = token_data['access_token']
-            expires_in = token_data.get('expires_in', 5184000)  # Default 60 days
+            integration.access_token = token_data["access_token"]
+            expires_in = token_data.get("expires_in", 5184000)  # Default 60 days
             integration.access_token_expires_at = now + timedelta(seconds=expires_in)
-            integration.save(update_fields=['access_token', 'access_token_expires_at', 'updated_at'])
-            
-            results['refreshed_successfully'] += 1
-            logger.info(f"✅ Refreshed token for {integration.page_name} (Workspace: {integration.workspace.workspace_name})")
-            
+            integration.save(
+                update_fields=["access_token", "access_token_expires_at", "updated_at"]
+            )
+
+            results["refreshed_successfully"] += 1
+            logger.info(
+                f"✅ Refreshed token for {integration.page_name} (Workspace: {integration.workspace.workspace_name})"
+            )
+
         except Exception as e:
             error_msg = str(e)
-            results['failed_refresh'] += 1
-            results['errors'].append({
-                'integration': f"{integration.page_name} ({integration.workspace.workspace_name})",
-                'error': error_msg
-            })
-            
+            results["failed_refresh"] += 1
+            results["errors"].append(
+                {
+                    "integration": f"{integration.page_name} ({integration.workspace.workspace_name})",
+                    "error": error_msg,
+                }
+            )
+
             # Check if re-auth is needed
-            if any(keyword in error_msg.lower() for keyword in ['invalid', 'expired', 'oauth', 'authorization']):
-                results['needs_reauth'].append(f"{integration.page_name} ({integration.workspace.workspace_name})")
-                logger.error(f"🚨 Re-authorization needed for {integration.page_name}: {error_msg}")
-                
+            if any(
+                keyword in error_msg.lower()
+                for keyword in ["invalid", "expired", "oauth", "authorization"]
+            ):
+                results["needs_reauth"].append(
+                    f"{integration.page_name} ({integration.workspace.workspace_name})"
+                )
+                logger.error(
+                    f"🚨 Re-authorization needed for {integration.page_name}: {error_msg}"
+                )
+
                 # Mark integration as needing attention
-                integration.status = 'error'
-                integration.save(update_fields=['status', 'updated_at'])
+                integration.status = "error"
+                integration.save(update_fields=["status", "updated_at"])
             else:
-                logger.error(f"❌ Unexpected error refreshing {integration.page_name}: {error_msg}")
-    
+                logger.error(
+                    f"❌ Unexpected error refreshing {integration.page_name}: {error_msg}"
+                )
+
     logger.info(f"""
     🔄 Meta Token Refresh Summary:
-    ✅ Successfully refreshed: {results['refreshed_successfully']}
-    ❌ Failed to refresh: {results['failed_refresh']}
-    🚨 Need re-authorization: {len(results['needs_reauth'])}
+    ✅ Successfully refreshed: {results["refreshed_successfully"]}
+    ❌ Failed to refresh: {results["failed_refresh"]}
+    🚨 Need re-authorization: {len(results["needs_reauth"])}
     """)
-    
+
     return results
 
 
@@ -829,64 +844,64 @@ def cleanup_invalid_google_connections(self):
     """
     Clean up invalid or expired Google Calendar connections.
     Deletes connections that can no longer be refreshed.
-    
+
     Runs daily at midnight.
     """
     from core.models import GoogleCalendarConnection, GoogleCalendar, Calendar
     from django.utils import timezone
     from django.db.models import Q
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     now = timezone.now()
-    
+
     # Find invalid connections
     invalid_connections = GoogleCalendarConnection.objects.filter(
-        Q(token_expires_at__lt=now) |  # Expired tokens
-        Q(active=False) |  # Marked as inactive
-        Q(refresh_token__isnull=True) |  # No refresh capability
-        Q(refresh_token='')  # Empty refresh token
+        Q(token_expires_at__lt=now)  # Expired tokens
+        | Q(active=False)  # Marked as inactive
+        | Q(refresh_token__isnull=True)  # No refresh capability
+        | Q(refresh_token="")  # Empty refresh token
     )
-    
-    results = {
-        'total_deleted': 0,
-        'deleted_connections': [],
-        'deleted_calendars': []
-    }
-    
-    logger.info(f"🧹 Starting cleanup of {invalid_connections.count()} invalid Google connections")
-    
+
+    results = {"total_deleted": 0, "deleted_connections": [], "deleted_calendars": []}
+
+    logger.info(
+        f"🧹 Starting cleanup of {invalid_connections.count()} invalid Google connections"
+    )
+
     for connection in invalid_connections:
         try:
             # Find and delete associated calendars
             google_calendars = GoogleCalendar.objects.filter(connection=connection)
             for gc in google_calendars:
-                calendar_name = gc.calendar.name if gc.calendar else 'Unknown'
-                
+                calendar_name = gc.calendar.name if gc.calendar else "Unknown"
+
                 # Delete the Calendar (this cascades to GoogleCalendar)
                 if gc.calendar:
                     gc.calendar.delete()
-                    results['deleted_calendars'].append(calendar_name)
+                    results["deleted_calendars"].append(calendar_name)
                     logger.info(f"🗑️ Deleted calendar: {calendar_name}")
-            
+
             # Delete the connection
             connection_email = connection.account_email
             connection.delete()
-            results['deleted_connections'].append(connection_email)
-            results['total_deleted'] += 1
-            
+            results["deleted_connections"].append(connection_email)
+            results["total_deleted"] += 1
+
             logger.info(f"🗑️ Deleted Google connection for {connection_email}")
-            
+
         except Exception as e:
-            logger.error(f"❌ Error deleting connection {connection.account_email}: {str(e)}")
-    
+            logger.error(
+                f"❌ Error deleting connection {connection.account_email}: {str(e)}"
+            )
+
     logger.info(f"""
     🧹 Google Cleanup Summary:
-    🗑️ Deleted connections: {results['total_deleted']}
-    📅 Deleted calendars: {len(results['deleted_calendars'])}
+    🗑️ Deleted connections: {results["total_deleted"]}
+    📅 Deleted calendars: {len(results["deleted_calendars"])}
     """)
-    
+
     return results
 
 
@@ -895,32 +910,30 @@ def cleanup_invalid_meta_integrations(self):
     """
     Clean up invalid or expired Meta integrations.
     Deletes integrations that can no longer be refreshed.
-    
+
     Runs daily at midnight.
     """
     from core.models import MetaIntegration, MetaLeadForm
     from django.utils import timezone
     from django.db.models import Q
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
+
     now = timezone.now()
-    
+
     # Find invalid integrations
     invalid_integrations = MetaIntegration.objects.filter(
-        Q(access_token_expires_at__lt=now) |  # Expired tokens
-        Q(status__in=['error', 'invalid', 'inactive'])  # Error status
+        Q(access_token_expires_at__lt=now)  # Expired tokens
+        | Q(status__in=["error", "invalid", "inactive"])  # Error status
     )
-    
-    results = {
-        'total_deleted': 0,
-        'deleted_integrations': [],
-        'deleted_lead_forms': []
-    }
-    
-    logger.info(f"🧹 Starting cleanup of {invalid_integrations.count()} invalid Meta integrations")
-    
+
+    results = {"total_deleted": 0, "deleted_integrations": [], "deleted_lead_forms": []}
+
+    logger.info(
+        f"🧹 Starting cleanup of {invalid_integrations.count()} invalid Meta integrations"
+    )
+
     for integration in invalid_integrations:
         try:
             # Find and delete associated lead forms
@@ -928,27 +941,32 @@ def cleanup_invalid_meta_integrations(self):
             for form in lead_forms:
                 form_name = form.name
                 form.delete()
-                results['deleted_lead_forms'].append(form_name)
+                results["deleted_lead_forms"].append(form_name)
                 logger.info(f"🗑️ Deleted lead form: {form_name}")
-            
+
             # Delete the integration
-            integration_name = f"{integration.page_name} ({integration.workspace.workspace_name})"
+            integration_name = (
+                f"{integration.page_name} ({integration.workspace.workspace_name})"
+            )
             integration.delete()
-            results['deleted_integrations'].append(integration_name)
-            results['total_deleted'] += 1
-            
+            results["deleted_integrations"].append(integration_name)
+            results["total_deleted"] += 1
+
             logger.info(f"🗑️ Deleted Meta integration: {integration_name}")
-            
+
         except Exception as e:
-            logger.error(f"❌ Error deleting integration {integration.page_name}: {str(e)}")
-    
+            logger.error(
+                f"❌ Error deleting integration {integration.page_name}: {str(e)}"
+            )
+
     logger.info(f"""
     🧹 Meta Cleanup Summary:
-    🗑️ Deleted integrations: {results['total_deleted']}
-    📝 Deleted lead forms: {len(results['deleted_lead_forms'])}
+    🗑️ Deleted integrations: {results["total_deleted"]}
+    📝 Deleted lead forms: {len(results["deleted_lead_forms"])}
     """)
-    
+
     return results
+
 
 # ─────────────────────────────
 # Meta Lead Form Sync Tasks
@@ -957,13 +975,13 @@ def cleanup_invalid_meta_integrations(self):
 def sync_meta_lead_forms(self, integration_id):
     """
     Background task to sync lead forms from Meta and create LeadFunnels
-    
+
     This task is triggered after OAuth callback to:
     1. Fetch all lead forms from Meta API
     2. Create/update MetaLeadForm records
     3. Auto-create LeadFunnel for each new form
     4. Return summary of operations
-    
+
     Race condition prevention:
     - Uses select_for_update() for atomic operations
     - Uses get_or_create() for idempotent operations
@@ -971,115 +989,117 @@ def sync_meta_lead_forms(self, integration_id):
     from core.models import MetaIntegration, MetaLeadForm, LeadFunnel
     from core.services.meta_integration import MetaIntegrationService
     from django.db import transaction
-    
+
     logger.info(f"Starting sync_meta_lead_forms for integration {integration_id}")
-    
+
     try:
         # Get integration with lock to prevent concurrent modifications
         with transaction.atomic():
             integration = MetaIntegration.objects.select_for_update().get(
                 id=integration_id
             )
-            
-            if integration.status != 'active':
-                logger.warning(f"Integration {integration_id} is not active, skipping sync")
+
+            if integration.status != "active":
+                logger.warning(
+                    f"Integration {integration_id} is not active, skipping sync"
+                )
                 return {
-                    'success': False,
-                    'reason': 'integration_not_active',
-                    'integration_id': str(integration_id)
+                    "success": False,
+                    "reason": "integration_not_active",
+                    "integration_id": str(integration_id),
                 }
-            
+
             meta_service = MetaIntegrationService()
-            
+
             # Fetch lead forms from Meta API
             try:
                 forms_data = meta_service.get_page_lead_forms(
-                    integration.page_id,
-                    integration.access_token
+                    integration.page_id, integration.access_token
                 )
             except Exception as e:
                 logger.error(f"Failed to fetch lead forms from Meta: {str(e)}")
                 return {
-                    'success': False,
-                    'error': str(e),
-                    'integration_id': str(integration_id)
+                    "success": False,
+                    "error": str(e),
+                    "integration_id": str(integration_id),
                 }
-            
+
             created_forms = []
             updated_forms = []
             created_funnels = []
-            
+
             # Process each form
             for form_data in forms_data:
-                form_id = form_data.get('id')
-                form_name = form_data.get('name', f"Form {form_id}")
-                
+                form_id = form_data.get("id")
+                form_name = form_data.get("name", f"Form {form_id}")
+
                 # Create or update MetaLeadForm
                 meta_form, form_created = MetaLeadForm.objects.get_or_create(
                     meta_integration=integration,
                     meta_form_id=form_id,
                     defaults={
-                        'name': form_name
+                        "name": form_name
                         # is_active is now computed from agent assignment
-                    }
+                    },
                 )
-                
+
                 # Update name if changed
                 if not form_created and meta_form.name != form_name:
                     meta_form.name = form_name
-                    meta_form.save(update_fields=['name', 'updated_at'])
+                    meta_form.save(update_fields=["name", "updated_at"])
                     updated_forms.append(form_id)
                 elif form_created:
                     created_forms.append(form_id)
-                
+
                 # Create LeadFunnel for new forms
                 if form_created:
                     # Check if funnel already exists (shouldn't happen but be safe)
-                    if not hasattr(meta_form, 'lead_funnel'):
+                    if not hasattr(meta_form, "lead_funnel"):
                         funnel = LeadFunnel.objects.create(
                             name=f"{form_name}",
                             workspace=integration.workspace,
                             meta_lead_form=meta_form,
-                            is_active=True  # Active by default, but no agent yet
+                            is_active=True,  # Active by default, but no agent yet
                         )
-                        created_funnels.append({
-                            'id': str(funnel.id),
-                            'name': funnel.name,
-                            'form_id': form_id
-                        })
-                        logger.info(f"Created LeadFunnel {funnel.id} for form {form_id}")
-            
+                        created_funnels.append(
+                            {
+                                "id": str(funnel.id),
+                                "name": funnel.name,
+                                "form_id": form_id,
+                            }
+                        )
+                        logger.info(
+                            f"Created LeadFunnel {funnel.id} for form {form_id}"
+                        )
+
             # Log summary
             summary = {
-                'success': True,
-                'integration_id': str(integration_id),
-                'total_forms': len(forms_data),
-                'created_forms': len(created_forms),
-                'updated_forms': len(updated_forms),
-                'created_funnels': len(created_funnels),
-                'form_ids': {
-                    'created': created_forms,
-                    'updated': updated_forms
-                },
-                'funnels': created_funnels
+                "success": True,
+                "integration_id": str(integration_id),
+                "total_forms": len(forms_data),
+                "created_forms": len(created_forms),
+                "updated_forms": len(updated_forms),
+                "created_funnels": len(created_funnels),
+                "form_ids": {"created": created_forms, "updated": updated_forms},
+                "funnels": created_funnels,
             }
-            
+
             logger.info(f"Sync completed for integration {integration_id}: {summary}")
             return summary
-            
+
     except MetaIntegration.DoesNotExist:
         logger.error(f"Integration {integration_id} not found")
         return {
-            'success': False,
-            'error': 'integration_not_found',
-            'integration_id': str(integration_id)
+            "success": False,
+            "error": "integration_not_found",
+            "integration_id": str(integration_id),
         }
     except Exception as e:
         logger.error(f"Unexpected error in sync_meta_lead_forms: {str(e)}")
         return {
-            'success': False,
-            'error': str(e),
-            'integration_id': str(integration_id)
+            "success": False,
+            "error": str(e),
+            "integration_id": str(integration_id),
         }
 
 
@@ -1088,7 +1108,7 @@ def daily_meta_sync(self):
     """
     Daily task to keep all Meta integrations up to date
     Runs at midnight to sync all active integrations
-    
+
     For each active integration:
     - Check for new forms on Meta
     - Create missing LeadFunnels
@@ -1099,129 +1119,132 @@ def daily_meta_sync(self):
     from core.services.meta_integration import MetaIntegrationService
     from django.utils import timezone
     from django.db import transaction
-    
+
     logger.info("Starting daily Meta sync task")
-    
+
     # Get all active integrations
     active_integrations = MetaIntegration.objects.filter(
-        status='active',
-        access_token_expires_at__gt=timezone.now()
+        status="active", access_token_expires_at__gt=timezone.now()
     )
-    
+
     results = {
-        'total_integrations': active_integrations.count(),
-        'successful_syncs': 0,
-        'failed_syncs': 0,
-        'integrations': []
+        "total_integrations": active_integrations.count(),
+        "successful_syncs": 0,
+        "failed_syncs": 0,
+        "integrations": [],
     }
-    
+
     meta_service = MetaIntegrationService()
-    
+
     for integration in active_integrations:
         try:
             with transaction.atomic():
                 # Fetch current forms from Meta
                 forms_data = meta_service.get_page_lead_forms(
-                    integration.page_id,
-                    integration.access_token
+                    integration.page_id, integration.access_token
                 )
-                
+
                 # Get all form IDs from Meta
-                meta_form_ids = {form['id'] for form in forms_data}
-                
+                meta_form_ids = {form["id"] for form in forms_data}
+
                 # Get all existing forms for this integration
                 existing_forms = MetaLeadForm.objects.filter(
                     meta_integration=integration
                 )
                 existing_form_ids = {form.meta_form_id for form in existing_forms}
-                
+
                 # Find new forms
                 new_form_ids = meta_form_ids - existing_form_ids
-                
+
                 # Find removed forms (exist in DB but not in Meta)
                 removed_form_ids = existing_form_ids - meta_form_ids
-                
+
                 created_forms = 0
                 updated_forms = 0
                 deactivated_forms = 0
                 created_funnels = 0
-                
+
                 # Create new forms and funnels
                 for form_data in forms_data:
-                    form_id = form_data['id']
-                    form_name = form_data.get('name', f"Form {form_id}")
-                    
+                    form_id = form_data["id"]
+                    form_name = form_data.get("name", f"Form {form_id}")
+
                     if form_id in new_form_ids:
                         # Create new form
                         meta_form = MetaLeadForm.objects.create(
                             meta_integration=integration,
                             meta_form_id=form_id,
                             name=form_name,
-                            is_active=False
+                            is_active=False,
                         )
                         created_forms += 1
-                        
+
                         # Create funnel
                         funnel = LeadFunnel.objects.create(
                             name=form_name,
                             workspace=integration.workspace,
                             meta_lead_form=meta_form,
-                            is_active=True
+                            is_active=True,
                         )
                         created_funnels += 1
-                        
+
                     else:
                         # Update existing form name if changed
                         meta_form = MetaLeadForm.objects.get(
-                            meta_integration=integration,
-                            meta_form_id=form_id
+                            meta_integration=integration, meta_form_id=form_id
                         )
                         if meta_form.name != form_name:
                             meta_form.name = form_name
-                            meta_form.save(update_fields=['name', 'updated_at'])
-                            
+                            meta_form.save(update_fields=["name", "updated_at"])
+
                             # Also update funnel name if it exists
-                            if hasattr(meta_form, 'lead_funnel'):
+                            if hasattr(meta_form, "lead_funnel"):
                                 meta_form.lead_funnel.name = form_name
-                                meta_form.lead_funnel.save(update_fields=['name', 'updated_at'])
-                            
+                                meta_form.lead_funnel.save(
+                                    update_fields=["name", "updated_at"]
+                                )
+
                             updated_forms += 1
-                
+
                 # Deactivate removed forms (via funnel deactivation)
                 if removed_form_ids:
                     removed_forms = MetaLeadForm.objects.filter(
-                        meta_integration=integration,
-                        meta_form_id__in=removed_form_ids
-                    ).select_related('lead_funnel')
-                    
+                        meta_integration=integration, meta_form_id__in=removed_form_ids
+                    ).select_related("lead_funnel")
+
                     for form in removed_forms:
                         # Deactivate the funnel (form.is_active will be computed as False)
-                        if hasattr(form, 'lead_funnel'):
+                        if hasattr(form, "lead_funnel"):
                             form.lead_funnel.is_active = False
-                            form.lead_funnel.save(update_fields=['is_active', 'updated_at'])
+                            form.lead_funnel.save(
+                                update_fields=["is_active", "updated_at"]
+                            )
                             deactivated_forms += 1
-                
+
                 integration_result = {
-                    'integration_id': str(integration.id),
-                    'workspace': integration.workspace.workspace_name,
-                    'created_forms': created_forms,
-                    'updated_forms': updated_forms,
-                    'deactivated_forms': deactivated_forms,
-                    'created_funnels': created_funnels
+                    "integration_id": str(integration.id),
+                    "workspace": integration.workspace.workspace_name,
+                    "created_forms": created_forms,
+                    "updated_forms": updated_forms,
+                    "deactivated_forms": deactivated_forms,
+                    "created_funnels": created_funnels,
                 }
-                
-                results['integrations'].append(integration_result)
-                results['successful_syncs'] += 1
-                
-                logger.info(f"Daily sync successful for integration {integration.id}: {integration_result}")
-                
+
+                results["integrations"].append(integration_result)
+                results["successful_syncs"] += 1
+
+                logger.info(
+                    f"Daily sync successful for integration {integration.id}: {integration_result}"
+                )
+
         except Exception as e:
-            logger.error(f"Daily sync failed for integration {integration.id}: {str(e)}")
-            results['failed_syncs'] += 1
-            results['integrations'].append({
-                'integration_id': str(integration.id),
-                'error': str(e)
-            })
-    
+            logger.error(
+                f"Daily sync failed for integration {integration.id}: {str(e)}"
+            )
+            results["failed_syncs"] += 1
+            results["integrations"].append(
+                {"integration_id": str(integration.id), "error": str(e)}
+            )
+
     logger.info(f"Daily Meta sync completed: {results}")
     return results
