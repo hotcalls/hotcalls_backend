@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.contrib.auth import login, logout
@@ -394,6 +394,23 @@ def verify_email(request, token):
                 )
                 workspace.users.add(user)
                 workspace.save()
+            
+            # If there is a pending (and still valid) invitation for this email, immediately
+            # send the user into the login-first flow that returns to accept the invite.
+            try:
+                pending = (
+                    WorkspaceInvitation.objects
+                    .filter(email=user.email, status='pending')
+                    .select_related('workspace')
+                )
+                invite = next((inv for inv in pending if inv.is_valid()), None)
+                if invite is not None:
+                    return redirect(
+                        f"/login?next=/invitations/{invite.token}/accept/"
+                        f"&invited_workspace={invite.workspace.id}&skip_welcome=1"
+                    )
+            except Exception:
+                pass
             
             return render(request, 'auth/verification_success.html', {
                 'email': user.email
