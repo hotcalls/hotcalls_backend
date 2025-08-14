@@ -926,6 +926,10 @@ class Agent(models.Model):
         help_text="Maximum number of retry attempts for calls",
         default=3
     )
+    max_call_duration_minutes = models.IntegerField(
+        help_text="Maximum allowed call duration (minutes) before auto-cleanup of stuck IN_PROGRESS tasks",
+        default=30
+    )
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']",

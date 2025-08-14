@@ -474,7 +474,17 @@ def cleanup_stuck_call_tasks(self):
 
     now = timezone.now()
     trig_thresh = now - timedelta(minutes=10)
-    prog_thresh = now - timedelta(minutes=30)
+    # Threshold comes from per-agent setting; default 30
+    from core.models import Agent
+    from django.db.models import Min
+    # Use the minimum across active agents to be conservative if needed
+    try:
+        min_minutes = Agent.objects.filter(status="active").aggregate(m=Min("max_call_duration_minutes"))["m"]
+    except Exception:
+        min_minutes = None
+    if not min_minutes:
+        min_minutes = 30
+    prog_thresh = now - timedelta(minutes=min_minutes)
 
     try:
         with transaction.atomic():
