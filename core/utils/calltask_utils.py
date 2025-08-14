@@ -6,6 +6,7 @@ automatically updating or deleting CallTasks based on call outcomes.
 """
 
 import logging
+import os
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 from django.conf import settings
@@ -236,6 +237,39 @@ def reschedule_without_increment(
         f"CallTask {call_task.id} rescheduled without increment ({reason}: {hint}); next_call={call_task.next_call}"
     )
     return call_task
+def preflight_dispatch_config(call_task: CallTask) -> dict:
+    """Validate routing config before promoting/dispatching a call.
+
+    Checks resolvable from_number and SIP trunk routing for the agent.
+    If missing, reschedules the task without increment and returns ok=False.
+
+    Returns: {"ok": bool, "from_number": str|None, "sip_trunk_id": str|None, "reason": str|None}
+    """
+    agent = call_task.agent
+    workspace = call_task.workspace
+
+    # Resolve from_number (agent phone_number → workspace fallback → env)
+    from_number = (
+        agent.phone_number.phonenumber if getattr(agent, "phone_number", None) else getattr(workspace, "phone_number", None)
+    ) or os.getenv("DEFAULT_FROM_NUMBER")
+
+    # Resolve SIP trunk id (agent phone_number.sip_trunk → env)
+    sip_trunk_id = None
+    if getattr(agent, "phone_number", None) and getattr(agent.phone_number, "sip_trunk", None):
+        sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
+    if not sip_trunk_id:
+        sip_trunk_id = os.getenv("TRUNK_ID")
+
+    if not from_number or not sip_trunk_id:
+        missing = "missing_from_number" if not from_number else "missing_sip_trunk"
+        try:
+            reschedule_without_increment(call_task, reason="config_missing", hint=missing)
+        except Exception as e:
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
+        return {"ok": False, "from_number": from_number, "sip_trunk_id": sip_trunk_id, "reason": missing}
+
+    return {"ok": True, "from_number": from_number, "sip_trunk_id": sip_trunk_id, "reason": None}
+
 
 
 def handle_max_retries(call_task: CallTask) -> bool:

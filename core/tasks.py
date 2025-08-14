@@ -398,6 +398,7 @@ def schedule_agent_call(self):
                 ],
                 agent__status="active",
             )
+            .select_related("agent", "agent__phone_number", "agent__phone_number__sip_trunk", "workspace")
             .annotate(
                 priority=Case(
                     When(status=CallStatus.WAITING, then=1),
@@ -420,6 +421,18 @@ def schedule_agent_call(self):
                 status__in=[CallStatus.IN_PROGRESS, CallStatus.CALL_TRIGGERED],
             ).exclude(id=task.id)
             if conflict.exists():
+                continue
+
+            # Pre‑promotion config preflight via utils
+            try:
+                from core.utils.calltask_utils import preflight_dispatch_config
+                with transaction.atomic():
+                    ct = CallTask.objects.select_for_update().get(id=task.id)
+                    pre = preflight_dispatch_config(ct)
+                if not pre.get("ok"):
+                    continue
+            except Exception as preflight_err:
+                logger.error(f"⚠️ Pre-promotion preflight failed for task {task.id}: {preflight_err}")
                 continue
 
             # ③ atomic hand‑off
