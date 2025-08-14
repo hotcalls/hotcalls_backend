@@ -7,6 +7,8 @@ automatically updating or deleting CallTasks based on call outcomes.
 
 import logging
 from datetime import timedelta
+from zoneinfo import ZoneInfo
+from django.conf import settings
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.utils import timezone as dj_timezone
@@ -191,7 +193,7 @@ def handle_retry_without_increment(call_task, call_log):
     # Don't increment attempts - this wasn't user's fault
     call_task.status = CallStatus.RETRY
     call_task.next_call = calculate_next_call_time(agent, timezone.now())
-    call_task.save(update_fields=["status", "next_call"])
+    call_task.save(update_fields=["status", "next_call", "updated_at"])
 
     logger.info(
         f"CallTask {call_task.id} retrying without increment at {call_task.next_call} (technical failure: {call_log.disconnection_reason})"
@@ -224,6 +226,9 @@ def reschedule_without_increment(
     entry = {"reason": reason, "hint": hint, "at": timezone.now().isoformat()}
     reasons_list = call_task.retry_reasons or []
     reasons_list.append(entry)
+    # Cap history to the last 30 reasons to avoid unbounded growth
+    if len(reasons_list) > 30:
+        reasons_list = reasons_list[-30:]
     call_task.retry_reasons = reasons_list
 
     call_task.save(update_fields=["status", "next_call", "retry_reasons", "updated_at"])
@@ -268,12 +273,58 @@ def calculate_next_call_time(agent, base_time):
         datetime: Next valid call time
     """
     # Start with base retry interval
-    next_time = base_time + timedelta(minutes=agent.retry_interval)
+    next_time = base_time + timedelta(minutes=max(getattr(agent, "retry_interval", 1), 1))
 
     # Apply workday/time constraints
     next_time = ensure_valid_call_time(agent, next_time)
 
     return next_time
+
+    
+def _get_agent_local_tz(agent):
+    """Return the global project timezone for interpreting agent hours.
+
+    Per requirements, ignore any per-agent or per-calendar time zones and
+    consistently use the single `TIME_ZONE` from Django settings. Fallback
+    to UTC if misconfigured.
+    """
+    try:
+        return ZoneInfo(getattr(settings, "TIME_ZONE", "UTC"))
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _normalize_local_time(dt_local, tz):
+    """Normalize a settings-TZ aware datetime to handle DST edge cases.
+
+    - If ambiguous, prefer the later occurrence (fold=1)
+    - If nonexistent, roll forward minute by minute until round-trip stable
+    """
+    try:
+        # Detect ambiguity by comparing offsets of fold variants
+        try:
+            off0 = tz.utcoffset(dt_local.replace(fold=0))
+            off1 = tz.utcoffset(dt_local.replace(fold=1))
+            if off0 != off1:
+                dt_local = dt_local.replace(fold=1)
+        except Exception:
+            pass
+
+        # Resolve nonexistent by round-trip check
+        while True:
+            utc = dt_local.astimezone(timezone.utc)
+            back = timezone.localtime(utc, tz)
+            if (
+                back.year == dt_local.year
+                and back.month == dt_local.month
+                and back.day == dt_local.day
+                and back.hour == dt_local.hour
+                and back.minute == dt_local.minute
+            ):
+                return dt_local
+            dt_local = dt_local + timedelta(minutes=1)
+    except Exception:
+        return dt_local
 
 
 def ensure_valid_call_time(agent, datetime_obj):
@@ -297,18 +348,33 @@ def ensure_valid_call_time(agent, datetime_obj):
     # Normalize workdays once to handle different capitalizations from DB
     configured_workdays = {d.lower() for d in (agent.workdays or [])}
 
+    # Convert to the agent/workspace local timezone for comparisons
+    local_tz = _get_agent_local_tz(agent)
+    datetime_obj = timezone.localtime(datetime_obj, local_tz)
+
     while iterations < max_iterations:
-        # Check if current day is a workday
+        # Check if current day is a workday in local timezone
         current_weekday = datetime_obj.strftime("%A").lower()
 
+        # Treat empty workdays as all days
+        if not configured_workdays:
+            configured_workdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+
         if current_weekday in configured_workdays:
-            # Check if time is within working hours
+            # Check if time is within working hours (support overnight windows)
             current_time = datetime_obj.time()
 
-            if agent.call_from <= current_time <= agent.call_to:
-                # Perfect - within workday and working hours
+            within_hours = False
+            if agent.call_from <= agent.call_to:
+                within_hours = agent.call_from <= current_time <= agent.call_to
+            else:
+                # Overnight window like 22:00–02:00
+                within_hours = current_time >= agent.call_from or current_time <= agent.call_to
+
+            if within_hours:
+                # Perfect - within workday and working hours (keep in settings TZ)
                 return datetime_obj
-            elif current_time < agent.call_from:
+            elif agent.call_from <= agent.call_to and current_time < agent.call_from:
                 # Too early - move to start of working hours today
                 datetime_obj = datetime_obj.replace(
                     hour=agent.call_from.hour,
@@ -316,15 +382,17 @@ def ensure_valid_call_time(agent, datetime_obj):
                     second=0,
                     microsecond=0,
                 )
+                datetime_obj = _normalize_local_time(datetime_obj, local_tz)
                 return datetime_obj
             else:
-                # Too late - move to next day and try again
+                # Too late (or in overnight case but before start window) - move to next day start
                 datetime_obj = datetime_obj.replace(
                     hour=agent.call_from.hour,
                     minute=agent.call_from.minute,
                     second=0,
                     microsecond=0,
                 ) + timedelta(days=1)
+                datetime_obj = _normalize_local_time(datetime_obj, local_tz)
         else:
             # Not a workday - advance to next day
             datetime_obj = datetime_obj.replace(
@@ -340,7 +408,8 @@ def ensure_valid_call_time(agent, datetime_obj):
     logger.warning(
         f"Could not find valid call time for agent {agent.agent_id}, using fallback"
     )
-    return datetime_obj
+    # Return in configured TIME_ZONE (it was localized earlier)
+    return _normalize_local_time(datetime_obj, local_tz)
 
 
 def is_valid_call_time(agent, datetime_obj):
@@ -354,16 +423,24 @@ def is_valid_call_time(agent, datetime_obj):
     Returns:
         bool: True if datetime is valid for calling
     """
-    # Check workday (normalize configured days from DB)
+    # Check workday in local timezone (normalize configured days from DB)
     configured_workdays = {d.lower() for d in (agent.workdays or [])}
+    local_tz = _get_agent_local_tz(agent)
+    datetime_obj = _normalize_local_time(timezone.localtime(datetime_obj, local_tz), local_tz)
     current_weekday = datetime_obj.strftime("%A").lower()
+    if not configured_workdays:
+        configured_workdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
     if current_weekday not in configured_workdays:
         return False
 
-    # Check working hours
+    # Check working hours (support overnight)
     current_time = datetime_obj.time()
-    if not (agent.call_from <= current_time <= agent.call_to):
-        return False
+    if agent.call_from <= agent.call_to:
+        if not (agent.call_from <= current_time <= agent.call_to):
+            return False
+    else:
+        if not (current_time >= agent.call_from or current_time <= agent.call_to):
+            return False
 
     return True
 

@@ -196,9 +196,9 @@ def trigger_call(self, call_task_id):
                     "deleted": True,
                 }
 
-            # Move to IN_PROGRESS
-            call_task.status = CallStatus.IN_PROGRESS
-            call_task.save(update_fields=["status", "updated_at"])
+            # Do not move to IN_PROGRESS yet. Only mark IN_PROGRESS after a successful
+            # call dispatch; leave as CALL_TRIGGERED until then.
+            call_task.save(update_fields=["updated_at"])  # just touch timestamp
 
         # Extract all payload *outside* the lock
         agent = call_task.agent
@@ -306,7 +306,9 @@ def trigger_call(self, call_task_id):
             call_task = CallTask.objects.select_for_update().get(id=call_task_id)
 
             if call_result.get("success"):
-                # SUCCESS: Use utility to handle success
+                # SUCCESS: advance to IN_PROGRESS now, then handle
+                call_task.status = CallStatus.IN_PROGRESS
+                call_task.save(update_fields=["status", "updated_at"])
                 return handle_call_success(call_task, call_result)
             else:
                 # FAILURE: Use unified failure handler (no defaults!)
@@ -425,6 +427,8 @@ def schedule_agent_call(self):
                     CallStatus.SCHEDULED,
                     CallStatus.RETRY,
                 ],
+                next_call__lte=now,
+                updated_at=task.updated_at,
             ).update(status=CallStatus.CALL_TRIGGERED, updated_at=now)
             if rows_updated == 1:
                 trigger_call.delay(str(task.id))
@@ -646,7 +650,7 @@ def refresh_google_calendar_connections(self):
     Runs daily at midnight.
     """
     from core.models import GoogleCalendarConnection
-    from core.services.google_calendar import GoogleOAuthService
+    # from core.services.google_calendar import GoogleOAuthService  # unused import removed
     from django.utils import timezone
     from datetime import timedelta
     from google.oauth2.credentials import Credentials
@@ -847,7 +851,7 @@ def cleanup_invalid_google_connections(self):
 
     Runs daily at midnight.
     """
-    from core.models import GoogleCalendarConnection, GoogleCalendar, Calendar
+    from core.models import GoogleCalendarConnection, GoogleCalendar
     from django.utils import timezone
     from django.db.models import Q
     import logging
@@ -1055,7 +1059,7 @@ def sync_meta_lead_forms(self, integration_id):
                 if form_created:
                     # Check if funnel already exists (shouldn't happen but be safe)
                     if not hasattr(meta_form, "lead_funnel"):
-                        funnel = LeadFunnel.objects.create(
+                        new_funnel = LeadFunnel.objects.create(
                             name=f"{form_name}",
                             workspace=integration.workspace,
                             meta_lead_form=meta_form,
@@ -1063,13 +1067,13 @@ def sync_meta_lead_forms(self, integration_id):
                         )
                         created_funnels.append(
                             {
-                                "id": str(funnel.id),
-                                "name": funnel.name,
+                                "id": str(new_funnel.id),
+                                "name": new_funnel.name,
                                 "form_id": form_id,
                             }
                         )
                         logger.info(
-                            f"Created LeadFunnel {funnel.id} for form {form_id}"
+                            f"Created LeadFunnel {new_funnel.id} for form {form_id}"
                         )
 
             # Log summary
@@ -1180,7 +1184,7 @@ def daily_meta_sync(self):
                         created_forms += 1
 
                         # Create funnel
-                        funnel = LeadFunnel.objects.create(
+                        LeadFunnel.objects.create(
                             name=form_name,
                             workspace=integration.workspace,
                             meta_lead_form=meta_form,

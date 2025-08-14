@@ -1783,10 +1783,10 @@ class CallTask(models.Model):
         help_text="Workspace associated with this call task"
     )
     
-    lead = models.OneToOneField(
+    lead = models.ForeignKey(
         Lead,
         on_delete=models.CASCADE,
-        related_name='call_task',
+        related_name='call_tasks',
         null=True,
         blank=True,
         help_text="Lead associated with this call task (null for test calls)"
