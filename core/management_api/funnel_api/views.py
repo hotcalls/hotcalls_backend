@@ -269,7 +269,12 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'])
     def variables(self, request, pk=None):
-        """Return available variables (core + custom keys from recent leads)."""
+        """Return available variables (core + custom keys from recent leads).
+
+        For CSV sources, we expose all top-level keys found in `Lead.variables` in addition to
+        any nested `variables.custom` keys. Core contact keys are always provided separately and
+        are excluded from the custom list.
+        """
         funnel = self.get_object()
         # Core variables always available
         core_vars = [
@@ -279,19 +284,47 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             {'key': 'email', 'label': 'E-Mail', 'category': 'contact', 'type': 'email'},
             {'key': 'phone', 'label': 'Telefon', 'category': 'contact', 'type': 'phone'},
         ]
-        # Collect custom keys from recent leads
-        recent = list(funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100])
+
+        # Collect custom keys from recent leads' variables
+        recent = list(
+            funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100]
+        )
+
+        excluded = {"first_name", "last_name", "full_name", "email", "phone"}
         custom_keys = set()
+
         for vars_dict in recent:
-            if isinstance(vars_dict, dict):
-                custom = vars_dict.get('custom') or {}
-                if isinstance(custom, dict):
-                    for k in custom.keys():
-                        custom_keys.add(str(k))
+            if not isinstance(vars_dict, dict):
+                continue
+            # 1) Collect flat keys from variables (CSV stores fields here)
+            for k, v in vars_dict.items():
+                try:
+                    key_str = str(k)
+                except Exception:
+                    continue
+                if key_str not in excluded:
+                    custom_keys.add(key_str)
+
+            # 2) Additionally collect keys from variables.custom (if present)
+            custom = vars_dict.get('custom') or {}
+            if isinstance(custom, dict):
+                for k in custom.keys():
+                    try:
+                        key_str = str(k)
+                    except Exception:
+                        continue
+                    custom_keys.add(key_str)
+
         custom_vars = [
-            {'key': f'custom.{k}', 'label': k.replace('_', ' ').title(), 'category': 'custom', 'type': 'string'}
+            {
+                'key': k,
+                'label': k.replace('_', ' ').title(),
+                'category': 'custom',
+                'type': 'string'
+            }
             for k in sorted(custom_keys)
         ]
+
         return Response(core_vars + custom_vars)
 
     @extend_schema(
