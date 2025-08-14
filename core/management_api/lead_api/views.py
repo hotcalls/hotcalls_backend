@@ -238,6 +238,38 @@ class LeadViewSet(viewsets.ModelViewSet):
         if self.action == 'create':
             return LeadCreateSerializer
         return LeadSerializer
+
+    def get_queryset(self):
+        """Restrict leads to the active user's workspace context.
+        - If `workspace` query param provided and user is member → filter by it
+        - Else, if user has exactly one workspace → filter by that
+        - Else return empty queryset (no global access)
+        """
+        qs = super().get_queryset()
+        user = getattr(self.request, 'user', None)
+        if not user or not user.is_authenticated:
+            return qs.none()
+
+        # Allow staff/superuser to view across workspaces only when explicit workspace is provided
+        requested_ws = self.request.query_params.get('workspace')
+        try:
+            user_workspaces = getattr(user, 'mapping_user_workspaces', None)
+            user_ws_ids = set(str(ws.id) for ws in user_workspaces.all()) if user_workspaces else set()
+        except Exception:
+            user_ws_ids = set()
+
+        if requested_ws:
+            if requested_ws in user_ws_ids or user.is_staff or user.is_superuser:
+                return qs.filter(workspace_id=requested_ws)
+            return qs.none()
+
+        # No explicit workspace param: infer
+        if len(user_ws_ids) == 1:
+            only_ws = next(iter(user_ws_ids))
+            return qs.filter(workspace_id=only_ws)
+
+        # Multiple or none: do not expose global leads
+        return qs.none()
     
     @extend_schema(
         summary="📦 Bulk create leads",
