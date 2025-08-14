@@ -62,7 +62,14 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         except Exception:
             is_invite_signup = False
 
-        if not is_invite_signup:
+        # Additionally, if there is an existing pending invitation for this email, skip default workspace
+        try:
+            from core.models import WorkspaceInvitation
+            has_pending_invite = WorkspaceInvitation.objects.filter(email=user.email, status='pending').exists()
+        except Exception:
+            has_pending_invite = False
+
+        if not is_invite_signup and not has_pending_invite:
             workspace = create_user_workspace(user)
         
         # Log workspace creation result
