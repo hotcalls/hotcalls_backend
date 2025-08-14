@@ -301,6 +301,7 @@ def trigger_call(self, call_task_id):
         )
 
         # Post‑call status handling - Use unified utilities
+
         with transaction.atomic():
             call_task = CallTask.objects.select_for_update().get(id=call_task_id)
 
