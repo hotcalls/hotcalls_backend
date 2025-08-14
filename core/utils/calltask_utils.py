@@ -644,6 +644,10 @@ def create_call_task_safely(
     with transaction.atomic():
         _advisory_lock_for_calltask(str(agent.agent_id), str(workspace.id), target_ref)
 
+        # Do not create tasks for paused agents
+        if getattr(agent, "status", "active") != "active":
+            raise ValueError("Agent is paused; refusing to create a CallTask")
+
         call_task = CallTask.objects.create(
             status=CallStatus.SCHEDULED,
             attempts=0,

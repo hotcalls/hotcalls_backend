@@ -394,6 +394,7 @@ def schedule_agent_call(self):
                     CallStatus.SCHEDULED,
                     CallStatus.RETRY,
                 ],
+                agent__status="active",
             )
             .annotate(
                 priority=Case(
