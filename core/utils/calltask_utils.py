@@ -13,6 +13,8 @@ from django.utils import timezone as dj_timezone
 from django.db import connection, transaction
 from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
 import hashlib
+import json
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -271,13 +273,63 @@ def calculate_next_call_time(agent, base_time):
     Returns:
         datetime: Next valid call time
     """
+    logger.debug(
+        f"calculate_next_call_time: agent={getattr(agent, 'agent_id', None)} base_time={base_time}"
+        f" retry_interval_min={getattr(agent, 'retry_interval', None)}"
+    )
+
     # Start with base retry interval
     next_time = base_time + timedelta(minutes=agent.retry_interval)
+    logger.debug(f"calculate_next_call_time: after interval → {next_time}")
 
     # Apply workday/time constraints
     next_time = ensure_valid_call_time(agent, next_time)
+    logger.debug(f"calculate_next_call_time: ensured valid → {next_time}")
 
     return next_time
+
+
+def _normalize_workdays(workdays_value) -> set[str]:
+    """Return a lowercase set of weekday names from various DB encodings.
+
+    Handles:
+    - JSON strings with double-escaped quotes: "[""Sunday"", ""Monday""]"
+    - JSON strings: "[\"Sunday\", \"Monday\"]"
+    - Comma/semicolon separated strings
+    - Iterables
+    """
+    if not workdays_value:
+        return set()
+
+    # If it's a string, try to parse JSON after fixing doubled quotes
+    if isinstance(workdays_value, str):
+        s = workdays_value.strip()
+        # Remove surrounding brackets for non-JSON simple cases later
+        s_no_brackets = s.strip()
+        # First attempt: fix doubled quotes then json.loads
+        try:
+            fixed = s.replace('""', '"')
+            parsed = json.loads(fixed)
+            items = parsed if isinstance(parsed, list) else [str(parsed)]
+        except Exception:
+            # Fallback: split on commas/semicolons and whitespace
+            # Strip brackets/quotes from each token and keep alpha letters only
+            tokens = re.split(r'[;,]+', s_no_brackets)
+            cleaned: list[str] = []
+            for t in tokens:
+                t = t.strip().strip('[]"\'')
+                # Keep only letters to drop stray characters
+                t = re.sub(r'[^A-Za-z]', '', t)
+                if t:
+                    cleaned.append(t)
+            items = cleaned
+    else:
+        try:
+            items = list(workdays_value)
+        except Exception:
+            items = []
+
+    return {str(x).strip().lower() for x in items if str(x).strip()}
 
 
 def ensure_valid_call_time(agent, datetime_obj):
@@ -295,19 +347,30 @@ def ensure_valid_call_time(agent, datetime_obj):
     if timezone.is_naive(datetime_obj):
         datetime_obj = timezone.make_aware(datetime_obj)
 
+    # Normalize workdays to a lowercase set
+    normalized_workdays = _normalize_workdays(getattr(agent, "workdays", []))
+    logger.debug(
+        f"ensure_valid_call_time: start dt={datetime_obj} workdays={normalized_workdays}"
+        f" window={getattr(agent, 'call_from', None)}→{getattr(agent, 'call_to', None)}"
+    )
+
     max_iterations = 14  # Prevent infinite loops (2 weeks max)
     iterations = 0
 
     while iterations < max_iterations:
+        logger.debug(f"ensure_valid_call_time: iter={iterations} dt={datetime_obj}")
         # Check if current day is a workday
         current_weekday = datetime_obj.strftime("%A").lower()
 
-        if current_weekday in agent.workdays:
+        if current_weekday in normalized_workdays:
             # Check if time is within working hours
             current_time = datetime_obj.time()
-
+            logger.debug(
+                f"ensure_valid_call_time: workday={current_weekday} time={current_time}"
+            )
             if agent.call_from <= current_time <= agent.call_to:
                 # Perfect - within workday and working hours
+                logger.debug("ensure_valid_call_time: within window → return")
                 return datetime_obj
             elif current_time < agent.call_from:
                 # Too early - move to start of working hours today
@@ -316,6 +379,9 @@ def ensure_valid_call_time(agent, datetime_obj):
                     minute=agent.call_from.minute,
                     second=0,
                     microsecond=0,
+                )
+                logger.debug(
+                    f"ensure_valid_call_time: too early → snap to start {datetime_obj}"
                 )
                 return datetime_obj
             else:
@@ -326,6 +392,9 @@ def ensure_valid_call_time(agent, datetime_obj):
                     second=0,
                     microsecond=0,
                 ) + timedelta(days=1)
+                logger.debug(
+                    f"ensure_valid_call_time: too late → next day same start {datetime_obj}"
+                )
         else:
             # Not a workday - advance to next day
             datetime_obj = datetime_obj.replace(
@@ -334,6 +403,9 @@ def ensure_valid_call_time(agent, datetime_obj):
                 second=0,
                 microsecond=0,
             ) + timedelta(days=1)
+            logger.debug(
+                f"ensure_valid_call_time: not a workday ({current_weekday}) → advance to {datetime_obj}"
+            )
 
         iterations += 1
 
@@ -355,9 +427,12 @@ def is_valid_call_time(agent, datetime_obj):
     Returns:
         bool: True if datetime is valid for calling
     """
+    # Normalize workdays to a lowercase set
+    normalized_workdays = _normalize_workdays(getattr(agent, "workdays", []))
+
     # Check workday
     current_weekday = datetime_obj.strftime("%A").lower()
-    if current_weekday not in agent.workdays:
+    if current_weekday not in normalized_workdays:
         return False
 
     # Check working hours
