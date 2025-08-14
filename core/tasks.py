@@ -375,13 +375,15 @@ def schedule_agent_call(self):
         )  # At least 1 to prevent division by zero
 
         in_progress = CallTask.objects.filter(status=CallStatus.IN_PROGRESS).count()
-        available_slots = max(concurrency_limit - in_progress, 0)
+        call_triggered_cnt = CallTask.objects.filter(status=CallStatus.CALL_TRIGGERED).count()
+        available_slots = max(concurrency_limit - (in_progress + call_triggered_cnt), 0)
 
         if available_slots == 0:
             return {
                 "success": True,
                 "message": "No capacity; skipping.",
                 "in_progress": in_progress,
+                "call_triggered": call_triggered_cnt,
                 "limit": concurrency_limit,
             }
 
@@ -443,6 +445,7 @@ def schedule_agent_call(self):
             "task_ids": triggered_ids,
             "available_slots": available_slots,
             "in_progress": in_progress,
+            "call_triggered": call_triggered_cnt,
             "concurrency_limit": concurrency_limit,
             "timestamp": now.isoformat(),
         }
