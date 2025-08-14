@@ -125,17 +125,24 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
         valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        
+
+        # Treat empty or None as all days
+        if value in (None, []):
+            return valid_days
+
         if not isinstance(value, list):
             raise serializers.ValidationError("Workdays must be a list")
-        
+
+        normalized = []
         for day in value:
-            if day.lower() not in valid_days:
+            day_l = str(day).lower()
+            if day_l not in valid_days:
                 raise serializers.ValidationError(
                     f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
                 )
-        
-        return value
+            normalized.append(day_l)
+
+        return normalized
     
     def validate_name(self, value):
         """Validate agent name"""
@@ -178,17 +185,24 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
         valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        
+
+        # Treat empty or None as all days
+        if value in (None, []):
+            return valid_days
+
         if not isinstance(value, list):
             raise serializers.ValidationError("Workdays must be a list")
-        
+
+        normalized = []
         for day in value:
-            if day.lower() not in valid_days:
+            day_l = str(day).lower()
+            if day_l not in valid_days:
                 raise serializers.ValidationError(
                     f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
                 )
-        
-        return value
+            normalized.append(day_l)
+
+        return normalized
     
     def validate_name(self, value):
         """Validate agent name"""

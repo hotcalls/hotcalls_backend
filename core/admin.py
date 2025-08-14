@@ -5,7 +5,8 @@ from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, P
 from .models import (
     GoogleCalendarConnection, GoogleCalendar, WorkspaceSubscription, 
     WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
-    WorkspaceInvitation
+    WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
+    LeadProcessingStats, LiveKitAgent
 )
 from django.utils import timezone
 
@@ -222,6 +223,16 @@ class PhoneNumberAdmin(admin.ModelAdmin):
     def get_agents(self, obj):
         return ", ".join([f"{agent.workspace.workspace_name}" for agent in obj.agents.all()])
     get_agents.short_description = 'Agents'
+
+
+@admin.register(SIPTrunk)
+class SIPTrunkAdmin(admin.ModelAdmin):
+    list_display = (
+        'provider_name', 'sip_host', 'sip_port', 'jambonz_carrier_id', 'livekit_trunk_id', 'is_active', 'created_at'
+    )
+    list_filter = ('provider_name', 'is_active', 'created_at')
+    search_fields = ('provider_name', 'sip_host', 'jambonz_carrier_id', 'livekit_trunk_id')
+    ordering = ('-created_at',)
 
 
 @admin.register(Lead)
@@ -504,3 +515,43 @@ class WorkspaceInvitationAdmin(admin.ModelAdmin):
             # Don't allow editing workspace/email after acceptance
             readonly.extend(['workspace', 'email', 'invited_by'])
         return readonly
+
+
+@admin.register(MetaLeadForm)
+class MetaLeadFormAdmin(admin.ModelAdmin):
+    list_display = ('meta_integration', 'meta_form_id', 'name', 'is_active', 'created_at')
+    list_filter = ('meta_integration__workspace', 'created_at')
+    search_fields = ('meta_form_id', 'name', 'meta_integration__workspace__workspace_name')
+    ordering = ('-created_at',)
+
+
+@admin.register(LeadFunnel)
+class LeadFunnelAdmin(admin.ModelAdmin):
+    list_display = ('name', 'workspace', 'meta_lead_form', 'is_active', 'created_at')
+    list_filter = ('workspace', 'is_active', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name', 'meta_lead_form__meta_form_id')
+    ordering = ('-created_at',)
+
+
+@admin.register(WebhookLeadSource)
+class WebhookLeadSourceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'workspace', 'lead_funnel', 'created_at', 'updated_at')
+    list_filter = ('workspace', 'created_at')
+    search_fields = ('name', 'workspace__workspace_name')
+    ordering = ('-created_at',)
+
+
+@admin.register(LeadProcessingStats)
+class LeadProcessingStatsAdmin(admin.ModelAdmin):
+    list_display = ('workspace', 'date', 'total_received', 'processed_with_agent', 'processing_rate')
+    list_filter = ('workspace', 'date')
+    search_fields = ('workspace__workspace_name',)
+    ordering = ('-date',)
+
+
+@admin.register(LiveKitAgent)
+class LiveKitAgentAdmin(admin.ModelAdmin):
+    list_display = ('name', 'concurrency_per_agent', 'expires_at', 'created_at')
+    list_filter = ('expires_at', 'created_at')
+    search_fields = ('name', 'token')
+    ordering = ('-created_at',)

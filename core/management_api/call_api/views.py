@@ -1002,7 +1002,6 @@ class CallTaskViewSet(viewsets.ModelViewSet):
             agent=agent,
             workspace=workspace,
             target_ref=target_ref,
-            next_call=timezone.now(),
         )
 
         # Bind created instance to serializer for response
@@ -1153,7 +1152,6 @@ def make_test_call(request):
         agent=agent,
         workspace=agent.workspace,
         target_ref=target_ref,
-        next_call=timezone.now(),
     )
     
     # Return success response

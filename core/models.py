@@ -952,12 +952,6 @@ class Agent(models.Model):
         help_text="Agent prompt/instructions for AI behavior",
         blank=True
     )
-    config_id = models.CharField(
-        max_length=255,
-        null=True,
-        blank=True,
-        help_text="Configuration ID for agent settings"
-    )
     phone_number = models.ForeignKey(
         'PhoneNumber',
         on_delete=models.PROTECT,
