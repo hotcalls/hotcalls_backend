@@ -348,6 +348,16 @@ class LeadViewSet(viewsets.ModelViewSet):
         except Exception:
             assigned_workspace = None
 
+        # Enforce hard limit of 10,000 rows per CSV/bulk import
+        try:
+            if isinstance(raw_leads, list) and len(raw_leads) > 10000:
+                return Response(
+                    {'error': 'CSV import exceeds 10,000 rows limit'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except Exception:
+            pass
+
         # Generate one batch id for this upload
         import_batch_id = str(uuid.uuid4())
 
@@ -381,6 +391,30 @@ class LeadViewSet(viewsets.ModelViewSet):
             'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
             'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
             'telefono', 'telefone', 'handynummer'
+        }
+
+        # Canonical mapping for common business CSV fields (DE/EN -> EN canonical)
+        CANONICAL_CUSTOM_KEYS = {
+            # Company
+            'firma': 'company',
+            'unternehmen': 'company',
+            'unternehmensname': 'company',
+            'company': 'company',
+            'company_name': 'company',
+            'firmenname': 'company',
+            # Industry / Branche
+            'branche': 'industry',
+            'industrie': 'industry',
+            'industry': 'industry',
+            'sektor': 'industry',
+            # Employee count
+            'mitarbeiteranzahl': 'employee_count',
+            'anzahl_mitarbeiter': 'employee_count',
+            'mitarbeiter': 'employee_count',
+            'employees': 'employee_count',
+            'employee_count': 'employee_count',
+            # Budget
+            'budget': 'budget',
         }
 
         for index, row in enumerate(raw_leads):
@@ -515,7 +549,8 @@ class LeadViewSet(viewsets.ModelViewSet):
                 variables = {}
                 for k, v in pairs:
                     if k not in used_keys:
-                        variables[k] = v
+                        canonical_k = CANONICAL_CUSTOM_KEYS.get(k, k)
+                        variables[canonical_k] = v
 
                 if variables:
                     detected_variable_keys.update(variables.keys())

@@ -271,6 +271,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     def variables(self, request, pk=None):
         """Return available variables (core + custom keys from recent leads).
 
+        Keys are normalized to EN canonical. We also provide a German label for display.
         For CSV sources, we expose all top-level keys found in `Lead.variables` in addition to
         any nested `variables.custom` keys. Core contact keys are always provided separately and
         are excluded from the custom list.
@@ -292,6 +293,19 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
 
         excluded = {"first_name", "last_name", "full_name", "email", "phone"}
         custom_keys = set()
+
+        # Canonical mapping for display labels (EN key -> DE label)
+        LABEL_DE = {
+            'first_name': 'Vorname',
+            'last_name': 'Nachname',
+            'full_name': 'Vollständiger Name',
+            'email': 'E-Mail',
+            'phone': 'Telefon',
+            'company': 'Firma',
+            'industry': 'Branche',
+            'employee_count': 'Mitarbeiteranzahl',
+            'budget': 'Budget',
+        }
 
         for vars_dict in recent:
             if not isinstance(vars_dict, dict):
@@ -315,15 +329,22 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
                         continue
                     custom_keys.add(key_str)
 
+        def label_de(key: str) -> str:
+            return LABEL_DE.get(key, key.replace('_', ' ').title())
+
         custom_vars = [
             {
                 'key': k,
-                'label': k.replace('_', ' ').title(),
+                'label': label_de(k),
                 'category': 'custom',
                 'type': 'string'
             }
             for k in sorted(custom_keys)
         ]
+
+        # Also translate labels for core vars to DE consistently
+        for item in core_vars:
+            item['label'] = label_de(item['key'])
 
         return Response(core_vars + custom_vars)
 
