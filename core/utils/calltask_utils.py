@@ -233,10 +233,6 @@ def reschedule_without_increment(
     return call_task
 
 
-# Keep old function name for backwards compatibility
-## Legacy alias removed – callers must use reschedule_without_increment()
-
-
 def handle_max_retries(call_task: CallTask) -> bool:
     """
     Early guard: delete the CallTask if it has already reached max retries.
@@ -298,11 +294,14 @@ def ensure_valid_call_time(agent, datetime_obj):
     max_iterations = 14  # Prevent infinite loops (2 weeks max)
     iterations = 0
 
+    # Normalize workdays once to handle different capitalizations from DB
+    configured_workdays = {d.lower() for d in (agent.workdays or [])}
+
     while iterations < max_iterations:
         # Check if current day is a workday
         current_weekday = datetime_obj.strftime("%A").lower()
 
-        if current_weekday in agent.workdays:
+        if current_weekday in configured_workdays:
             # Check if time is within working hours
             current_time = datetime_obj.time()
 
@@ -355,9 +354,10 @@ def is_valid_call_time(agent, datetime_obj):
     Returns:
         bool: True if datetime is valid for calling
     """
-    # Check workday
+    # Check workday (normalize configured days from DB)
+    configured_workdays = {d.lower() for d in (agent.workdays or [])}
     current_weekday = datetime_obj.strftime("%A").lower()
-    if current_weekday not in agent.workdays:
+    if current_weekday not in configured_workdays:
         return False
 
     # Check working hours
