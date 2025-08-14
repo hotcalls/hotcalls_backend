@@ -59,8 +59,7 @@ def accept_invitation(request, token):
     
     # Handle GET requests (from email button)
     if request.method == 'GET':
-        # Render tiny auto-accept page that uses localStorage authToken to call the API
-        # If no token, the page will redirect to SPA login with next back to this URL
+        # Render auto-accept page (token-based) to avoid session coupling
         return render(request, 'invitations/invitation_auto_accept.html', {
             'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
             'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
