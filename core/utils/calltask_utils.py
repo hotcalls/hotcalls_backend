@@ -638,7 +638,8 @@ def create_call_task_safely(
         raise ValueError(f"Cannot resolve phone from target_ref: {target_ref}")
 
     if next_call is None:
-        next_call = dj_timezone.now()
+        # Respect agent working hours at creation time
+        next_call = ensure_valid_call_time(agent, dj_timezone.now())
 
     with transaction.atomic():
         _advisory_lock_for_calltask(str(agent.agent_id), str(workspace.id), target_ref)
