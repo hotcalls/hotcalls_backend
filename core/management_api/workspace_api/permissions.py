@@ -8,7 +8,6 @@ class WorkspacePermission(permissions.BasePermission):
     - Users can modify workspaces they belong to
     - Users can create their first workspace
     - Staff can view and modify all workspaces
-    - Staff can create unlimited workspaces
     - Only superusers can delete workspaces
     """
     
@@ -64,13 +63,21 @@ class WorkspacePermission(permissions.BasePermission):
 class WorkspaceUserManagementPermission(permissions.BasePermission):
     """
     Permission for managing users in workspaces
-    - Only staff can add/remove users from workspaces
+    - Staff can always manage
+    - Workspace admin can manage users of their own workspace
     """
     
     def has_permission(self, request, view):
-        return (request.user and 
-                request.user.is_authenticated and 
-                request.user.is_staff)
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        # Staff allowed
+        if request.user.is_staff:
+            return True
+        # Workspace admin allowed on their workspace
+        from core.models import Workspace
+        workspace = obj if isinstance(obj, Workspace) else getattr(obj, 'workspace', None)
+        return bool(workspace and workspace.admin_user_id and workspace.admin_user_id == request.user.id)
 
 
 class IsWorkspaceMemberOrStaff(permissions.BasePermission):
@@ -139,4 +146,16 @@ class PublicInvitationViewPermission(permissions.BasePermission):
         return True  # Public access
     
     def has_object_permission(self, request, view, obj):
-        return True  # Public access to invitation details 
+        return True  # Public access to invitation details
+
+
+class IsWorkspaceAdmin(permissions.BasePermission):
+    """Allow only workspace admin (or staff) for certain actions."""
+    def has_object_permission(self, request, view, obj):
+        from core.models import Workspace
+        workspace = obj if isinstance(obj, Workspace) else getattr(obj, 'workspace', None)
+        if workspace is None:
+            return False
+        if request.user.is_staff:
+            return True
+        return bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id) 
