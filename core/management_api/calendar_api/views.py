@@ -94,7 +94,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
     - Event creation capabilities
     """
     queryset = Calendar.objects.all()
-    permission_classes = [CalendarLiveKitPermission]
+    permission_classes = [CalendarPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarFilter
     search_fields = ['name', 'workspace__workspace_name']
@@ -1171,7 +1171,7 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
     - Calendar conflict checking
     """
     queryset = CalendarConfiguration.objects.all()
-    permission_classes = [CalendarLiveKitPermission]
+    permission_classes = [CalendarConfigurationPermission]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = CalendarConfigurationFilter
     search_fields = ['calendar__name', 'calendar__workspace__workspace_name']
