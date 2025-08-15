@@ -4,7 +4,7 @@ from rest_framework.response import Response
 # Avoid unused Count import at module level; import where needed
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
-from django.utils import timezone
+# from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 import logging
 
@@ -269,7 +269,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
         from core.quotas import enforce_and_record
         from decimal import Decimal
         
-        # Create the call log first
+        # calltask_id is required in request but not persisted (popped in serializer.create)
+        # Create the call log first (non-persisted fields are popped in serializer.create)
         call_log = serializer.save()
         
         # Record actual call duration in quota system
@@ -298,7 +299,9 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Trigger CallTask feedback loop (async, non-blocking)
         try:
             from core.tasks import update_calltask_from_calllog
-            update_calltask_from_calllog.delay(str(call_log.id))
+            # Prefer direct linking via provided calltask_id to avoid heuristic matching
+            provided_calltask_id = self.request.data.get('calltask_id')
+            update_calltask_from_calllog.delay(str(call_log.id), provided_calltask_id)
             logger.info(f"🔄 Triggered CallTask feedback for CallLog {call_log.id}")
             
         except Exception as feedback_err:
@@ -628,7 +631,6 @@ class CallLogViewSet(viewsets.ModelViewSet):
             "call_to": str(base_agent.call_to) if base_agent.call_to else "",
             "character": base_agent.character,
             "prompt": base_agent.prompt,
-            "config_id": base_agent.config_id or "",
             "calendar_configuration": str(base_agent.calendar_configuration.id) if base_agent.calendar_configuration else ""
         }
         
@@ -1221,7 +1223,7 @@ def preflight(request):
             return Response(status=status.HTTP_204_NO_CONTENT)
 
         # Unhappy path: reschedule without increment
-        from core.utils.calltask_utils import reschedule_task_preflight_failed
+        # from core.utils.calltask_utils import reschedule_task_preflight_failed
         from django.db import transaction
         with transaction.atomic():
             call_task.refresh_from_db()

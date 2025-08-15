@@ -220,7 +220,6 @@ def trigger_call(self, call_task_id):
             "greeting_outbound": agent.greeting_outbound,
             "greeting_inbound": agent.greeting_inbound,
             "character": agent.character,
-            "config_id": agent.config_id,
             "workspace_name": workspace.workspace_name,
             "sip_trunk_id": sip_trunk_id,  # Pass dynamic trunk ID
         }
@@ -548,7 +547,7 @@ def cleanup_stuck_call_tasks(self):
     default_retry_delay=60,
     name="core.tasks.update_calltask_from_calllog",
 )
-def update_calltask_from_calllog(self, call_log_id):
+def update_calltask_from_calllog(self, call_log_id, calltask_id: str):
     """
     Process CallLog and update/delete corresponding CallTask based on call outcome.
 
@@ -560,14 +559,19 @@ def update_calltask_from_calllog(self, call_log_id):
 
     Args:
         call_log_id (str): UUID of the CallLog to process
+        calltask_id (str): If provided, directly link to this CallTask ID
 
     Returns:
         dict: Processing result with status and details
     """
     from core.models import CallLog
     from core.utils.calltask_utils import (
-        find_related_calltask,
-        process_calltask_feedback,
+        SUCCESS_DISCONNECTION_REASONS,
+        PERMANENT_FAILURE_REASONS,
+        RETRY_WITH_INCREMENT_REASONS,
+        RETRY_WITHOUT_INCREMENT_REASONS,
+        handle_retry_with_increment,
+        handle_retry_without_increment,
     )
 
     try:
@@ -582,65 +586,49 @@ def update_calltask_from_calllog(self, call_log_id):
                 "call_log_id": call_log_id,
             }
 
-        # Find the related CallTask
-        call_task = find_related_calltask(call_log)
-
-        if not call_task:
-            # This is normal - not all CallLogs have corresponding CallTasks
-            # (e.g., manual test calls, inbound calls, etc.)
-            logger.info(
-                f"No CallTask found for CallLog {call_log_id} - likely a manual/test call"
-            )
-            return {
-                "success": True,
-                "action": "no_calltask_found",
-                "call_log_id": call_log_id,
-                "lead_id": str(call_log.lead.id) if call_log.lead else None,
-                "agent_id": str(call_log.agent.agent_id),
-                "disconnection_reason": call_log.disconnection_reason,
-            }
-
-        # Process the feedback
-        call_task_id = str(call_task.id)
-        call_task_status_before = call_task.status
-
-        process_calltask_feedback(call_task, call_log)
-
-        # Check if CallTask was deleted (successful call)
-        from core.models import CallTask
-
+        # Direct link by provided CallTask ID (required)
         try:
-            updated_call_task = CallTask.objects.get(id=call_task_id)
-            # CallTask still exists - it was updated
-            action = "calltask_updated"
-            new_status = updated_call_task.status
-            next_call = (
-                updated_call_task.next_call.isoformat()
-                if updated_call_task.next_call
-                else None
+            from core.models import CallTask
+            call_task = CallTask.objects.get(id=calltask_id)
+            logger.info(
+                f"Directly linked CallTask {calltask_id} for CallLog {call_log_id}"
             )
         except CallTask.DoesNotExist:
-            # CallTask was deleted - successful call
-            action = "calltask_deleted"
-            new_status = None
-            next_call = None
+            logger.info(
+                f"No CallTask found for CallLog {call_log_id} with id {calltask_id}"
+            )
+            return "not_found"
 
-        logger.info(
-            f"CallTask feedback processed successfully: {action} for CallLog {call_log_id}"
-        )
+        # At this point call_task is guaranteed to exist (earlier return on not found)
 
-        return {
-            "success": True,
-            "action": action,
-            "call_log_id": call_log_id,
-            "call_task_id": call_task_id,
-            "status_before": call_task_status_before,
-            "status_after": new_status,
-            "next_call": next_call,
-            "disconnection_reason": call_log.disconnection_reason,
-            "agent_id": str(call_log.agent.agent_id),
-            "lead_id": str(call_log.lead.id) if call_log.lead else None,
-        }
+        # Process the feedback (moved KISS logic here to avoid cross-module indirection)
+        reason = call_log.disconnection_reason
+        match reason:
+            case r if r in SUCCESS_DISCONNECTION_REASONS:
+                # DELETE - Call completed successfully
+                call_task_id = call_task.id
+                call_task.delete()
+                logger.info(f"CallTask {call_task_id} deleted - successful call ({reason})")
+                return "deleted"
+            case r if r in PERMANENT_FAILURE_REASONS:
+                # DELETE - Permanent failure, no retries
+                call_task_id = call_task.id
+                call_task.delete()
+                logger.info(f"CallTask {call_task_id} deleted - permanent failure ({reason})")
+                return "deleted"
+            case r if r in RETRY_WITH_INCREMENT_REASONS:
+                handle_retry_with_increment(call_task, call_log)
+                logger.info(f"CallTask {call_task.id} scheduled for retry with increment ({reason})")
+                return call_task.status
+            case r if r in RETRY_WITHOUT_INCREMENT_REASONS:
+                handle_retry_without_increment(call_task, call_log)
+                logger.info(f"CallTask {call_task.id} scheduled for retry without increment ({reason})")
+                return call_task.status
+            case _:
+                # Default: retry with increment
+                handle_retry_with_increment(call_task, call_log)
+                logger.info(f"CallTask {call_task.id} scheduled for retry with increment (default for {reason})")
+                return call_task.status
 
     except Exception as exc:
         logger.error(f"CallTask feedback failed for CallLog {call_log_id}: {exc}")
@@ -657,12 +645,7 @@ def update_calltask_from_calllog(self, call_log_id):
             logger.error(
                 f"CallTask feedback failed permanently for CallLog {call_log_id} after {self.max_retries} retries"
             )
-            return {
-                "success": False,
-                "error": str(exc),
-                "call_log_id": call_log_id,
-                "retries": self.request.retries,
-            }
+            return "error"
 
 
 # ===== GOOGLE CALENDAR TOKEN MANAGEMENT =====

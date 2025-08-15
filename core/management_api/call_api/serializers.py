@@ -75,12 +75,16 @@ class CallLogSerializer(serializers.ModelSerializer):
 
 class CallLogCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating call logs"""
+    # Required linkage to currently running CallTask (not persisted)
+    calltask_id = serializers.UUIDField(write_only=True, required=True, help_text="ID of running CallTask (required, not persisted)")
     
     class Meta:
         model = CallLog
         fields = [
             'lead', 'agent', 'from_number', 'to_number', 'duration',
-            'disconnection_reason', 'direction', 'status', 'appointment_datetime'
+            'disconnection_reason', 'direction', 'status', 'appointment_datetime',
+            # Non-persisted request field
+            'calltask_id'
         ]
     
     def validate_duration(self, value):
@@ -106,6 +110,11 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             })
         
         return attrs
+
+    def create(self, validated_data):
+        # Remove non-persisted field before creating model instance
+        validated_data.pop('calltask_id', None)
+        return super().create(validated_data)
 
 
 class OutboundCallSerializer(serializers.Serializer):
@@ -199,7 +208,7 @@ class OutboundCallSerializer(serializers.Serializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             'voice', 'language', 'retry_interval', 'max_retries',
             'workdays', 'call_from', 'call_to', 'character', 
-            'prompt', 'config_id', 'calendar_configuration'
+            'prompt', 'calendar_configuration'
         }
         
         # Check for invalid fields

@@ -44,7 +44,7 @@ services:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
       # Override for Docker networking
-      - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     ports:
       - "8000:8000"
@@ -96,9 +96,9 @@ services:
     env_file: .env
     environment:
       # Database: Use read-only user from .env, only override host for Docker
-      - DB_HOST=db  # Docker network override
-      - DB_PORT=${DB_PORT}
-      - DB_NAME=${DB_NAME}
+      - AGENT_DB_HOST=db  # Docker network override
+      - AGENT_DB_PORT=${DB_PORT}
+      - AGENT_DB_NAME=${DB_NAME}
       - DB_USER=${AGENT_DB_USER}  # Read-only user from .env
       - DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
       - MCP_SERVER_URL=http://mcp:8000
@@ -117,7 +117,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
-      - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
       db:
@@ -137,7 +137,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
-      - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
       db:
