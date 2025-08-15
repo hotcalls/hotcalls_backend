@@ -17,12 +17,15 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     users = WorkspaceUserSerializer(many=True, read_only=True)
     user_count = serializers.SerializerMethodField()
     is_subscription_active = serializers.SerializerMethodField()
+    admin_user_id = serializers.UUIDField(source='admin_user.id', read_only=True)
+    creator_id = serializers.UUIDField(source='creator.id', read_only=True)
     
     class Meta:
         model = Workspace
         fields = [
             'id', 'workspace_name', 'created_at', 'updated_at', 
-            'users', 'user_count', 'is_subscription_active'
+            'users', 'user_count', 'is_subscription_active',
+            'admin_user_id', 'creator_id',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
