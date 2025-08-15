@@ -328,6 +328,19 @@ class CalendarViewSet(viewsets.ModelViewSet):
             connection = MicrosoftCalendarConnection.objects.get(pk=pk)
             if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+            # Preview affected configurations unless explicitly confirmed
+            confirm = bool(getattr(request, 'data', {}) and request.data.get('confirm'))
+            affected = self._get_affected_configurations_for_ms_connection(connection)
+            if not confirm and affected['count'] > 0:
+                return Response({
+                    'success': False,
+                    'requires_confirmation': True,
+                    'message': 'Disconnect would delete related Event Types. Please confirm.',
+                    'affected_event_types': affected['items'],
+                    'count': affected['count']
+                })
+
             # Try to delete provider subscriptions
             from core.models import MicrosoftSubscription
             subs = MicrosoftSubscription.objects.filter(connection=connection)
@@ -341,7 +354,15 @@ class CalendarViewSet(viewsets.ModelViewSet):
             connection.active = False
             connection.save(update_fields=['active', 'updated_at'])
             Calendar.objects.filter(workspace=connection.workspace, provider='outlook').update(active=False)
-            return Response({'success': True, 'message': f'Disconnected {connection.primary_email}'})
+
+            # Delete affected Event Types if any
+            deleted_count = 0
+            if affected['count'] > 0:
+                from core.models import CalendarConfiguration
+                ids = [item['id'] for item in affected['items']]
+                deleted_count, _ = CalendarConfiguration.objects.filter(id__in=ids).delete()
+
+            return Response({'success': True, 'message': f'Disconnected {connection.primary_email}', 'deleted_event_types': deleted_count})
         except MicrosoftCalendarConnection.DoesNotExist:
             return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
@@ -681,13 +702,24 @@ class CalendarViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['post'], url_path='google_disconnect')
     def disconnect_google_connection(self, request, pk=None):
-        """Disconnect Google Calendar connection"""
+        """Disconnect Google Calendar connection with optional confirmed cleanup of dependent Event Types."""
         try:
             connection = GoogleCalendarConnection.objects.get(pk=pk)
             
             # Check permissions
             if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
                 return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            # If not confirmed, return preview of affected event types
+            confirm = bool(getattr(request, 'data', {}) and request.data.get('confirm'))
+            affected = self._get_affected_configurations_for_google_connection(connection)
+            if not confirm and affected['count'] > 0:
+                return Response({
+                    'success': False,
+                    'requires_confirmation': True,
+                    'message': 'Disconnect would delete related Event Types. Please confirm.',
+                    'affected_event_types': affected['items'],
+                    'count': affected['count']
+                })
             
             # Revoke token at Google
             revoked = GoogleOAuthService.revoke_token(connection.refresh_token)
@@ -701,13 +733,20 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 workspace=connection.workspace,
                 provider='google'
             ).update(active=False)
+            # Delete affected configurations when confirm
+            deleted_count = 0
+            if affected['count'] > 0:
+                from core.models import CalendarConfiguration
+                ids = [item['id'] for item in affected['items']]
+                deleted_count, _ = CalendarConfiguration.objects.filter(id__in=ids).delete()
             
             logger.info(f"Disconnected Google Calendar for {connection.account_email}")
             
             return Response({
                 'success': True,
                 'message': f'Successfully disconnected {connection.account_email}',
-                'token_revoked': revoked
+                'token_revoked': revoked,
+                'deleted_event_types': deleted_count
             })
             
         except GoogleCalendarConnection.DoesNotExist:
@@ -718,6 +757,80 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 'error': 'Failed to disconnect',
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="Preview Google disconnect impact", tags=["Google Calendar"]) 
+    @action(detail=True, methods=['get'], url_path='google_disconnect_preview')
+    def google_disconnect_preview(self, request, pk=None):
+        try:
+            connection = GoogleCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            affected = self._get_affected_configurations_for_google_connection(connection)
+            return Response(affected)
+        except GoogleCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to build google disconnect preview: {e}")
+            return Response({'error': 'Preview failed', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(summary="Preview Microsoft disconnect impact", tags=["Microsoft Calendar"]) 
+    @action(detail=True, methods=['get'], url_path='microsoft_disconnect_preview')
+    def microsoft_disconnect_preview(self, request, pk=None):
+        try:
+            connection = MicrosoftCalendarConnection.objects.get(pk=pk)
+            if not request.user.is_staff and connection.workspace != self._get_user_workspace(request.user):
+                return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+            affected = self._get_affected_configurations_for_ms_connection(connection)
+            return Response(affected)
+        except MicrosoftCalendarConnection.DoesNotExist:
+            return Response({'error': 'Connection not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to build microsoft disconnect preview: {e}")
+            return Response({'error': 'Preview failed', 'details': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _get_affected_configurations_for_google_connection(self, connection: 'GoogleCalendarConnection') -> dict:
+        from core.models import CalendarConfiguration
+        # Calendars belonging to this connection
+        calendars = Calendar.objects.filter(google_calendar__connection=connection)
+        calendar_ids = set(str(c.id) for c in calendars)
+        # Target-based
+        target_qs = CalendarConfiguration.objects.filter(calendar__in=calendars)
+        # Conflict-based: filter in Python due to JSON field
+        conflict_candidates = CalendarConfiguration.objects.filter(calendar__workspace=connection.workspace)
+        conflict_list = []
+        for cfg in conflict_candidates.select_related('calendar'):
+            conflicts = cfg.conflict_check_calendars or []
+            if any(str(x) in calendar_ids for x in conflicts):
+                conflict_list.append(cfg)
+        # Combine unique
+        seen = set()
+        items = []
+        for cfg in list(target_qs) + conflict_list:
+            if cfg.id in seen:
+                continue
+            seen.add(cfg.id)
+            items.append({'id': str(cfg.id), 'name': cfg.name, 'calendar': str(cfg.calendar_id)})
+        return {'count': len(items), 'items': items}
+
+    def _get_affected_configurations_for_ms_connection(self, connection: 'MicrosoftCalendarConnection') -> dict:
+        from core.models import CalendarConfiguration
+        calendars = Calendar.objects.filter(microsoft_calendar__connection=connection)
+        calendar_ids = set(str(c.id) for c in calendars)
+        target_qs = CalendarConfiguration.objects.filter(calendar__in=calendars)
+        conflict_candidates = CalendarConfiguration.objects.filter(calendar__workspace=connection.workspace)
+        conflict_list = []
+        for cfg in conflict_candidates.select_related('calendar'):
+            conflicts = cfg.conflict_check_calendars or []
+            if any(str(x) in calendar_ids for x in conflicts):
+                conflict_list.append(cfg)
+        seen = set()
+        items = []
+        for cfg in list(target_qs) + conflict_list:
+            if cfg.id in seen:
+                continue
+            seen.add(cfg.id)
+            items.append({'id': str(cfg.id), 'name': cfg.name, 'calendar': str(cfg.calendar_id)})
+        return {'count': len(items), 'items': items}
     
     # 📊 CALENDAR FUNCTIONALITY
     
