@@ -70,7 +70,7 @@ RETRY_WITHOUT_INCREMENT_REASONS = [
 
 def handle_retry_with_increment(call_task, call_log):
     """
-    Handle retry with attempt increment for real call attempts.
+    Handle retry with attempt increment for real call attempts after the call is made and call_log is created.
 
     Args:
         call_task: CallTask to update
@@ -105,7 +105,7 @@ def handle_retry_with_increment(call_task, call_log):
 
 def handle_retry_without_increment(call_task, call_log):
     """
-    Handle retry without attempt increment for technical failures.
+    Handle retry without attempt increment for technical failures after the call is made and call_log is created.
 
     Args:
         call_task: CallTask to update
@@ -128,7 +128,7 @@ def reschedule_without_increment(
 ) -> CallTask:
     """
     Reschedule a CallTask WITHOUT incrementing attempts.
-    Used for system failures, preflight issues, or any non-user-caused failures.
+    Used for system failures, preflight issues, or any non-user-caused failures before the call is made.
 
     Args:
         call_task: CallTask to update
@@ -159,6 +159,8 @@ def reschedule_without_increment(
         f"CallTask {call_task.id} rescheduled without increment ({reason}: {hint}); next_call={call_task.next_call}"
     )
     return call_task
+
+
 def preflight_dispatch_config(call_task: CallTask) -> dict:
     """Validate routing config before promoting/dispatching a call.
 
@@ -172,12 +174,16 @@ def preflight_dispatch_config(call_task: CallTask) -> dict:
 
     # Resolve from_number (agent phone_number → workspace fallback → env)
     from_number = (
-        agent.phone_number.phonenumber if getattr(agent, "phone_number", None) else getattr(workspace, "phone_number", None)
+        agent.phone_number.phonenumber
+        if getattr(agent, "phone_number", None)
+        else getattr(workspace, "phone_number", None)
     ) or os.getenv("DEFAULT_FROM_NUMBER")
 
     # Resolve SIP trunk id (agent phone_number.sip_trunk → env)
     sip_trunk_id = None
-    if getattr(agent, "phone_number", None) and getattr(agent.phone_number, "sip_trunk", None):
+    if getattr(agent, "phone_number", None) and getattr(
+        agent.phone_number, "sip_trunk", None
+    ):
         sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
     if not sip_trunk_id:
         sip_trunk_id = os.getenv("TRUNK_ID")
@@ -185,18 +191,33 @@ def preflight_dispatch_config(call_task: CallTask) -> dict:
     if not from_number or not sip_trunk_id:
         missing = "missing_from_number" if not from_number else "missing_sip_trunk"
         try:
-            reschedule_without_increment(call_task, reason="config_missing", hint=missing)
+            reschedule_without_increment(
+                call_task, reason="config_missing", hint=missing
+            )
         except Exception as e:
-            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
-        return {"ok": False, "from_number": from_number, "sip_trunk_id": sip_trunk_id, "reason": missing}
+            logger.error(
+                f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}"
+            )
+        return {
+            "ok": False,
+            "from_number": from_number,
+            "sip_trunk_id": sip_trunk_id,
+            "reason": missing,
+        }
 
-    return {"ok": True, "from_number": from_number, "sip_trunk_id": sip_trunk_id, "reason": None}
-
+    return {
+        "ok": True,
+        "from_number": from_number,
+        "sip_trunk_id": sip_trunk_id,
+        "reason": None,
+    }
 
 
 def handle_max_retries(call_task: CallTask) -> bool:
     """
-    Early guard: delete the CallTask if it has already reached max retries.
+    Early guard: delete the CallTask if it has already reached max retries. This is called in the trigger_call task.
+    there is still more logic to delete if max retries is reached in the  retry_with_increment function above .
+    TODO: move the logic for max retries to the here task eventually.
 
     Returns:
         True if the task was deleted here (max retries reached), False otherwise.
@@ -229,14 +250,16 @@ def calculate_next_call_time(agent, base_time):
         datetime: Next valid call time
     """
     # Start with base retry interval
-    next_time = base_time + timedelta(minutes=max(getattr(agent, "retry_interval", 1), 1))
+    next_time = base_time + timedelta(
+        minutes=max(getattr(agent, "retry_interval", 1), 1)
+    )
 
     # Apply workday/time constraints
     next_time = ensure_valid_call_time(agent, next_time)
 
     return next_time
 
-    
+
 def _get_agent_local_tz(agent):
     """Return the global project timezone for interpreting agent hours.
 
@@ -314,7 +337,15 @@ def ensure_valid_call_time(agent, datetime_obj):
 
         # Treat empty workdays as all days
         if not configured_workdays:
-            configured_workdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+            configured_workdays = {
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            }
 
         if current_weekday in configured_workdays:
             # Check if time is within working hours (support overnight windows)
@@ -325,7 +356,9 @@ def ensure_valid_call_time(agent, datetime_obj):
                 within_hours = agent.call_from <= current_time <= agent.call_to
             else:
                 # Overnight window like 22:00–02:00
-                within_hours = current_time >= agent.call_from or current_time <= agent.call_to
+                within_hours = (
+                    current_time >= agent.call_from or current_time <= agent.call_to
+                )
 
             if within_hours:
                 # Perfect - within workday and working hours (keep in settings TZ)
@@ -382,10 +415,20 @@ def is_valid_call_time(agent, datetime_obj):
     # Check workday in local timezone (normalize configured days from DB)
     configured_workdays = {d.lower() for d in (agent.workdays or [])}
     local_tz = _get_agent_local_tz(agent)
-    datetime_obj = _normalize_local_time(timezone.localtime(datetime_obj, local_tz), local_tz)
+    datetime_obj = _normalize_local_time(
+        timezone.localtime(datetime_obj, local_tz), local_tz
+    )
     current_weekday = datetime_obj.strftime("%A").lower()
     if not configured_workdays:
-        configured_workdays = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+        configured_workdays = {
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        }
     if current_weekday not in configured_workdays:
         return False
 
@@ -503,7 +546,7 @@ async def preflight_check_agent_token_async(agent_name: str) -> dict:
 
 def handle_call_success(call_task, call_result: dict) -> dict:
     """
-    Handle successful call initiation.
+    Handle successful call initiation in trigger_call task after the call is made and successfuly dispatched.
     Call remains IN_PROGRESS until webhook feedback.
 
     Args:
@@ -530,6 +573,7 @@ def handle_call_failure(call_task, error: str, abort_reason: str = None) -> dict
     Dispatch-time failure handler. NEVER increments attempts, NEVER deletes.
     All max-retry checks happen early in trigger_call. Real outcome-based
     increments/deletes are handled by CallLog feedback processing.
+    Called in trigger_call task after the call is made and failed to dispatch.
 
     Behavior:
     - token_missing / dispatch_failed     → reschedule_without_increment
