@@ -44,7 +44,7 @@ def _setup_agent_lead_task():
         phone=lead.phone,
         status=CallStatus.IN_PROGRESS,
         attempts=0,
-        next_call=None,
+        next_call=timezone.now(),
     )
     return ws, agent, lead, task
 
@@ -80,16 +80,16 @@ def test_call_log_feedback_linked_by_id(reason, expect_deleted, expect_attempts_
         "from_number": "+49000000001",
         "to_number": lead.phone,
         "duration": 42,
-        "disconnection_reason": reason,
+        "disconnection_reason": reason.value,
         "direction": "outbound",
-        "status": "completed",
+        # omit status to let default/nullable pass validation
         "appointment_datetime": None,
         "calltask_id": str(task.id),
     }
 
     # Patch delay to call synchronously
     with patch(
-        "core.management_api.call_api.views.update_calltask_from_calllog.delay",
+        "core.tasks.update_calltask_from_calllog.delay",
         side_effect=lambda call_log_id, calltask_id: update_calltask_from_calllog(call_log_id, calltask_id),
     ):
         resp = client.post("/api/calls/call-logs/", payload, format="json")
@@ -115,9 +115,9 @@ def test_call_log_requires_calltask_id():
         "from_number": "+49000000001",
         "to_number": lead.phone,
         "duration": 42,
-        "disconnection_reason": DisconnectionReason.DIAL_NO_ANSWER,
+        "disconnection_reason": DisconnectionReason.DIAL_NO_ANSWER.value,
         "direction": "outbound",
-        "status": "completed",
+        # omit status
         "appointment_datetime": None,
         # missing calltask_id
     }
