@@ -17,8 +17,8 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     users = WorkspaceUserSerializer(many=True, read_only=True)
     user_count = serializers.SerializerMethodField()
     is_subscription_active = serializers.SerializerMethodField()
-    admin_user_id = serializers.UUIDField(source='admin_user.id', read_only=True)
-    creator_id = serializers.UUIDField(source='creator.id', read_only=True)
+    admin_user_id = serializers.SerializerMethodField()
+    creator_id = serializers.SerializerMethodField()
     
     class Meta:
         model = Workspace
@@ -40,6 +40,20 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         # TODO: Check Stripe subscription status here
         # For now return True if stripe_subscription_id exists
         return bool(obj.stripe_subscription_id)
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_admin_user_id(self, obj):
+        try:
+            return getattr(obj.admin_user, 'id', None)
+        except Exception:
+            return None
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_creator_id(self, obj):
+        try:
+            return getattr(obj.creator, 'id', None)
+        except Exception:
+            return None
 
 
 class WorkspaceCreateSerializer(serializers.ModelSerializer):
