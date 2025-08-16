@@ -30,7 +30,8 @@ from .permissions import (
     IsWorkspaceMemberOrStaff,
     WorkspaceInvitationPermission,
     InvitationAcceptancePermission,
-    PublicInvitationViewPermission
+    PublicInvitationViewPermission,
+    IsWorkspaceAdmin
 )
 from .filters import WorkspaceFilter
 
@@ -302,11 +303,48 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             return Workspace.objects.filter(users=user)
     
     def perform_create(self, serializer):
-        """Create workspace and automatically add creator as member"""
-        workspace = serializer.save()
-        # Add the creator as a member of the workspace
+        """Create workspace and automatically add creator as member and admin"""
+        workspace = serializer.save(creator=self.request.user, admin_user=self.request.user)
         workspace.users.add(self.request.user)
         workspace.save()
+
+    @extend_schema(
+        summary="🔑 Get my role in this workspace",
+        description="Returns whether the current user is the workspace admin",
+        responses={200: OpenApiResponse(description="OK")},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['get'])
+    def my_role(self, request, pk=None):
+        workspace = self.get_object()
+        return Response({
+            'is_admin': bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id)
+        })
+
+    @extend_schema(
+        summary="👑 Transfer workspace admin",
+        description="Transfer workspace admin role to another member (admin only)",
+        request=WorkspaceUserAssignmentSerializer,
+        responses={200: OpenApiResponse(description="Admin transferred")},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['post'], permission_classes=[IsWorkspaceAdmin])
+    def transfer_admin(self, request, pk=None):
+        workspace = self.get_object()
+        serializer = WorkspaceUserAssignmentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user_ids = serializer.validated_data['user_ids']
+        if not user_ids:
+            return Response({'error': 'new_admin_user_id required in user_ids[0]'}, status=status.HTTP_400_BAD_REQUEST)
+        new_admin_id = user_ids[0]
+        try:
+            new_admin = workspace.users.get(id=new_admin_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User must be a workspace member'}, status=status.HTTP_400_BAD_REQUEST)
+        workspace.admin_user_id = new_admin.id
+        workspace.save(update_fields=['admin_user'])
+        return Response({'message': 'Admin transferred', 'new_admin_user_id': str(new_admin.id)})
     
     @extend_schema(
         summary="👥 Get workspace users",
@@ -464,14 +502,15 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['delete'], permission_classes=[WorkspaceUserManagementPermission])
     def remove_users(self, request, pk=None):
-        """Remove users from a workspace (staff only)"""
-        if not request.user.is_staff:
+        """Remove users from a workspace (workspace admin or staff)"""
+        workspace = self.get_object()
+        # Allow either staff or workspace admin
+        is_workspace_admin = bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id)
+        if not (request.user.is_staff or is_workspace_admin):
             return Response(
-                {'error': 'Only staff can manage workspace users'}, 
+                {'error': 'Only workspace admin or staff can manage workspace users'}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        workspace = self.get_object()
         serializer = WorkspaceUserAssignmentSerializer(data=request.data)
         
         if serializer.is_valid():
