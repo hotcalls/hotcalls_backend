@@ -17,6 +17,7 @@ from core.utils.validators import (
     extract_name,
     _normalize_key,
 )
+from core.utils.lead_normalization import canonicalize_lead_payload
 import uuid
 import re
 from django.utils import timezone
@@ -419,20 +420,49 @@ class LeadViewSet(viewsets.ModelViewSet):
 
         for index, row in enumerate(raw_leads):
             try:
-                # Normalize keys and collect pairs
-                pairs = []  # List[Tuple[str, str]]
+                # Fast path: use canonical normalization for provider-agnostic mapping
                 if isinstance(row, dict):
-                    for k, v in row.items():
-                        if v is None:
-                            continue
-                        v_str = str(v).strip()
-                        if not v_str:
-                            continue
-                        k_norm = _normalize_key(str(k))
-                        pairs.append((k_norm, v_str))
+                    normalized = canonicalize_lead_payload(row)
+                    first_name = (normalized.get('first_name') or '').strip()
+                    last_name = (normalized.get('last_name') or '').strip()
+                    email_to_save = (normalized.get('email') or '').strip()
+                    phone_to_save = (normalized.get('phone') or '').strip()
+                    variables = normalized.get('variables') or {}
+
+                    if first_name and email_to_save and phone_to_save:
+                        if variables:
+                            detected_variable_keys.update(variables.keys())
+                        meta_data = {
+                            'source': 'csv',
+                            'import_batch_id': import_batch_id,
+                        }
+                        lead = Lead.objects.create(
+                            name=first_name,
+                            surname=last_name or '',
+                            email=email_to_save,
+                            phone=phone_to_save,
+                            workspace=assigned_workspace if isinstance(assigned_workspace, Workspace) else None,
+                            integration_provider='manual',
+                            variables=variables,
+                            meta_data=meta_data,
+                        )
+                        created_leads.append(lead)
+                        continue
                 else:
                     errors.append({'index': index, 'error': 'Invalid row format'})
                     continue
+
+                # Legacy fallback (kept for robustness)
+                # Normalize keys and collect pairs
+                pairs = []  # List[Tuple[str, str]]
+                for k, v in row.items():
+                    if v is None:
+                        continue
+                    v_str = str(v).strip()
+                    if not v_str:
+                        continue
+                    k_norm = _normalize_key(str(k))
+                    pairs.append((k_norm, v_str))
 
                 # Pick candidates similar to Meta mapping
                 first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')

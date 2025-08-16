@@ -24,14 +24,18 @@ def invitation_detail(request, token):
         }
         return render(request, 'invitations/invitation_error.html', context, status=404)
 
-    # Always redirect to the login page with next pointing to acceptance URL,
-    # and include invited_workspace + skip_welcome to enforce post-login routing
+    # Always redirect to the login page with a single encoded `next` that
+    # already includes invited_workspace + skip_welcome to enforce post-login routing
     try:
         invitation = WorkspaceInvitation.objects.get(token=token)
-        invited_workspace_param = f"&invited_workspace={invitation.workspace.id}&skip_welcome=1"
+        next_target = (
+            f"/invitations/{token}/accept/?"
+            f"invited_workspace={invitation.workspace.id}&skip_welcome=1"
+        )
     except WorkspaceInvitation.DoesNotExist:
-        invited_workspace_param = ""
-    return redirect(f"/login?next=/invitations/{token}/accept/{invited_workspace_param}")
+        next_target = f"/invitations/{token}/accept/"
+    from urllib.parse import quote
+    return redirect(f"/login?next={quote(next_target, safe='')}")
 
 
 @require_http_methods(["GET", "POST"])
@@ -64,8 +68,13 @@ def accept_invitation(request, token):
             'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
             'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
             'login_redirect': (
-                f"/login?next=/invitations/{token}/accept/"
-                f"&invited_workspace={invitation.workspace.id}&skip_welcome=1"
+                # Single encoded next containing all params
+                (lambda: (lambda nt: f"/login?next={nt}")(
+                    __import__('urllib.parse').parse.quote(
+                        f"/invitations/{token}/accept/?invited_workspace={invitation.workspace.id}&skip_welcome=1",
+                        safe=''  # encode fully
+                    )
+                ))()
             )
         })
     

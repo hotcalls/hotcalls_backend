@@ -1761,14 +1761,13 @@ spec:
             name: ${PROJECT_PREFIX}-backend-internal
             port:
               number: 8000
-       # Route invitation flows to backend to render Django templates
-       - path: /invitations
-         pathType: Prefix
-         backend:
-           service:
-             name: ${PROJECT_PREFIX}-backend-internal
-             port:
-               number: 8000
+      - path: /invitations
+        pathType: Prefix
+        backend:
+          service:
+            name: ${PROJECT_PREFIX}-backend-internal
+            port:
+              number: 8000
       - path: /admin
         pathType: Prefix
         backend:
@@ -1798,6 +1797,8 @@ spec:
             port:
               number: 80
 EOF
+        echo "----- ingress-temp.yaml -----"
+        cat ingress-temp.yaml
         kubectl apply -f ingress-temp.yaml
         rm -f ingress-temp.yaml
     else

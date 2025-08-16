@@ -7,8 +7,10 @@ from .views import (
     stripe_webhook,
     list_stripe_products,
     create_checkout_session,
+    change_subscription_plan,
     get_subscription_status,
     cancel_subscription,
+    resume_subscription,
     check_workspace_subscription,
     get_workspace_usage_status
 )
@@ -45,6 +47,9 @@ urlpatterns = [
     path('stripe/create-checkout-session/', 
          create_checkout_session, 
          name='create-checkout-session'),
+    path('stripe/change-plan/', 
+         change_subscription_plan, 
+         name='change-subscription-plan'),
     
     path('workspaces/<uuid:workspace_id>/subscription/', 
          get_subscription_status, 
@@ -57,6 +62,9 @@ urlpatterns = [
     path('workspaces/<uuid:workspace_id>/subscription/cancel/', 
          cancel_subscription, 
          name='cancel-subscription'),
+    path('workspaces/<uuid:workspace_id>/subscription/resume/', 
+         resume_subscription, 
+         name='resume-subscription'),
     
     # Usage and quota management
     path('workspaces/<uuid:workspace_id>/usage/', 

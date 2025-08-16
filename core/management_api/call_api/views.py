@@ -288,6 +288,15 @@ class CallLogViewSet(viewsets.ModelViewSet):
             )
             
             logger.info(f"📞 Recorded {duration_minutes} minutes usage for workspace {workspace.id}")
+
+            # Check usage thresholds (90% / 75%) and notify admin if needed
+            try:
+                from core.utils import check_and_notify_minutes_threshold
+                check_and_notify_minutes_threshold(workspace)
+            except Exception as notify_err:
+                logger.error(
+                    f"⚠️ Threshold notification failed for workspace {workspace.id}: {notify_err}"
+                )
             
         except Exception as quota_err:
             # Log error but don't fail call log creation

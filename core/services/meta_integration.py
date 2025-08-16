@@ -460,11 +460,22 @@ class MetaIntegrationService:
             # Map fields to lead model
             mapped_data = self._map_lead_fields(field_data)
 
+            # Canonicalize to enforce singular contact fields and canonical variables
+            from core.utils.lead_normalization import canonicalize_lead_payload
+            normalized = canonicalize_lead_payload({
+                'first_name': mapped_data.get('name') or '',
+                'last_name': mapped_data.get('surname') or '',
+                'full_name': mapped_data.get('name') and mapped_data.get('surname') and '' or (mapped_data.get('name') or ''),
+                'email': mapped_data.get('email') or '',
+                'phone': mapped_data.get('phone') or '',
+                'variables': mapped_data.get('variables') or {},
+            })
+
             # Enforce presence gate: require that name, email and phone are provided in some form
-            raw_name = (mapped_data.get('name') or '').strip()
-            raw_surname = (mapped_data.get('surname') or '').strip()
-            raw_email = mapped_data.get('email') or ''
-            raw_phone = mapped_data.get('phone') or ''
+            raw_name = (normalized.get('first_name') or '').strip()
+            raw_surname = (normalized.get('last_name') or '').strip()
+            raw_email = normalized.get('email') or ''
+            raw_phone = normalized.get('phone') or ''
 
             # Email validation
             email = validate_email_strict(raw_email)
@@ -511,7 +522,7 @@ class MetaIntegrationService:
                 phone=phone_to_save,
                 workspace=integration.workspace,
                 integration_provider='meta',
-                variables=mapped_data.get('variables', {}),
+                variables=normalized.get('variables', {}),
                 lead_funnel=lead_funnel
             )
             

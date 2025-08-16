@@ -235,7 +235,7 @@
                 {% endif %}
             {% else %}
                 <a href="/login?next=/invitations/{{ invitation.token }}/accept/" class="button">Anmelden um anzunehmen</a>
-                <a href="/signup?next=/invitations/{{ invitation.token }}/" class="button secondary">Konto erstellen</a>
+                <a href="/signup?next=/invitations/{{ invitation.token }}/accept/" class="button secondary">Konto erstellen</a>
             {% endif %}
         {% else %}
             <div class="status-message expired">

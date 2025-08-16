@@ -110,3 +110,40 @@ class CreateCheckoutSessionSerializer(serializers.Serializer):
             return value
         except Workspace.DoesNotExist:
             raise serializers.ValidationError("Workspace does not exist") 
+
+
+class ChangePlanSerializer(serializers.Serializer):
+    """Serializer for changing subscription plan (price change with proration)"""
+    workspace_id = serializers.UUIDField()
+    price_id = serializers.CharField(max_length=255)
+    proration_behavior = serializers.ChoiceField(
+        choices=[
+            ('create_prorations', 'create_prorations'),
+            ('always_invoice', 'always_invoice'),
+            ('none', 'none'),
+        ],
+        required=False,
+        default='create_prorations'
+    )
+    payment_behavior = serializers.ChoiceField(
+        choices=[
+            ('allow_incomplete', 'allow_incomplete'),
+            ('error_if_incomplete', 'error_if_incomplete'),
+            ('pending_if_incomplete', 'pending_if_incomplete'),
+            ('default_incomplete', 'default_incomplete'),
+        ],
+        required=False,
+        default='pending_if_incomplete'
+    )
+
+    def validate_workspace_id(self, value):
+        try:
+            workspace = Workspace.objects.get(id=value)
+            request = self.context.get('request')
+            if request and not workspace.users.filter(id=request.user.id).exists():
+                raise serializers.ValidationError("You don't have access to this workspace")
+            if not workspace.stripe_subscription_id:
+                raise serializers.ValidationError("Workspace has no active Stripe subscription")
+            return value
+        except Workspace.DoesNotExist:
+            raise serializers.ValidationError("Workspace does not exist")

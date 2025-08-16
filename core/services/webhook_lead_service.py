@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Optional
 from django.db import transaction
 from django.utils import timezone
+from core.utils.lead_normalization import canonicalize_lead_payload
 
 from core.models import (
     Lead, LeadFunnel, WebhookLeadSource, CallTask, CallStatus
@@ -61,12 +62,13 @@ class WebhookLeadService:
             self._update_lead_stats(workspace, 'agent_inactive')
             return {"status": "ignored_inactive_agent"}
 
-        # Basic payload extraction
-        name = payload.get('name') or ''
-        surname = payload.get('surname') or ''
-        email = payload.get('email') or ''
-        phone = payload.get('phone') or ''
-        variables = payload.get('variables') or {}
+        # Canonical normalization of inbound fields
+        normalized = canonicalize_lead_payload(payload or {})
+        name = normalized.get('first_name') or ''
+        surname = normalized.get('last_name') or ''
+        email = normalized.get('email') or ''
+        phone = normalized.get('phone') or ''
+        variables = normalized.get('variables') or {}
         external_id = payload.get('external_id')
 
         # Simple idempotency: if external_id provided, avoid duplicates per funnel

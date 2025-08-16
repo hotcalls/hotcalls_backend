@@ -291,7 +291,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100]
         )
 
-        excluded = {"first_name", "last_name", "full_name", "email", "phone"}
+        excluded = {"first_name", "last_name", "full_name", "email", "phone", "matched_keys", "raw", "meta", "source", "import_batch_id", "external_id", "id", "lead_id"}
         custom_keys = set()
 
         # Canonical mapping for display labels (EN key -> DE label)

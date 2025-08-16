@@ -1,10 +1,12 @@
 import stripe
+import logging
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.authentication import TokenAuthentication, BasicAuthentication, SessionAuthentication
 from rest_framework.response import Response
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
+from django.core.cache import cache
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
@@ -14,7 +16,8 @@ from .serializers import (
     CreateStripeCustomerSerializer,
     StripePortalSessionSerializer,
     RetrieveStripeCustomerSerializer,
-    CreateCheckoutSessionSerializer
+    CreateCheckoutSessionSerializer,
+    ChangePlanSerializer,
 )
 from .permissions import IsWorkspaceMember
 
@@ -27,6 +30,7 @@ class CsrfExemptSessionAuthentication(SessionAuthentication):
 
 # Initialize Stripe
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
+logger = logging.getLogger(__name__)
 
 
 @extend_schema(
@@ -534,30 +538,7 @@ def create_checkout_session(request):
     try:
         workspace = Workspace.objects.get(id=workspace_id)
         
-        # 🔧 FIX: Handle existing subscriptions before creating new ones
-        if workspace.stripe_customer_id:
-            print(f"🔍 Checking for existing subscriptions for customer {workspace.stripe_customer_id}")
-            
-            # Get all active subscriptions
-            existing_subs = stripe.Subscription.list(
-                customer=workspace.stripe_customer_id,
-                status='active',
-                limit=10
-            )
-            
-            if existing_subs.data:
-                print(f"⚠️ Found {len(existing_subs.data)} existing active subscription(s) - canceling IMMEDIATELY")
-                
-                # Cancel all existing active subscriptions IMMEDIATELY
-                for sub in existing_subs.data:
-                    try:
-                        stripe.Subscription.cancel(sub.id)
-                        print(f"✅ IMMEDIATELY canceled subscription {sub.id}")
-                    except stripe.error.StripeError as e:
-                        print(f"❌ Failed to cancel subscription {sub.id}: {e}")
-                        # Continue with checkout even if cancellation fails
-            else:
-                print("✅ No existing active subscriptions found")
+        # Do NOT cancel existing subscriptions here. Plan changes should be handled via the dedicated change-plan endpoint or the billing portal.
         
         # Create checkout session - customer will be created automatically if needed
         session_params = {
@@ -598,6 +579,69 @@ def create_checkout_session(request):
             {"error": f"Stripe error: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@extend_schema(
+    summary="🔄 Change subscription plan (price)",
+    description="Update the current Stripe subscription to a new price with proper proration.",
+    request=ChangePlanSerializer,
+    responses={
+        200: OpenApiResponse(description="✅ Plan changed"),
+        400: OpenApiResponse(description="❌ Validation error"),
+        404: OpenApiResponse(description="🚫 Workspace not found"),
+        500: OpenApiResponse(description="❌ Stripe API error"),
+    },
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsWorkspaceMember])
+def change_subscription_plan(request):
+    """Change the current plan by updating the subscription item's price with proration."""
+    serializer = ChangePlanSerializer(data=request.data, context={'request': request})
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    workspace_id = serializer.validated_data['workspace_id']
+    price_id = serializer.validated_data['price_id']
+    proration_behavior = serializer.validated_data.get('proration_behavior', 'create_prorations')
+    payment_behavior = serializer.validated_data.get('payment_behavior', 'pending_if_incomplete')
+
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        if not workspace.stripe_subscription_id:
+            return Response({"error": "No active subscription found"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Retrieve subscription to get current item id
+        subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+        items = subscription['items']['data']
+        if not items:
+            return Response({"error": "Subscription has no items"}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_item_id = items[0]['id']
+
+        updated = stripe.Subscription.modify(
+            workspace.stripe_subscription_id,
+            proration_behavior=proration_behavior,
+            payment_behavior=payment_behavior,
+            items=[{
+                'id': current_item_id,
+                'price': price_id,
+            }]
+        )
+
+        # Return a concise status; webhook will reconcile DB records
+        return Response({
+            'id': updated['id'],
+            'status': updated['status'],
+            'cancel_at_period_end': updated.get('cancel_at_period_end', False),
+            'current_period_end': updated.get('current_period_end'),
+            'price_id': updated['items']['data'][0]['price']['id'] if updated['items']['data'] else None,
+        })
+    except Workspace.DoesNotExist:
+        return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+    except stripe.error.StripeError as e:
+        return Response({"error": f"Stripe error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 @extend_schema(
@@ -665,29 +709,47 @@ def get_subscription_status(request, workspace_id):
                 'has_subscription': False,
                 'subscription': None
             })
-        
-        # Get active subscriptions
-        subscriptions = stripe.Subscription.list(
-            customer=workspace.stripe_customer_id,
-            status='active',
-            limit=1
-        )
-        
-        if subscriptions['data']:
-            subscription = subscriptions['data'][0]
-            
-            # Update workspace subscription status
+        # Retrieve subscription robustly: prefer known ID, otherwise find latest
+        subscription = None
+        try:
+            if workspace.stripe_subscription_id:
+                subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+        except stripe.error.StripeError:
+            subscription = None
+
+        if subscription is None:
+            # Try active first
+            subs_active = stripe.Subscription.list(customer=workspace.stripe_customer_id, status='active', limit=1)
+            if subs_active['data']:
+                subscription = subs_active['data'][0]
+            else:
+                # Fallback to any latest subscription
+                subs_any = stripe.Subscription.list(customer=workspace.stripe_customer_id, limit=1)
+                if subs_any['data']:
+                    subscription = subs_any['data'][0]
+
+        if subscription is not None:
+            stripe_status = subscription.status
+            if stripe_status == 'trialing':
+                stripe_status = 'trial'
+
             workspace.stripe_subscription_id = subscription.id
-            workspace.subscription_status = 'active'
+            workspace.subscription_status = stripe_status
             workspace.save()
-            
+
+            has_sub = stripe_status not in ['canceled', 'cancelled', 'incomplete_expired']
+
+            # Normalize fields; ensure epoch seconds and booleans present
+            current_period_end = getattr(subscription, 'current_period_end', None)
+            cancel_at_period_end = bool(getattr(subscription, 'cancel_at_period_end', False))
+
             return Response({
-                'has_subscription': True,
+                'has_subscription': bool(has_sub),
                 'subscription': {
                     'id': subscription.id,
-                    'status': subscription.status,
-                    'current_period_end': getattr(subscription, 'current_period_end', None),
-                    'cancel_at_period_end': getattr(subscription, 'cancel_at_period_end', False),
+                    'status': stripe_status,
+                    'current_period_end': current_period_end,
+                    'cancel_at_period_end': cancel_at_period_end,
                     'plan': {
                         'id': subscription['items']['data'][0]['price']['id'],
                         'product': subscription['items']['data'][0]['price']['product'],
@@ -697,52 +759,15 @@ def get_subscription_status(request, workspace_id):
                     }
                 }
             })
-        else:
-            # Check for other statuses
-            all_subs = stripe.Subscription.list(
-                customer=workspace.stripe_customer_id,
-                limit=1
-            )
-            
-            if all_subs['data']:
-                sub = all_subs['data'][0]
-                stripe_status = sub.status
-                if stripe_status == 'trialing':
-                    stripe_status = 'trial'
 
-                workspace.stripe_subscription_id = sub.id
-                workspace.subscription_status = stripe_status
-                workspace.save()
+        # Kein Abo vorhanden
+        workspace.subscription_status = 'none'
+        workspace.save()
 
-                # Consider subscription valid unless it is explicitly ended/expired
-                has_sub = stripe_status not in ['canceled', 'cancelled', 'incomplete_expired']
-
-                if has_sub:
-                    return Response({
-                        'has_subscription': True,
-                        'subscription': {
-                            'id': sub.id,
-                            'status': stripe_status,
-                            'current_period_end': sub.current_period_end,
-                            'cancel_at_period_end': sub.cancel_at_period_end,
-                            'plan': {
-                                'id': sub['items']['data'][0]['price']['id'],
-                                'product': sub['items']['data'][0]['price']['product'],
-                                'amount': sub['items']['data'][0]['price']['unit_amount'],
-                                'currency': sub['items']['data'][0]['price']['currency'],
-                                'interval': sub['items']['data'][0]['price']['recurring']['interval']
-                            }
-                        }
-                    })
-
-            # Kein Abo vorhanden
-            workspace.subscription_status = 'none'
-            workspace.save()
-
-            return Response({
-                'has_subscription': False,
-                'subscription': None
-            })
+        return Response({
+            'has_subscription': False,
+            'subscription': None
+        })
             
     except Workspace.DoesNotExist:
         return Response(
@@ -809,8 +834,8 @@ def cancel_subscription(request, workspace_id):
             cancel_at_period_end=True
         )
         
-        workspace.subscription_status = 'cancelled'
-        workspace.save()
+        # Do not mark as cancelled immediately; final state will be reconciled via webhook.
+        # Keep DB status as-is; clients can read cancel_at_period_end from Stripe via status endpoint.
         
         return Response({
             'message': 'Subscription will be cancelled at period end',
@@ -820,6 +845,63 @@ def cancel_subscription(request, workspace_id):
     except Workspace.DoesNotExist:
         return Response(
             {"error": "Workspace not found"}, 
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except stripe.error.StripeError as e:
+        return Response(
+            {"error": f"Stripe error: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="✅ Resume subscription (undo cancel)",
+    description="Resume a subscription by unsetting cancel_at_period_end so it continues next period.",
+    responses={
+        200: OpenApiResponse(description="✅ Subscription resumed"),
+        400: OpenApiResponse(description="❌ No active subscription or not scheduled to cancel"),
+        404: OpenApiResponse(description="🚫 Workspace not found"),
+        500: OpenApiResponse(description="❌ Stripe API error"),
+    },
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@permission_classes([IsWorkspaceMember])
+def resume_subscription(request, workspace_id):
+    """Undo cancel_at_period_end on the current subscription"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+
+        if not workspace.stripe_subscription_id:
+            return Response(
+                {"error": "No active subscription"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Retrieve existing subscription to check flag
+        subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+        if not getattr(subscription, 'cancel_at_period_end', False):
+            return Response(
+                {"message": "Subscription is not set to cancel at period end"},
+                status=status.HTTP_200_OK
+            )
+
+        updated = stripe.Subscription.modify(
+            workspace.stripe_subscription_id,
+            cancel_at_period_end=False
+        )
+
+        # Do not force DB status; webhook will reconcile.
+        return Response({
+            'message': 'Subscription resumed',
+            'cancel_at_period_end': updated.cancel_at_period_end,
+            'current_period_end': updated.current_period_end,
+            'status': updated.status,
+        })
+
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"},
             status=status.HTTP_404_NOT_FOUND
         )
     except stripe.error.StripeError as e:
@@ -843,13 +925,10 @@ def stripe_webhook(request):
     sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
     webhook_secret = getattr(settings, 'STRIPE_WEBHOOK_SECRET', '')
     
-    print("=== WEBHOOK RECEIVED ===")
-    print(f"Payload length: {len(payload)} bytes")
-    print(f"Signature header: {sig_header}")
-    print(f"Webhook secret configured: {'Yes' if webhook_secret else 'No'}")
+    logger.info("Stripe webhook received; payload_len=%s, has_sig=%s, has_secret=%s", len(payload), bool(sig_header), bool(webhook_secret))
     
     if not webhook_secret:
-        print("ERROR: Webhook secret not configured")
+        logger.error("Webhook secret not configured")
         return Response(
             {"error": "Webhook secret not configured"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -860,17 +939,17 @@ def stripe_webhook(request):
         event = stripe.Webhook.construct_event(
             payload, sig_header, webhook_secret
         )
-        print("✅ Webhook signature verified successfully")
+        logger.info("Webhook signature verified successfully")
     except ValueError as e:
         # Invalid payload
-        print(f"❌ Invalid payload: {e}")
+        logger.warning("Invalid payload: %s", e)
         return Response(
             {"error": "Invalid payload"},
             status=status.HTTP_400_BAD_REQUEST
         )
     except stripe.error.SignatureVerificationError as e:
         # Invalid signature
-        print(f"❌ Invalid signature: {e}")
+        logger.warning("Invalid signature: %s", e)
         return Response(
             {"error": "Invalid signature"},
             status=status.HTTP_400_BAD_REQUEST
@@ -879,9 +958,17 @@ def stripe_webhook(request):
     # Handle the event
     event_type = event['type']
     event_data = event['data']['object']
-    
-    print(f"📨 Processing event: {event_type}")
-    print(f"Event ID: {event.get('id', 'unknown')}")
+    event_id = event.get('id', 'unknown')
+
+    # Idempotency guard using cache (no DB migration required)
+    cache_key = f"stripe_event:{event_id}"
+    if cache.get(cache_key):
+        logger.info("Duplicate webhook event ignored; id=%s type=%s", event_id, event_type)
+        return Response({"received": True, "duplicate": True}, status=status.HTTP_200_OK)
+    # Mark as processed for 7 days
+    cache.set(cache_key, True, timeout=7*24*3600)
+
+    logger.info("Processing webhook; id=%s type=%s", event_id, event_type)
     
     # Customer events
     if event_type == 'customer.created':
@@ -954,24 +1041,20 @@ def stripe_webhook(request):
         metadata = session.get('metadata', {})
         workspace_id = metadata.get('workspace_id') or session.get('client_reference_id')
         
-        print("🛒 CHECKOUT SESSION COMPLETED:")
-        print(f"  Customer ID: {customer_id}")
-        print(f"  Subscription ID: {subscription_id}")
-        print(f"  Workspace ID: {workspace_id}")
-        print(f"  Metadata: {metadata}")
-        print(f"  Client reference ID: {session.get('client_reference_id')}")
+        logger.info("checkout.session.completed customer=%s subscription=%s workspace=%s meta=%s client_ref=%s",
+                    customer_id, subscription_id, workspace_id, metadata, session.get('client_reference_id'))
         
         if workspace_id and subscription_id:
             try:
                 workspace = Workspace.objects.get(id=workspace_id)
-                print(f"✅ Found workspace: {workspace.workspace_name} (ID: {workspace.id})")
+                logger.info("Found workspace: %s (%s)", workspace.workspace_name, workspace.id)
                 
                 workspace.stripe_subscription_id = subscription_id
                 workspace.subscription_status = 'active'
                 # Save customer ID if not yet stored
                 if customer_id and not workspace.stripe_customer_id:
                     workspace.stripe_customer_id = customer_id
-                    print(f"💾 Setting customer ID: {customer_id}")
+                    logger.info("Setting customer ID for workspace=%s", workspace.id)
                 
                 # Get subscription details to find the plan
                 subscription = stripe.Subscription.retrieve(subscription_id)
@@ -980,7 +1063,7 @@ def stripe_webhook(request):
                 if sub_status == 'trialing':
                     sub_status = 'trial'
                 workspace.subscription_status = sub_status
-                print(f"📊 Setting subscription status: {sub_status}")
+                logger.info("Setting subscription status=%s for workspace=%s", sub_status, workspace.id)
 
                 if subscription['items']['data']:
                     price_id = subscription['items']['data'][0]['price']['id']
@@ -1012,19 +1095,18 @@ def stripe_webhook(request):
                             is_active=True
                         )
                         
-                        print(f"📋 Created WorkspaceSubscription: {plan.plan_name}")
+                        logger.info("Created WorkspaceSubscription plan=%s for workspace=%s", plan.plan_name, workspace.id)
                     else:
-                        print(f"⚠️ No plan found for price ID: {price_id}")
+                        logger.warning("No plan found for price_id=%s", price_id)
                 
                 workspace.save()
-                print("✅ Workspace updated successfully!")
-                print(f"Subscription {subscription_id} activated for workspace {workspace_id}")
+                logger.info("Workspace updated; subscription %s activated for workspace %s", subscription_id, workspace_id)
             except Workspace.DoesNotExist:
-                print(f"❌ Workspace {workspace_id} not found!")
+                logger.error("Workspace not found for checkout session; workspace_id=%s", workspace_id)
             except Exception as e:
-                print(f"❌ Error updating workspace: {e}")
+                logger.exception("Error updating workspace after checkout: %s", e)
         else:
-            print(f"⚠️ Missing data - workspace_id: {workspace_id}, subscription_id: {subscription_id}")
+            logger.warning("Missing data in checkout.session.completed workspace_id=%s subscription_id=%s", workspace_id, subscription_id)
     
     # Subscription events
     elif event_type == 'customer.subscription.created':
@@ -1041,9 +1123,9 @@ def stripe_webhook(request):
             workspace.subscription_status = subscription_status
             # WorkspaceSubscription creation is handled by checkout.session.completed - don't duplicate here!
             workspace.save()
-            print(f"Subscription {subscription['id']} created for workspace {workspace.id} – status: {subscription_status}")
+            logger.info("Subscription %s created for workspace %s – status=%s", subscription['id'], workspace.id, subscription_status)
         except Workspace.DoesNotExist:
-            print(f"No workspace found for subscription created event – customer {customer_id}")
+            logger.warning("No workspace found for subscription.created – customer=%s", customer_id)
     
     elif event_type == 'customer.subscription.updated':
         subscription = event_data
@@ -1057,9 +1139,38 @@ def stripe_webhook(request):
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
             workspace.subscription_status = subscription_status
             workspace.save()
-            print(f"Updated workspace subscription status to {subscription_status}")
+            logger.info("Updated workspace subscription status to %s", subscription_status)
+
+            # Sync WorkspaceSubscription plan mapping on price change
+            try:
+                items = subscription['items']['data']
+                if items:
+                    price_id = items[0]['price']['id']
+                    from core.models import Plan, WorkspaceSubscription
+                    plan = Plan.objects.filter(
+                        stripe_price_id_monthly=price_id
+                    ).first() or Plan.objects.filter(
+                        stripe_price_id_yearly=price_id
+                    ).first()
+                    if plan:
+                        # Deactivate existing active subscriptions
+                        WorkspaceSubscription.objects.filter(
+                            workspace=workspace,
+                            is_active=True
+                        ).update(is_active=False)
+                        # Create/activate new mapping
+                        from datetime import datetime, timezone
+                        WorkspaceSubscription.objects.create(
+                            workspace=workspace,
+                            plan=plan,
+                            started_at=datetime.now(timezone.utc),
+                            is_active=True
+                        )
+                        logger.info("Synchronized WorkspaceSubscription to plan %s via subscription.updated", plan.plan_name)
+            except Exception as e:
+                logger.warning("Failed to sync WorkspaceSubscription on subscription.updated: %s", e)
         except Workspace.DoesNotExist:
-            print(f"No workspace found for customer {customer_id}")
+            logger.warning("No workspace found for customer %s in subscription.updated", customer_id)
     
     elif event_type == 'customer.subscription.deleted':
         subscription = event_data
@@ -1071,21 +1182,20 @@ def stripe_webhook(request):
             workspace.subscription_status = 'cancelled'
             workspace.stripe_subscription_id = None
             workspace.save()
-            
-            # 🔧 FIX: Also deactivate WorkspaceSubscription records
+
+            # Deactivate WorkspaceSubscription records
             from core.models import WorkspaceSubscription
             WorkspaceSubscription.objects.filter(
                 workspace=workspace,
                 is_active=True
             ).update(is_active=False)
-            
-            print(f"Subscription cancelled for workspace {workspace.id} - deactivated WorkspaceSubscription records")
+            logger.info("Subscription cancelled for workspace %s - deactivated WorkspaceSubscription records", workspace.id)
         except Workspace.DoesNotExist:
-            print(f"No workspace found for customer {customer_id}")
+            logger.warning("No workspace found for customer %s in subscription.deleted", customer_id)
     
     else:
         # Unhandled event type
-        print(f"Unhandled event type: {event_type}")
+        logger.info("Unhandled Stripe event type: %s", event_type)
     
     # Return success response
     return Response({"received": True}, status=status.HTTP_200_OK) 

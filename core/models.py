@@ -582,6 +582,13 @@ class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
+    # Ownership and administration
+    creator = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_workspaces'
+    )
+    admin_user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='admin_workspaces'
+    )
     
 
     # Subscription
@@ -641,6 +648,11 @@ class Workspace(models.Model):
             return self.workspacesubscription_set.get(is_active=True)
         except WorkspaceSubscription.DoesNotExist:
             return None
+
+    def is_admin(self, user: 'User') -> bool:
+        if user is None:
+            return False
+        return bool(self.admin_user and self.admin_user_id == user.id)
     
     class Meta:
         constraints = [
