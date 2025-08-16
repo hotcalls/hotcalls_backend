@@ -103,6 +103,8 @@ urlpatterns = [
     
     # LiveKit Token Management API (Superuser only)
     path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
+    # Knowledge Base API (per Agent, PDF-only)
+    path('api/knowledge/', include(('core.management_api.knowledge_api.urls', 'knowledge_api'), namespace='knowledge_api')),
     
     # Google Calendar MCP Token Management API (removed in unified LiveKit-only flow)
     
