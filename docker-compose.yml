@@ -44,6 +44,7 @@ services:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
       # Override for Docker networking
+      - DB_HOST=db
       - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     ports:
@@ -117,6 +118,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
+      - DB_HOST=db
       - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
@@ -137,6 +139,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
+      - DB_HOST=db
       - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
