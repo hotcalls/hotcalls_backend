@@ -315,7 +315,17 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         Minimal safeguard: block deletion if there is an active Stripe subscription
         to avoid orphaned billing. Users must cancel first via payments API.
         """
-        workspace = self.get_object()
+        # Fetch without triggering DRF's object-permission gate; we'll validate manually
+        workspace = get_object_or_404(Workspace, pk=kwargs.get('pk'))
+
+        # Manual permission: only workspace admin or superuser may delete
+        is_admin = False
+        try:
+            is_admin = bool(getattr(workspace, 'is_admin', None) and workspace.is_admin(request.user))
+        except Exception:
+            is_admin = bool(getattr(workspace, 'admin_user_id', None) and workspace.admin_user_id == request.user.id)
+        if not (request.user.is_superuser or is_admin):
+            return Response({"detail": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
 
         # If there is an active/chargeable subscription, require cancellation first
         active_statuses = {"active", "past_due", "unpaid"}
