@@ -308,6 +308,30 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         workspace.users.add(self.request.user)
         workspace.save()
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a workspace.
+
+        Minimal safeguard: block deletion if there is an active Stripe subscription
+        to avoid orphaned billing. Users must cancel first via payments API.
+        """
+        workspace = self.get_object()
+
+        # If there is an active/chargeable subscription, require cancellation first
+        active_statuses = {"active", "past_due", "unpaid"}
+        if (
+            getattr(workspace, "stripe_subscription_id", None)
+            and getattr(workspace, "subscription_status", "none") in active_statuses
+        ):
+            return Response(
+                {
+                    "error": "Workspace hat ein aktives Abonnement. Bitte kündige zuerst dein Abo (es bleibt bis zum Periodenende aktiv)."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().destroy(request, *args, **kwargs)
+
     @extend_schema(
         summary="🔑 Get my role in this workspace",
         description="Returns whether the current user is the workspace admin",
