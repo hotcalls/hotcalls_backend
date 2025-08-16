@@ -141,6 +141,15 @@ class AgentKnowledgeDocumentsView(APIView):
         if storage.exists(path):
             return Response({"detail": "File already exists."}, status=status.HTTP_409_CONFLICT)
 
+        # Enforce single-document policy: only one document can be attached per agent
+        manifest_existing = _load_manifest(storage, agent_id)
+        existing_files = manifest_existing.get("files", [])
+        if isinstance(existing_files, list) and len(existing_files) >= 1:
+            return Response({
+                "detail": "Es ist nur ein Dokument erlaubt. Bitte löschen Sie das vorhandene Dokument, bevor Sie ein neues hochladen.",
+                "code": "kb_single_document_limit"
+            }, status=status.HTTP_409_CONFLICT)
+
         # Save the uploaded file
         with storage.open(path, "wb") as dest:
             for chunk in file.chunks():
