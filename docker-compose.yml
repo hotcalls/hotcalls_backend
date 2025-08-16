@@ -78,7 +78,7 @@ services:
 
   mcp:
     image: python:3.12-slim
-    working_dir: /app/google-calendar-mcp
+    working_dir: /app/booking-mcp
     env_file: .env
     environment:
       - CALENDAR_API_URL=http://backend:8000
@@ -89,7 +89,7 @@ services:
       backend:
         condition: service_started
     volumes:
-      - ./google-calendar-mcp:/app/google-calendar-mcp:delegated
+      - ./booking-mcp:/app/booking-mcp:delegated
     command: bash -lc "pip install -e . || true; pip install watchfiles && python -m watchfiles 'python server.py'"
 
   outboundagent:

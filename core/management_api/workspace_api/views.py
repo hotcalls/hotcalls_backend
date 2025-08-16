@@ -239,8 +239,8 @@ from .filters import WorkspaceFilter
         
         **🔐 Permission Requirements**:
         - **❌ Regular Users**: No access to workspace deletion
-        - **❌ Staff Members**: Cannot delete workspaces
-        - **✅ Superuser ONLY**: Can delete workspaces
+        - **✅ Workspace Admin**: Can delete their own workspace
+        - **✅ Superuser**: Can delete any workspace
         
         **💥 Critical Impact**:
         - Removes all workspace data and relationships
@@ -256,11 +256,11 @@ from .filters import WorkspaceFilter
             204: OpenApiResponse(description="✅ Workspace deleted successfully"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(
-                description="🚫 Permission denied - Only superusers can delete workspaces",
+                description="🚫 Permission denied - Only workspace admin or superusers can delete workspaces",
                 examples=[
                     OpenApiExample(
                         'Insufficient Permissions',
-                        summary='Non-superuser attempted workspace deletion',
+                        summary='Non-admin attempted workspace deletion',
                         value={'detail': 'You do not have permission to perform this action.'}
                     )
                 ]

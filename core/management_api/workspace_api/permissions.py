@@ -8,7 +8,7 @@ class WorkspacePermission(permissions.BasePermission):
     - Users can modify workspaces they belong to
     - Users can create their first workspace
     - Staff can view and modify all workspaces
-    - Only superusers can delete workspaces
+    - Workspace deletion: allowed for workspace admin (object owner) or superuser
     """
     
     def has_permission(self, request, view):
@@ -35,9 +35,9 @@ class WorkspacePermission(permissions.BasePermission):
             user_workspaces_count = Workspace.objects.filter(users=request.user).count()
             return user_workspaces_count == 0
         
-        # Delete operations: require superuser privileges  
+        # Delete operations: allow evaluation at object level (admin or superuser)
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            return True
             
         return False
     
@@ -53,9 +53,13 @@ class WorkspacePermission(permissions.BasePermission):
             return (request.user in obj.users.all() or 
                    request.user.is_staff)
         
-        # Delete permissions only for superusers
+        # Delete permissions: only workspace admin (or superuser)
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            # Superuser always allowed
+            if request.user.is_superuser:
+                return True
+            # Workspace admin allowed
+            return bool(getattr(obj, 'admin_user_id', None) and obj.admin_user_id == request.user.id)
         
         return False
 
