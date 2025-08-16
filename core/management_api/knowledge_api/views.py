@@ -1,4 +1,6 @@
 import io
+import os
+import re
 import json
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple
@@ -8,6 +10,7 @@ from django.utils.timezone import now
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
 from core.models import Agent
@@ -65,6 +68,38 @@ def _get_agent_or_404(agent_id: str) -> Agent:
 
 class AgentKnowledgeDocumentsView(APIView):
     permission_classes = [AgentKnowledgePermission]
+    parser_classes = (MultiPartParser, FormParser)
+
+    _MAX_BYTES = 20 * 1024 * 1024  # 20 MB
+
+    @staticmethod
+    def _sanitize_filename(original_name: str) -> str:
+        # Keep only safe characters; collapse others to '_'
+        name = os.path.basename(original_name or "")
+        name = name.strip().replace("\\", "_").replace("/", "_")
+        name = re.sub(r"[^A-Za-z0-9._\- ]+", "_", name)
+        # Avoid empty names
+        return name or "document.pdf"
+
+    @staticmethod
+    def _is_probable_pdf(uploaded_file) -> bool:
+        try:
+            pos = uploaded_file.tell()
+        except Exception:
+            pos = None
+        try:
+            # Read a small header to detect '%PDF-'
+            uploaded_file.seek(0)
+            header = uploaded_file.read(5)
+            return isinstance(header, (bytes, bytearray)) and header.startswith(b"%PDF-")
+        except Exception:
+            return False
+        finally:
+            try:
+                if pos is not None:
+                    uploaded_file.seek(pos)
+            except Exception:
+                pass
 
     @extend_schema(
         request=DocumentUploadSerializer,
@@ -82,12 +117,25 @@ class AgentKnowledgeDocumentsView(APIView):
         serializer.is_valid(raise_exception=True)
         file = serializer.validated_data["file"]
 
-        if file.content_type not in ("application/pdf",):
+        # Size limit
+        if getattr(file, "size", None) is not None and file.size > self._MAX_BYTES:
+            return Response({"detail": "File too large. Max 20 MB."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+
+        # Content type / magic sniff: accept application/pdf or octet-stream with PDF header
+        content_type = getattr(file, "content_type", "") or ""
+        if content_type not in ("application/pdf", "application/octet-stream"):
             return Response({"detail": "Only PDF files are allowed."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+        # If octet-stream, try magic check
+        try:
+            file_obj = getattr(file, "file", None) or file
+            if content_type != "application/pdf" and not self._is_probable_pdf(file_obj):
+                return Response({"detail": "Invalid PDF content."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+        except Exception:
+            return Response({"detail": "Unable to read uploaded file."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         storage = AzureMediaStorage()
         docs_prefix = _docs_prefix(agent_id)
-        filename = file.name
+        filename = self._sanitize_filename(getattr(file, "name", "document.pdf"))
         path = f"{docs_prefix}/{filename}"
 
         if storage.exists(path):
