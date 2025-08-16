@@ -10,6 +10,7 @@ from core.models import (
     CallTask,
     CallStatus,
     DisconnectionReason,
+    PhoneNumber,
 )
 from core.tasks import update_calltask_from_calllog
 
@@ -30,6 +31,11 @@ def _setup_agent_lead_task():
         character="",
         prompt="",
     )
+    # Assign a phone number to satisfy from_number inference
+    pn = PhoneNumber.objects.create(phonenumber="+49000000001")
+    agent.phone_number = pn
+    agent.save(update_fields=["phone_number"])
+
     lead = Lead.objects.create(
         workspace=ws,
         name="Max",
@@ -77,14 +83,11 @@ def test_call_log_feedback_linked_by_id(reason, expect_deleted, expect_attempts_
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 42,
         "disconnection_reason": reason.value,
         "direction": "outbound",
         # omit status to let default/nullable pass validation
         "appointment_datetime": None,
-        "calltask_id": str(task.id),
+        "call_task_id": str(task.id),
     }
 
     # Patch delay to call synchronously
@@ -112,14 +115,11 @@ def test_call_log_requires_calltask_id():
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 42,
         "disconnection_reason": DisconnectionReason.DIAL_NO_ANSWER.value,
         "direction": "outbound",
         # omit status
         "appointment_datetime": None,
-        # missing calltask_id
+        # missing call_task_id
     }
 
     resp = client.post("/api/calls/call-logs/", payload, format="json")

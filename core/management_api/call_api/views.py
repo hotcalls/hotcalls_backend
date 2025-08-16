@@ -9,7 +9,6 @@ from django.core.exceptions import PermissionDenied
 import logging
 
 from core.models import CallLog, Agent, Lead, CallTask, CallStatus
-from core.models import LiveKitAgent
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer, 
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
@@ -96,17 +95,16 @@ logger = logging.getLogger(__name__)
         - No user authentication required
         
         **📝 Required Information**:
-        - `lead`: Associated lead ID (UUID)
-        - `agent`: Agent who made/received the call (UUID)
-        - `from_number`, `to_number`: Phone numbers involved
-        - `duration`: Call duration in seconds
-        - `direction`: Call direction (inbound/outbound)
-        - `status`: Call outcome (optional)
-        - `appointment_datetime`: When appointment scheduled (if status is appointment_scheduled)
+        - `call_task_id` (required, write-only): The originating CallTask ID
+        - Other fields are inferred from the CallTask by default:
+          - `agent`, `lead` from the CallTask
+          - `to_number` from the CallTask phone
+          - `from_number` from the Agent's assigned phone number
+          - `direction` defaults to `outbound`
+        - Optional overrides:
+          - `direction`, `appointment_datetime`, `disconnection_reason`
+        - Note: `duration` is computed automatically from the CallTask creation time
         
-        **✅ Business Logic**:
-        - When status is 'appointment_scheduled', appointment_datetime is required
-        - When status is not 'appointment_scheduled', appointment_datetime must be empty
         """,
         parameters=[
             OpenApiParameter(
@@ -117,12 +115,9 @@ logger = logging.getLogger(__name__)
                 type=str
             )
         ],
-        request=CallLogSerializer,
+        request=CallLogCreateSerializer,
         responses={
-            201: OpenApiResponse(
-                response=CallLogSerializer,
-                description="✅ Call log created successfully"
-            ),
+            201: OpenApiResponse(response=CallLogSerializer, description="✅ Call log created successfully"),
             400: OpenApiResponse(description="❌ Validation error - Check call log data"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required for call log creation")
@@ -264,12 +259,22 @@ class CallLogViewSet(viewsets.ModelViewSet):
             return CallLogCreateSerializer
         return CallLogSerializer
     
+    def create(self, request, *args, **kwargs):
+        """Use create-serializer for input but return full CallLogSerializer in response."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        # Re-serialize with read serializer to include read-only fields
+        read_serializer = CallLogSerializer(serializer.instance)
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    
     def perform_create(self, serializer):
         """Create call log and record actual call minutes usage"""
         from core.quotas import enforce_and_record
         from decimal import Decimal
         
-        # calltask_id is required in request but not persisted (popped in serializer.create)
+        # call_task_id is required in request but not persisted (popped in serializer.create)
         # Create the call log first (non-persisted fields are popped in serializer.create)
         call_log = serializer.save()
         
@@ -299,8 +304,8 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Trigger CallTask feedback loop (async, non-blocking)
         try:
             from core.tasks import update_calltask_from_calllog
-            # Prefer direct linking via provided calltask_id to avoid heuristic matching
-            provided_calltask_id = self.request.data.get('calltask_id')
+            # Prefer direct linking via provided call_task_id to avoid heuristic matching
+            provided_calltask_id = self.request.data.get('call_task_id') or self.request.data.get('calltask_id')
             update_calltask_from_calllog.delay(str(call_log.id), provided_calltask_id)
             logger.info(f"🔄 Triggered CallTask feedback for CallLog {call_log.id}")
             
@@ -1163,83 +1168,5 @@ def make_test_call(request):
     }, status=status.HTTP_201_CREATED)
 
 
-# ======= Preflight Endpoint ========
-@extend_schema(
-    summary="🧪 Outbound call preflight",
-    description="Validate that the agent has a valid LiveKit call-log token before starting a call."
-                " No auth required; used internally by outbound agent.",
-    request=dict,
-    responses={
-        204: OpenApiResponse(description="Preflight OK"),
-        404: OpenApiResponse(description="CallTask not found"),
-        503: OpenApiResponse(description="Preflight failed; task rescheduled without attempt increment")
-    },
-    tags=["Call Management"]
-)
-@api_view(['POST'])
-@permission_classes([permissions.AllowAny])
-def preflight(request):
-    """Single gate to allow/deny starting an outbound call.
-
-    Request JSON: { "task_id": str, "token_sha256": str }
-    Behavior:
-      - If token is present, valid, and matches an active LiveKitAgent, return 204.
-      - Otherwise: set task to RETRY without increment, compute next_call, append retry_reasons,
-        and return 503 with reasons.
-    """
-    try:
-        payload = request.data or {}
-        task_id = payload.get('task_id')
-        token_sha256 = (payload.get('token_sha256') or '').strip().lower()
-        if not task_id:
-            return Response({'error': 'task_id required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Load task
-        try:
-            call_task = CallTask.objects.select_related('agent').get(id=task_id)
-        except CallTask.DoesNotExist:
-            return Response({'error': 'CallTask not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Evaluate token conditions
-        reasons = []
-        if token_sha256 == "":
-            reasons.append('token_missing')
-            matched_agent = None
-        else:
-            matched_agent = None
-            for agent in LiveKitAgent.objects.all():
-                import hashlib
-                h = hashlib.sha256(agent.token.encode('utf-8')).hexdigest()
-                if h == token_sha256:
-                    matched_agent = agent
-                    break
-            if matched_agent is None:
-                reasons.append('token_mismatch')
-            elif not matched_agent.is_valid():
-                reasons.append('token_invalid')
-
-        if not reasons:
-            # Happy path
-            return Response(status=status.HTTP_204_NO_CONTENT)
-
-        # Unhappy path: reschedule without increment
-        # from core.utils.calltask_utils import reschedule_task_preflight_failed
-        from django.db import transaction
-        with transaction.atomic():
-            call_task.refresh_from_db()
-            from core.utils.calltask_utils import reschedule_without_increment, DisconnectionReason
-            reschedule_without_increment(call_task, reason=DisconnectionReason.PREFLIGHT_CALL_LOG_FAILED, hint=reasons[0])
-
-        retry_minutes = getattr(call_task.agent, 'retry_interval', 30)
-        return Response({
-            'action': 'rescheduled',
-            'task_id': str(call_task.id),
-            'retry_in_minutes': retry_minutes,
-            'reasons': reasons
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-    except Exception as e:
-        logger.error(f"Preflight endpoint error: {e}")
-        return Response({'error': 'internal_error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
  

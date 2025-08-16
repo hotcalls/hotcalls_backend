@@ -5,7 +5,7 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import Workspace, Agent, Lead, CallTask, CallStatus, DisconnectionReason, LiveKitAgent
+from core.models import Workspace, Agent, Lead, CallTask, CallStatus, DisconnectionReason, LiveKitAgent, PhoneNumber
 
 
 def _staff_client():
@@ -43,6 +43,11 @@ def _mk_env():
         character="",
         prompt="",
     )
+    # Assign a phone number to the agent (required for from_number inference)
+    pn = PhoneNumber.objects.create(phonenumber="+49000000001")
+    agent.phone_number = pn
+    agent.save(update_fields=["phone_number"])
+
     lead = Lead.objects.create(
         workspace=ws,
         name="Max",
@@ -58,6 +63,7 @@ def _mk_env():
         status=CallStatus.IN_PROGRESS,
         attempts=0,
         next_call=timezone.now(),
+        target_ref=f"lead:{lead.id}",
     )
     return ws, agent, lead, task
 
@@ -69,18 +75,19 @@ def test_call_log_staff_auth_success():
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 60,
+        # from_number/to_number/duration are inferred
         "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
         "direction": "outbound",
         "appointment_datetime": None,
-        "calltask_id": str(task.id),
+        "call_task_id": str(task.id),
     }
     # patch delay to sync
     with patch("core.tasks.update_calltask_from_calllog.delay", side_effect=lambda a, b: None):
         resp = client.post("/api/calls/call-logs/", payload, format="json")
         assert resp.status_code == 201
+        data = resp.json()
+        assert data.get("call_task_id") == str(task.id)
+        assert data.get("target_ref") == f"lead:{lead.id}"
 
 
 @pytest.mark.django_db
@@ -92,19 +99,20 @@ def test_call_log_livekit_header_success():
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 60,
+        # from_number/to_number/duration inferred
         "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
         "direction": "outbound",
         "appointment_datetime": None,
-        "calltask_id": str(task.id),
+        "call_task_id": str(task.id),
     }
     with patch("core.tasks.update_calltask_from_calllog.delay", side_effect=lambda a, b: None):
         resp = client.post(
             "/api/calls/call-logs/", payload, format="json", HTTP_X_LIVEKIT_TOKEN=lka.token
         )
         assert resp.status_code == 201
+        data = resp.json()
+        assert data.get("call_task_id") == str(task.id)
+        assert data.get("target_ref") == f"lead:{lead.id}"
 
 
 @pytest.mark.django_db
@@ -114,71 +122,49 @@ def test_call_log_forbidden_without_staff_or_livekit():
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 60,
+        # from_number/to_number/duration inferred
         "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
         "direction": "outbound",
         "appointment_datetime": None,
-        "calltask_id": str(task.id),
+        "call_task_id": str(task.id),
     }
     resp = client.post("/api/calls/call-logs/", payload, format="json")
     assert resp.status_code in (401, 403)
 
 
 @pytest.mark.django_db
-def test_call_log_validation_status_requires_appointment_datetime():
+def test_call_log_contains_target_ref_and_call_task_id():
     ws, agent, lead, task = _mk_env()
     client = _staff_client()
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 60,
         "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
         "direction": "outbound",
-        "status": "appointment_scheduled",
-        # missing appointment_datetime
-        "calltask_id": str(task.id),
+        "appointment_datetime": None,
+        "call_task_id": str(task.id),
     }
-    resp = client.post("/api/calls/call-logs/", payload, format="json")
-    assert resp.status_code == 400
-
-
-@pytest.mark.django_db
-def test_call_log_validation_appointment_datetime_only_for_appointment_status():
-    ws, agent, lead, task = _mk_env()
-    client = _staff_client()
-    payload = {
-        "lead": str(lead.id),
-        "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 60,
-        "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
-        "direction": "outbound",
-        "status": "completed",
-        "appointment_datetime": timezone.now().isoformat(),
-        "calltask_id": str(task.id),
-    }
-    resp = client.post("/api/calls/call-logs/", payload, format="json")
-    assert resp.status_code == 400
+    with patch("core.tasks.update_calltask_from_calllog.delay", side_effect=lambda a, b: None):
+        resp = client.post("/api/calls/call-logs/", payload, format="json")
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["call_task_id"] == str(task.id)
+        assert data["target_ref"] == f"lead:{lead.id}"
 
 
 @pytest.mark.django_db
 def test_quota_recording_called():
     ws, agent, lead, task = _mk_env()
     client = _staff_client()
+    # Set created_at to two minutes ago so computed duration is ~120s
+    task.created_at = timezone.now() - timezone.timedelta(seconds=120)
+    task.save(update_fields=["created_at"])
     payload = {
         "lead": str(lead.id),
         "agent": str(agent.agent_id),
-        "from_number": "+49000000001",
-        "to_number": lead.phone,
-        "duration": 120,  # 2 minutes
         "disconnection_reason": DisconnectionReason.USER_HANGUP.value,
         "direction": "outbound",
-        "calltask_id": str(task.id),
+        "call_task_id": str(task.id),
     }
     with patch("core.quotas.enforce_and_record") as mock_enforce, patch(
         "core.tasks.update_calltask_from_calllog.delay", side_effect=lambda a, b: None
@@ -188,7 +174,7 @@ def test_quota_recording_called():
         # amount in minutes
         args, kwargs = mock_enforce.call_args
         assert kwargs["workspace"] == agent.workspace
-        assert float(kwargs["amount"]) == pytest.approx(2.0)
+        assert float(kwargs["amount"]) == pytest.approx(2.0, rel=0.2)
 
 
 @pytest.mark.django_db

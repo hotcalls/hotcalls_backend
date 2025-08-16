@@ -253,8 +253,8 @@ class BlacklistAdmin(admin.ModelAdmin):
 
 @admin.register(CallLog)
 class CallLogAdmin(admin.ModelAdmin):
-    list_display = ('lead', 'agent', 'from_number', 'to_number', 'direction', 'status', 'duration', 'timestamp')
-    list_filter = ('direction', 'status', 'timestamp', 'disconnection_reason')
+    list_display = ('lead', 'agent', 'from_number', 'to_number', 'direction', 'duration', 'timestamp', 'disconnection_reason')
+    list_filter = ('direction', 'timestamp', 'disconnection_reason')
     search_fields = ('lead__name', 'lead__surname', 'agent__name', 'from_number', 'to_number')
     ordering = ('-timestamp',)
     readonly_fields = ('timestamp', 'updated_at')

@@ -2,8 +2,6 @@ from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 from core.models import CallLog, Lead, Agent, CallTask
 from django.utils import timezone
-from django.core.exceptions import ValidationError
-from datetime import datetime
 
 
 class CallLogSerializer(serializers.ModelSerializer):
@@ -13,6 +11,8 @@ class CallLogSerializer(serializers.ModelSerializer):
     lead_email = serializers.CharField(source='lead.email', read_only=True)
     agent_workspace_name = serializers.CharField(source='agent.workspace.workspace_name', read_only=True)
     duration_formatted = serializers.SerializerMethodField()
+    call_task_id = serializers.UUIDField(read_only=True)
+    target_ref = serializers.CharField(read_only=True)
     
     class Meta:
         model = CallLog
@@ -21,7 +21,7 @@ class CallLogSerializer(serializers.ModelSerializer):
             'agent', 'agent_workspace_name',
             'timestamp', 'from_number', 'to_number', 'duration', 
             'duration_formatted', 'disconnection_reason', 'direction', 
-            'status', 'appointment_datetime', 'updated_at'
+            'appointment_datetime', 'call_task_id', 'target_ref', 'updated_at'
         ]
         read_only_fields = ['id', 'timestamp', 'updated_at']
     
@@ -32,37 +32,7 @@ class CallLogSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        """Cross-field validation for appointment logic and agent workspace"""
-        status = attrs.get('status')
-        appointment_datetime = attrs.get('appointment_datetime')
-        agent = attrs.get('agent')
-        lead = attrs.get('lead')
-        
-        # If updating, get existing values for fields not being updated
-        if self.instance:
-            status = status or self.instance.status
-            appointment_datetime = appointment_datetime if 'appointment_datetime' in attrs else self.instance.appointment_datetime
-            agent = agent or self.instance.agent
-            lead = lead or self.instance.lead
-        
-        # Appointment datetime validation
-        if status == 'appointment_scheduled':
-            if not appointment_datetime:
-                raise serializers.ValidationError({
-                    'appointment_datetime': 'Appointment datetime is required when status is "appointment_scheduled"'
-                })
-        elif appointment_datetime:
-            raise serializers.ValidationError({
-                'appointment_datetime': 'Appointment datetime should only be set when status is "appointment_scheduled"'
-            })
-        
-        # Agent workspace validation
-        if agent and lead:
-            # Check if agent belongs to a workspace that the lead could be associated with
-            # For now, we'll just validate that agent exists and is active
-            # TODO: Add proper workspace validation when lead-workspace relationship is clarified
-            pass
-        
+        """No cross-field validation needed now that status is removed."""
         return attrs
     
     @extend_schema_field(serializers.CharField)
@@ -76,16 +46,29 @@ class CallLogSerializer(serializers.ModelSerializer):
 class CallLogCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating call logs"""
     # Required linkage to currently running CallTask (not persisted)
-    calltask_id = serializers.UUIDField(write_only=True, required=True, help_text="ID of running CallTask (required, not persisted)")
+    call_task_id = serializers.UUIDField(write_only=True, required=True, help_text="ID of running CallTask (required, not persisted)")
+    # Duration will be computed from CallTask.created_at → now
+    duration = serializers.IntegerField(read_only=True)
+    # Target ref is copied from CallTask
+    target_ref = serializers.CharField(read_only=True)
     
     class Meta:
         model = CallLog
         fields = [
             'lead', 'agent', 'from_number', 'to_number', 'duration',
-            'disconnection_reason', 'direction', 'status', 'appointment_datetime',
+            'disconnection_reason', 'direction', 'appointment_datetime',
             # Non-persisted request field
-            'calltask_id'
+            'call_task_id',
+            # Denormalized from CallTask
+            'target_ref',
         ]
+        extra_kwargs = {
+            'lead': {'required': False, 'allow_null': True},
+            'agent': {'required': False},
+            'from_number': {'required': False},
+            'to_number': {'required': False},
+            'direction': {'required': False},
+        }
     
     def validate_duration(self, value):
         """Validate duration is not negative"""
@@ -94,27 +77,66 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         return value
     
     def validate(self, attrs):
-        """Cross-field validation for appointment logic"""
-        status = attrs.get('status')
-        appointment_datetime = attrs.get('appointment_datetime')
-        
-        # Appointment datetime validation
-        if status == 'appointment_scheduled':
-            if not appointment_datetime:
-                raise serializers.ValidationError({
-                    'appointment_datetime': 'Appointment datetime is required when status is "appointment_scheduled"'
-                })
-        elif appointment_datetime:
-            raise serializers.ValidationError({
-                'appointment_datetime': 'Appointment datetime should only be set when status is "appointment_scheduled"'
-            })
-        
+        """No cross-field validation needed for appointment datetime."""
         return attrs
 
     def create(self, validated_data):
-        # Remove non-persisted field before creating model instance
-        validated_data.pop('calltask_id', None)
-        return super().create(validated_data)
+        # Resolve CallTask and infer fields
+        calltask_uuid = validated_data.pop('call_task_id', None)
+        if not calltask_uuid:
+            raise serializers.ValidationError({'call_task_id': 'call_task_id is required'})
+        try:
+            call_task = CallTask.objects.select_related('agent__phone_number', 'lead').get(id=calltask_uuid)
+        except CallTask.DoesNotExist:
+            raise serializers.ValidationError({'call_task_id': 'CallTask not found'})
+
+        # Infer mandatory fields from CallTask
+        agent = call_task.agent
+        if not agent:
+            raise serializers.ValidationError({'agent': 'CallTask has no agent'})
+
+        # from_number must come from agent.phone_number.phonenumber
+        if not getattr(agent, 'phone_number', None) or not getattr(agent.phone_number, 'phonenumber', None):
+            raise serializers.ValidationError({'from_number': 'Agent has no phone number configured'})
+        from_number = agent.phone_number.phonenumber
+
+        # to_number comes from CallTask.phone
+        to_number = call_task.phone
+        if not to_number:
+            raise serializers.ValidationError({'to_number': 'CallTask has no destination phone'})
+
+        # direction defaults to outbound
+        direction = validated_data.get('direction') or 'outbound'
+
+        # Compute duration from CallTask.created_at to now
+        now_ts = timezone.now()
+        if not call_task.created_at:
+            raise serializers.ValidationError({'call_task_id': 'CallTask has no created_at timestamp'})
+        duration_seconds = int((now_ts - call_task.created_at).total_seconds())
+        if duration_seconds < 0:
+            duration_seconds = 0
+
+        # Optional fields and overrides (only allow explicit override for direction per spec)
+        disconnection_reason = validated_data.get('disconnection_reason')
+        appointment_dt = validated_data.get('appointment_datetime')
+
+        # Build instance data
+        instance_data = {
+            'call_task_id': call_task.id,
+            'target_ref': call_task.target_ref,
+            'agent': agent,
+            'lead': call_task.lead,  # may be None
+            'from_number': from_number,
+            'to_number': to_number,
+            'direction': direction,
+            'duration': duration_seconds,
+            'disconnection_reason': disconnection_reason,
+            'appointment_datetime': appointment_dt,
+        }
+
+        # Create CallLog directly using model manager to avoid required field enforcement on missing inputs
+        call_log = CallLog.objects.create(**instance_data)
+        return call_log
 
 
 class OutboundCallSerializer(serializers.Serializer):

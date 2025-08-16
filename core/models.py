@@ -72,12 +72,7 @@ CALL_DIRECTION_CHOICES = [
     ('outbound', 'Outbound'),
 ]
 
-CALL_STATUS_CHOICES = [
-    ('appointment_scheduled', 'Appointment Scheduled'),
-    ('not_reached', 'Not Reached'),
-    ('no_interest', 'No Interest'),
-    ('reached', 'Reached'),
-]
+
 
 AGENT_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -1139,13 +1134,18 @@ class Blacklist(models.Model):
 class CallLog(models.Model):
     """Call logs for tracking all calls"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs')
+    # Lead is optional to support calls without a stored lead
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs', null=True, blank=True)
     agent = models.ForeignKey(
         Agent, 
         on_delete=models.CASCADE, 
         related_name='mapping_agent_calllogs',
         help_text="Agent who made/received the call"
     )
+    # Persist the originating CallTask identifier without FK to allow dangling reference
+    call_task_id = models.UUIDField(default=uuid.uuid4, help_text="ID of originating CallTask (not a foreign key, may be dangling)")
+    # Persist canonical target reference from CallTask (e.g., 'lead:<uuid>')
+    target_ref = models.CharField(max_length=255, null=True, blank=True, help_text="Canonical call target reference from CallTask")
     timestamp = models.DateTimeField(auto_now_add=True)
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")
@@ -1162,13 +1162,7 @@ class CallLog(models.Model):
         choices=CALL_DIRECTION_CHOICES, 
         help_text="Call direction"
     )
-    status = models.CharField(
-        max_length=25,
-        choices=CALL_STATUS_CHOICES,
-        null=True,
-        blank=True,
-        help_text="Call outcome status"
-    )
+    # Removed redundant status; use disconnection_reason and appointment_datetime if applicable
     appointment_datetime = models.DateTimeField(
         null=True,
         blank=True,
