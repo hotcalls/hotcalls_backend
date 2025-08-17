@@ -1,48 +1,61 @@
+from __future__ import annotations
+
 import os
 import json
 import uuid
 import datetime
+import contextlib
+from typing import Optional, Dict, Any
+
 from dotenv import load_dotenv
 from livekit import api
 from livekit.protocol.sip import CreateSIPParticipantRequest
 
-# Load environment variables from .env file
-load_dotenv()
 
-# All wrapper functions removed - now only _make_call_async remains for pure call execution
+load_dotenv()
 
 
 async def _make_call_async(
     sip_trunk_id: str,
-    agent_config: dict,
-    lead_data: dict,
+    agent_config: Dict[str, Any],
+    lead_data: Dict[str, Any],
     from_number: str,
-):
+    *,
+    call_task_id: Optional[str] = None,
+    room_name: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Internal async function to make the actual LiveKit call
+    Place an outbound call via LiveKit and return identifiers.
+
+    Notes:
+    - Adds a stable callee_identity into job metadata for the agent to wait on
+    - Does not rely on experimental wait_until_answered flags
+    - Returns a deterministic dict. Never raises; errors are returned.
     """
     from core.utils.calltask_utils import preflight_check_agent_token_async
 
-    # Configure LiveKit API with environment variables
     livekit_api = api.LiveKitAPI(
         url=os.getenv("LIVEKIT_URL"),
         api_key=os.getenv("LIVEKIT_API_KEY"),
         api_secret=os.getenv("LIVEKIT_API_SECRET"),
     )
 
-    # Generate unique room name for this call
-    room_name = f"outbound-call-{uuid.uuid4().hex[:8]}"
+    room_name = room_name or f"outbound-call-{uuid.uuid4().hex[:8]}"
+    agent_name = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
+    # Backward-compatibility: expose agent_name in agent_config as alias
+    agent_config["agent_name"] = agent_name
 
-    # Backward-Kompatibilität: agent_name als Alias für name hinzufügen
-    agent_config["agent_name"] = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
+    callee_phone = (lead_data.get("phone") or "").strip()
+    callee_identity = f"phone_{callee_phone.replace('+', '')}"
 
-    # === AGENT JOB METADATA (EXAKT nach Agent Integration Guide) ===
+    # --- Job metadata sent to the agent process ---
     hotcalls_metadata = {
+        # Keep metadata compatible with the previous implementation
         "agent": "hotcalls_agent",
         "call_type": "outbound",
-        "to_number": lead_data.get("phone", ""),
+        "to_number": callee_phone,
         "from_number": from_number,
-        "call_task_id": lead_data.get("call_task_id", ""),
+        "call_task_id": call_task_id or lead_data.get("call_task_id", ""),
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "sip_provider": "jambonz",
         "agent_config": {
@@ -56,49 +69,26 @@ async def _make_call_async(
         },
         "lead_data": {
             "id": lead_data.get("id", ""),
-            "name": lead_data.get("name", ""),
-            "surname": lead_data.get("surname", ""),
-            "phone": lead_data.get("phone", ""),
+            "name": (lead_data.get("name", "") or "").replace('"', "").replace("'", ""),
+            "surname": (lead_data.get("surname", "") or "").replace('"', "").replace("'", ""),
+            "phone": callee_phone,
             "email": lead_data.get("email", ""),
         },
     }
 
-    # Sanitize lead names
-    if lead_data.get("name"):
-        hotcalls_metadata["lead_data"]["name"] = (
-            lead_data["name"].replace('"', "").replace("'", "")
-        )
-    if lead_data.get("surname"):
-        hotcalls_metadata["lead_data"]["surname"] = (
-            lead_data["surname"].replace('"', "").replace("'", "")
-        )
-
     try:
-        # Step 0: Check if the agent has a valid token BEFORE dispatching
-        agent_name = os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent")
-
-        # Use async preflight utility
+        # 0) Preflight agent token
         token_check = await preflight_check_agent_token_async(agent_name)
-
-        if not token_check["valid"]:
-            print(
-                f"❌ Agent {agent_name} has no valid token - ABORTING CALL to {lead_data['phone']}"
-            )
+        if not token_check.get("valid"):
             return {
                 "success": False,
-                "error": f"Agent {agent_name}: {token_check['reason']}",
-                "to_number": lead_data["phone"],
+                "error": f"Agent {agent_name}: {token_check.get('reason')}",
+                "to_number": callee_phone,
                 "agent_name": agent_name,
                 "abort_reason": "token_missing",
             }
 
-        print(
-            f"✅ Agent {agent_name} has valid token - proceeding with call to {lead_data['phone']}"
-        )
-
-        # Step 1: Dispatch the agent to the room first
-        print(f"Dispatching {agent_name} to room for call to {lead_data['phone']}...")
-
+        # 1) Dispatch agent to room with metadata
         try:
             dispatch = await livekit_api.agent_dispatch.create_dispatch(
                 api.CreateAgentDispatchRequest(
@@ -107,30 +97,29 @@ async def _make_call_async(
                     metadata=json.dumps(hotcalls_metadata, ensure_ascii=False),
                 )
             )
-            print(f"Agent dispatched: {dispatch.id}")
         except Exception as dispatch_error:
-            print(f"❌ Failed to dispatch agent: {dispatch_error}")
             return {
                 "success": False,
                 "error": f"Agent dispatch failed: {str(dispatch_error)}",
-                "to_number": lead_data["phone"],
+                "to_number": callee_phone,
                 "agent_name": agent_name,
                 "abort_reason": "dispatch_failed",
             }
 
-        # Generate participant identity and name
-        participant_identity = f"phone_{lead_data['phone'].replace('+', '')}"
-        participant_name = f"Outbound Call to {lead_data['phone']}"
+        # 2) Create SIP participant (no experimental args)
+        participant_identity = callee_identity
+        participant_name = f"Outbound Call to {callee_phone}"
 
-        # Use dynamic sip_trunk_id passed from Django
         request = CreateSIPParticipantRequest(
-            sip_trunk_id=sip_trunk_id,  # Now dynamic per agent
-            sip_call_to=lead_data["phone"],
+            sip_trunk_id=sip_trunk_id,
+            sip_call_to=callee_phone,
             room_name=room_name,
             participant_identity=participant_identity,
             participant_name=participant_name,
         )
 
+        # The client supports a timeout param when invoking the API call itself
+        # Match previous behavior: no explicit timeout argument passed here
         participant = await livekit_api.sip.create_sip_participant(request)
 
         return {
@@ -139,16 +128,22 @@ async def _make_call_async(
             "participant_id": participant.participant_id,
             "dispatch_id": dispatch.id,
             "sip_call_id": participant.sip_call_id,
-            "to_number": lead_data["phone"],
-            "agent_name": os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent"),
+            "to_number": callee_phone,
+            "agent_name": agent_name,
         }
 
     except Exception as e:
         return {
             "success": False,
             "error": str(e),
-            "to_number": lead_data["phone"],
-            "agent_name": os.getenv("LIVEKIT_AGENT_NAME", "hotcalls_agent"),
+            "to_number": callee_phone,
+            "agent_name": agent_name,
+            "abort_reason": "exception",
         }
     finally:
-        await livekit_api.aclose()
+        with contextlib.suppress(Exception):
+            await livekit_api.aclose()
+
+
+
+

@@ -153,7 +153,6 @@ def trigger_call(self, call_task_id):
     """
     # Function-level imports (avoid inner-block imports; still avoids module-level cycles)
     from core.models import CallTask, CallStatus
-    from core.utils.livekit_calls import _make_call_async
     from core.utils.calltask_utils import (
         handle_max_retries,
         handle_call_success,
@@ -289,13 +288,15 @@ def trigger_call(self, call_task_id):
                 f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}"
             )
 
-        # 🚀 Quota OK - Place the outbound call (synchronous wait inside worker)
+        # 🚀 Quota OK - Place the outbound call using the original util coroutine (baseline)
+        from core.telephony.services._dialer_async import _make_call_async
         call_result = asyncio.run(
             _make_call_async(
                 sip_trunk_id=sip_trunk_id,
                 agent_config=agent_config,
                 lead_data=lead_data,
                 from_number=from_number,
+                call_task_id=str(call_task.id),
             )
         )
 
