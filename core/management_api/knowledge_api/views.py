@@ -44,9 +44,10 @@ def _load_manifest(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
     path = _manifest_path(agent_id)
     if not storage.exists(path):
         return {"version": 1, "updated_at": now().isoformat(), "files": []}
-    with storage.open(path, "r") as fh:
+    with storage.open(path, "rb") as fh:
         try:
-            data = json.load(fh)
+            raw = fh.read()
+            data = json.loads(raw.decode("utf-8")) if isinstance(raw, (bytes, bytearray)) else json.loads(raw)
             # Gentle upgrade: ensure id and blob_name
             files = data.get("files", []) or []
             upgraded = False
@@ -72,9 +73,9 @@ def _load_manifest(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
 def _save_manifest(storage: AzureMediaStorage, agent_id: str, manifest: Dict[str, Any]) -> None:
     manifest["updated_at"] = now().isoformat()
     data = json.dumps(manifest, ensure_ascii=False)
-    # Write using bytes IO to satisfy storage backend
-    with storage.open(_manifest_path(agent_id), "w") as fh:
-        fh.write(data)
+    # Write using bytes IO to satisfy storage backend (Azure)
+    with storage.open(_manifest_path(agent_id), "wb") as fh:
+        fh.write(data.encode("utf-8"))
 
 
 def _get_agent_or_404(agent_id: str) -> Agent:
