@@ -3,6 +3,7 @@ import os
 import re
 import json
 from datetime import datetime, timezone
+import uuid
 from typing import Dict, Any, Tuple
 
 from django.http import Http404
@@ -45,7 +46,24 @@ def _load_manifest(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
         return {"version": 1, "updated_at": now().isoformat(), "files": []}
     with storage.open(path, "r") as fh:
         try:
-            return json.load(fh)
+            data = json.load(fh)
+            # Gentle upgrade: ensure id and blob_name
+            files = data.get("files", []) or []
+            upgraded = False
+            new_files = []
+            for f in files:
+                if "id" not in f:
+                    f["id"] = str(uuid.uuid4())
+                    upgraded = True
+                if "blob_name" not in f:
+                    # default to name as blob_name if missing
+                    f["blob_name"] = f.get("name")
+                    upgraded = True
+                new_files.append(f)
+            if upgraded:
+                data["files"] = new_files
+                _save_manifest(storage, agent_id, data)
+            return data
         except Exception:
             # fallback: empty manifest if corrupted
             return {"version": 1, "updated_at": now().isoformat(), "files": []}
@@ -135,8 +153,10 @@ class AgentKnowledgeDocumentsView(APIView):
 
         storage = AzureMediaStorage()
         docs_prefix = _docs_prefix(agent_id)
-        filename = self._sanitize_filename(getattr(file, "name", "document.pdf"))
-        path = f"{docs_prefix}/{filename}"
+        original_name = getattr(file, "name", "document.pdf")
+        filename = self._sanitize_filename(original_name)
+        blob_name = filename
+        path = f"{docs_prefix}/{blob_name}"
 
         if storage.exists(path):
             return Response({"detail": "File already exists."}, status=status.HTTP_409_CONFLICT)
@@ -163,7 +183,9 @@ class AgentKnowledgeDocumentsView(APIView):
         # Remove existing entry with same name if any
         manifest["files"] = [f for f in manifest.get("files", []) if f.get("name") != filename]
         manifest["files"].append({
-            "name": filename,
+            "id": str(uuid.uuid4()),
+            "name": original_name,
+            "blob_name": blob_name,
             "size": size,
             "updated_at": now().isoformat(),
         })
@@ -209,17 +231,24 @@ class AgentKnowledgeDocumentDetailView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        path = f"{_docs_prefix(agent_id)}/{filename}"
+        manifest = _load_manifest(storage, agent_id)
+        # Try exact filename match via blob_name first
+        entry = None
+        for f in manifest.get("files", []):
+            if f.get("blob_name") == filename or f.get("name") == filename:
+                entry = f
+                break
 
-        if not storage.exists(path):
+        if not entry:
             raise Http404("File not found")
 
-        storage.delete(path)
+        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or filename}"
+        if storage.exists(path):
+            storage.delete(path)
 
         # Update manifest
-        manifest = _load_manifest(storage, agent_id)
         manifest["version"] = int(manifest.get("version", 1)) + 1
-        manifest["files"] = [f for f in manifest.get("files", []) if f.get("name") != filename]
+        manifest["files"] = [f for f in manifest.get("files", []) if f.get("id") != entry.get("id") and f.get("name") != filename]
         _save_manifest(storage, agent_id, manifest)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -242,9 +271,16 @@ class AgentKnowledgeDocumentPresignView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        path = f"{_docs_prefix(agent_id)}/{filename}"
-        if not storage.exists(path):
+        manifest = _load_manifest(storage, agent_id)
+        # resolve by blob_name or name
+        blob_name = None
+        for f in manifest.get("files", []):
+            if f.get("blob_name") == filename or f.get("name") == filename:
+                blob_name = f.get("blob_name") or filename
+                break
+        if not blob_name:
             raise Http404("File not found")
+        path = f"{_docs_prefix(agent_id)}/{blob_name}"
 
         # AzureStorage from django-storages does not provide direct presign in all versions.
         # Strategy: Use url() to get an accessible URL if CDN/public, otherwise return 501.
@@ -282,5 +318,53 @@ class AgentKnowledgeRebuildView(APIView):
             "version": manifest["version"],
             "updated_at": manifest["updated_at"],
         })
+
+
+class AgentKnowledgeDocumentDetailByIdView(APIView):
+    permission_classes = [AgentKnowledgePermission]
+
+    def delete(self, request, agent_id, doc_id):
+        agent = _get_agent_or_404(agent_id)
+        self.check_object_permissions(request, agent)
+
+        storage = AzureMediaStorage()
+        manifest = _load_manifest(storage, agent_id)
+        entry = next((f for f in manifest.get("files", []) if str(f.get("id")) == str(doc_id)), None)
+        if not entry:
+            raise Http404("File not found")
+
+        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
+        if storage.exists(path):
+            storage.delete(path)
+
+        manifest["version"] = int(manifest.get("version", 1)) + 1
+        manifest["files"] = [f for f in manifest.get("files", []) if str(f.get("id")) != str(doc_id)]
+        _save_manifest(storage, agent_id, manifest)
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AgentKnowledgeDocumentPresignByIdView(APIView):
+    permission_classes = [AgentKnowledgePermission]
+
+    def post(self, request, agent_id, doc_id):
+        agent = _get_agent_or_404(agent_id)
+        self.check_object_permissions(request, agent)
+
+        storage = AzureMediaStorage()
+        manifest = _load_manifest(storage, agent_id)
+        entry = next((f for f in manifest.get("files", []) if str(f.get("id")) == str(doc_id)), None)
+        if not entry:
+            raise Http404("File not found")
+
+        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
+        if not storage.exists(path):
+            raise Http404("File not found")
+        try:
+            url = storage.url(path)
+        except Exception:
+            return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+        return Response({"url": url})
 
 

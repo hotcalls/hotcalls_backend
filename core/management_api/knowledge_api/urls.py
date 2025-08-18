@@ -14,11 +14,23 @@ urlpatterns = [
         views.AgentKnowledgeDocumentDetailView.as_view(),
         name='agent-knowledge-document-detail'
     ),
+    # Delete by document id (recommended)
+    path(
+        'agents/<uuid:agent_id>/documents/by-id/<uuid:doc_id>/',
+        views.AgentKnowledgeDocumentDetailByIdView.as_view(),
+        name='agent-knowledge-document-detail-by-id'
+    ),
     # Create a short-lived presigned URL for a specific PDF
     path(
         'agents/<uuid:agent_id>/documents/<str:filename>/presign/',
         views.AgentKnowledgeDocumentPresignView.as_view(),
         name='agent-knowledge-document-presign'
+    ),
+    # Presign by document id (recommended)
+    path(
+        'agents/<uuid:agent_id>/documents/by-id/<uuid:doc_id>/presign/',
+        views.AgentKnowledgeDocumentPresignByIdView.as_view(),
+        name='agent-knowledge-document-presign-by-id'
     ),
     # Optional explicit rebuild trigger to bump manifest version
     path(

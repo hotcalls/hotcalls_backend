@@ -10,6 +10,7 @@ class PresignRequestSerializer(serializers.Serializer):
 
 
 class DocumentInfoSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
     name = serializers.CharField()
     size = serializers.IntegerField()
     updated_at = serializers.DateTimeField()
