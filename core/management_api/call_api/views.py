@@ -314,6 +314,136 @@ class CallLogViewSet(viewsets.ModelViewSet):
             logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id}: {feedback_err}")
             # Call log creation succeeds regardless of feedback trigger errors
     
+    # ===============================
+    # New function-based endpoint
+    # ===============================
+
+@extend_schema(
+    summary="End of call (agent → server)",
+    description="Create a CallLog at end of call and trigger CallTask feedback. Accepts LiveKit token or staff.",
+    request=CallLogCreateSerializer,
+    responses={201: OpenApiResponse(response=CallLogSerializer, description="Created")},
+    tags=["Call Management"]
+)
+@api_view(['POST'])
+@permission_classes([CallLogPermission])
+def end_of_call(request):
+    """Accept end-of-call event, create CallLog, record usage, and trigger feedback.
+
+    Payload supports superset of fields but only relevant ones are used:
+    - call_task_id (required)
+    - disconnection_reason (required)
+    - direction (optional; defaults to outbound)
+    - appointment_datetime (optional)
+    Extra fields are ignored for forward-compatibility.
+    """
+    from decimal import Decimal
+    from core.quotas import enforce_and_record
+    from django.db import transaction, IntegrityError
+
+    # Whitelist known fields; ignore others (accept event_id for idempotency)
+    allowed_keys = {
+        'call_task_id',
+        'disconnection_reason',
+        'direction',
+        'appointment_datetime',
+        'event_id',
+    }
+    incoming = request.data.copy()
+    filtered = {k: incoming.get(k) for k in allowed_keys if k in incoming}
+
+    provided_calltask_id = filtered.get('call_task_id') or request.data.get('calltask_id')
+    event_id = filtered.get('event_id')
+
+    # Idempotency: if event_id provided and exists, return existing log
+    if event_id:
+        try:
+            existing = CallLog.objects.select_related('lead', 'agent').get(event_id=event_id)
+            # Ensure feedback loop if needed
+            try:
+                _maybe_trigger_feedback_if_needed(existing, provided_calltask_id)
+            except Exception as e:
+                logger.error(f"⚠️ Feedback re-enqueue check failed for existing log {existing.id}: {e}")
+            return Response(CallLogSerializer(existing).data, status=status.HTTP_200_OK)
+        except CallLog.DoesNotExist:
+            pass
+
+    # Require call_task_id and disconnection_reason for feedback
+    if not provided_calltask_id:
+        return Response({'call_task_id': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+    if not filtered.get('disconnection_reason'):
+        return Response({'disconnection_reason': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Default direction if omitted
+    if not filtered.get('direction'):
+        filtered['direction'] = 'outbound'
+
+    serializer = CallLogCreateSerializer(data=filtered, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        with transaction.atomic():
+            call_log = serializer.save()
+    except IntegrityError:
+        # Race: duplicate event_id creation
+        if event_id:
+            try:
+                existing = CallLog.objects.select_related('lead', 'agent').get(event_id=event_id)
+                try:
+                    _maybe_trigger_feedback_if_needed(existing, provided_calltask_id)
+                except Exception as e:
+                    logger.error(f"⚠️ Feedback re-enqueue check failed for existing log {existing.id}: {e}")
+                return Response(CallLogSerializer(existing).data, status=status.HTTP_200_OK)
+            except CallLog.DoesNotExist:
+                pass
+        raise
+
+    # Record usage minutes only on fresh create
+    try:
+        _record_usage_minutes(call_log)
+    except Exception as quota_err:
+        logger.error(f"⚠️ Failed to record call minutes for call log {call_log.id} (end_of_call): {quota_err}")
+
+    # Trigger feedback for fresh create
+    try:
+        from core.tasks import update_calltask_from_calllog
+        update_calltask_from_calllog.delay(str(call_log.id), str(provided_calltask_id))
+    except Exception as feedback_err:
+        logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id} (end_of_call): {feedback_err}")
+
+    return Response(CallLogSerializer(call_log).data, status=status.HTTP_201_CREATED)
+
+def _record_usage_minutes(call_log: CallLog):
+    from decimal import Decimal
+    from core.quotas import enforce_and_record
+    workspace = getattr(call_log.agent, 'workspace', None)
+    if not workspace:
+        return
+    duration_minutes = Decimal(call_log.duration) / Decimal('60')
+    enforce_and_record(
+        workspace=workspace,
+        route_name="internal:call_duration_used",
+        http_method="POST",
+        amount=duration_minutes
+    )
+
+def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: str | None):
+    if not provided_calltask_id:
+        return
+    try:
+        ct = CallTask.objects.get(id=provided_calltask_id)
+    except CallTask.DoesNotExist:
+        return
+    # Only re-enqueue if task is not terminal
+    try:
+        terminal = {getattr(CallStatus, 'COMPLETED', None), getattr(CallStatus, 'DELETED', None), getattr(CallStatus, 'CANCELLED', None)}
+        if ct.status not in {s for s in terminal if s}:
+            from core.tasks import update_calltask_from_calllog
+            update_calltask_from_calllog.delay(str(call_log.id), provided_calltask_id)
+    except Exception:
+        # Fallback: be conservative and do nothing
+        return
+
     @extend_schema(
         summary="📊 Get call analytics",
         description="""

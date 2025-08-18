@@ -17,8 +17,6 @@ Key improvements
 
 This file completely replaces your previous core/tasks.py.
 """
-
-import asyncio
 import logging
 import os
 import traceback
@@ -288,33 +286,37 @@ def trigger_call(self, call_task_id):
                 f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}"
             )
 
-        # 🚀 Quota OK - Place the outbound call using the original util coroutine (baseline)
-        from core.telephony.services._dialer_async import _make_call_async
-        call_result = asyncio.run(
-            _make_call_async(
-                sip_trunk_id=sip_trunk_id,
-                agent_config=agent_config,
-                lead_data=lead_data,
-                from_number=from_number,
-                call_task_id=str(call_task.id),
-            )
+        # 🚀 Quota OK - Place the outbound call via DialerService
+        from core.telephony.services.dialer_service import DialerService
+        dialer_service = DialerService(logger)
+        service_result = dialer_service.place_call_now(
+            call_task_id=str(call_task.id),
+            sip_trunk_id=sip_trunk_id,
+            agent_config=agent_config,
+            lead_data=lead_data,
+            from_number=from_number,
         )
 
-        # Post‑call status handling - Use unified utilities
-
-        with transaction.atomic():
-            call_task = CallTask.objects.select_for_update().get(id=call_task_id)
-
-            if call_result.get("success"):
-                # SUCCESS: advance to IN_PROGRESS now, then handle
-                call_task.status = CallStatus.IN_PROGRESS
-                call_task.save(update_fields=["status", "updated_at"])
-                return handle_call_success(call_task, call_result)
-            else:
-                # FAILURE: Use unified failure handler (no defaults!)
-                error = call_result.get("error", "Unknown error")
-                abort_reason = call_result.get("abort_reason")
-                return handle_call_failure(call_task, error, abort_reason)
+        # Shape a response for Celery task; statuses are handled inside the service
+        if service_result.success:
+            result_payload = {
+                "success": True,
+                "room_name": service_result.room_name,
+                "dispatch_id": service_result.dispatch_id,
+                "participant_id": service_result.participant_id,
+                "sip_call_id": service_result.sip_call_id,
+            }
+            with transaction.atomic():
+                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                return handle_call_success(call_task, result_payload)
+        else:
+            with transaction.atomic():
+                call_task = CallTask.objects.select_for_update().get(id=call_task_id)
+                return handle_call_failure(
+                    call_task,
+                    service_result.error,
+                    service_result.abort_reason or "failed",
+                )
 
     except Exception as err:
         logger.error(f"❌ trigger_call exception for {call_task_id}: {err}")

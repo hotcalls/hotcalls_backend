@@ -1146,6 +1146,14 @@ class CallLog(models.Model):
     call_task_id = models.UUIDField(default=uuid.uuid4, help_text="ID of originating CallTask (not a foreign key, may be dangling)")
     # Persist canonical target reference from CallTask (e.g., 'lead:<uuid>')
     target_ref = models.CharField(max_length=255, null=True, blank=True, help_text="Canonical call target reference from CallTask")
+    # Idempotency key for a single call attempt (unique per event)
+    event_id = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        help_text="Idempotency key for a single call attempt (one CallLog per event_id)"
+    )
     timestamp = models.DateTimeField(auto_now_add=True)
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
     to_number = models.CharField(max_length=20, help_text="Recipient's phone number")

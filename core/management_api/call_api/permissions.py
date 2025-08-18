@@ -18,7 +18,8 @@ class CallLogPermission(permissions.BasePermission):
         # Check for LiveKit secret header first
         if self._is_valid_livekit_request(request):
             # LiveKit can create call logs but not read/update/delete
-            if request.method == 'POST' and view.action == 'create':
+            action = getattr(view, 'action', None)
+            if request.method == 'POST' and (action in (None, 'create')):
                 return True
             return False
         
@@ -31,7 +32,8 @@ class CallLogPermission(permissions.BasePermission):
             return True
         
         # Special case: make_outbound_call action is allowed for all authenticated users
-        if view.action == 'make_outbound_call':
+        action = getattr(view, 'action', None)
+        if action == 'make_outbound_call':
             return True
         
         # Other write operations require staff privileges

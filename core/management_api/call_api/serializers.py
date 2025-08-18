@@ -45,6 +45,7 @@ class CallLogSerializer(serializers.ModelSerializer):
 
 class CallLogCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating call logs"""
+    event_id = serializers.UUIDField(required=False, allow_null=True, write_only=True, help_text="Idempotency key for a single call attempt")
     # Required linkage to currently running CallTask (not persisted)
     call_task_id = serializers.UUIDField(write_only=True, required=True, help_text="ID of running CallTask (required, not persisted)")
     # Duration will be computed from CallTask.created_at → now
@@ -61,6 +62,8 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             'call_task_id',
             # Denormalized from CallTask
             'target_ref',
+            # Idempotency
+            'event_id',
         ]
         extra_kwargs = {
             'lead': {'required': False, 'allow_null': True},
@@ -82,6 +85,7 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         # Resolve CallTask and infer fields
+        event_id = validated_data.pop('event_id', None)
         calltask_uuid = validated_data.pop('call_task_id', None)
         if not calltask_uuid:
             raise serializers.ValidationError({'call_task_id': 'call_task_id is required'})
@@ -135,7 +139,7 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         }
 
         # Create CallLog directly using model manager to avoid required field enforcement on missing inputs
-        call_log = CallLog.objects.create(**instance_data)
+        call_log = CallLog.objects.create(**instance_data, event_id=event_id)
         return call_log
 
 
