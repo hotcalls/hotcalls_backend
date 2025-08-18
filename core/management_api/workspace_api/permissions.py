@@ -58,8 +58,11 @@ class WorkspacePermission(permissions.BasePermission):
             # Superuser always allowed
             if request.user.is_superuser:
                 return True
-            # Workspace admin allowed
-            return bool(getattr(obj, 'admin_user_id', None) and obj.admin_user_id == request.user.id)
+            # Workspace admin allowed (use model helper for robustness)
+            try:
+                return bool(getattr(obj, 'is_admin', None) and obj.is_admin(request.user))
+            except Exception:
+                return bool(getattr(obj, 'admin_user_id', None) and obj.admin_user_id == request.user.id)
         
         return False
 

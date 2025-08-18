@@ -20,3 +20,4 @@ class AgentKnowledgePermission(permissions.BasePermission):
         return request.user in obj.workspace.users.all()
 
 
+
