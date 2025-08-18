@@ -311,6 +311,34 @@ class AgentKnowledgeDocumentsView(APIView):
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
+        # Auto-heal: prune manifest entries that no longer exist in storage
+        try:
+            original_files = list(manifest.get("files", []) or [])
+            healed_files = []
+            changed = False
+            for f in original_files:
+                blob = f.get("blob_name") or f.get("name")
+                if not blob:
+                    changed = True
+                    continue
+                path = f"{_docs_prefix(agent_id)}/{blob}"
+                try:
+                    if storage.exists(path):
+                        healed_files.append(f)
+                    else:
+                        changed = True
+                except Exception:
+                    # On storage error assume still exists to avoid false deletion
+                    healed_files.append(f)
+            if changed:
+                manifest["files"] = healed_files
+                try:
+                    _save_manifest(storage, agent_id, manifest)
+                except Exception:
+                    # Ignore heal write failure; proceed with in-memory view
+                    pass
+        except Exception:
+            pass
         # Ensure ids are deterministic and stable in responses (in case upgrade couldn't persist)
         files_public = []
         for f in manifest.get("files", []) or []:
