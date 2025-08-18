@@ -14,9 +14,14 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from django.core.cache import cache
 
 from core.models import Agent
-from hotcalls.storage_backends import AzureMediaStorage
+# Storage backend: prefer Azure in production, but gracefully fallback to local storage in tests/dev
+try:
+    from hotcalls.storage_backends import AzureMediaStorage  # type: ignore
+except Exception:  # pragma: no cover - fallback used in tests without Azure deps
+    from django.core.files.storage import FileSystemStorage as AzureMediaStorage  # type: ignore
 from .permissions import AgentKnowledgePermission
 from .serializers import (
     DocumentUploadSerializer,
@@ -50,22 +55,42 @@ def _load_manifest(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
         try:
             raw = fh.read()
             data = json.loads(raw.decode("utf-8")) if isinstance(raw, (bytes, bytearray)) else json.loads(raw)
-            # Gentle upgrade: ensure id and blob_name
+            # Gentle upgrade: ensure blob_name first, then deterministic id
             files = data.get("files", []) or []
             upgraded = False
             new_files = []
             for f in files:
-                if "id" not in f:
-                    f["id"] = str(uuid.uuid4())
-                    upgraded = True
+                # Ensure blob_name exists (older manifests may only have name)
                 if "blob_name" not in f:
-                    # default to name as blob_name if missing
                     f["blob_name"] = f.get("name")
                     upgraded = True
+
+                # Ensure id exists and is stable (deterministic from agent_id + blob_name)
+                if "id" not in f or not f.get("id"):
+                    try:
+                        basis = f.get("blob_name") or f.get("name") or ""
+                        deterministic = uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")
+                        f["id"] = str(deterministic)
+                    except Exception:
+                        f["id"] = str(uuid.uuid4())
+                    upgraded = True
+                else:
+                    # Normalize id to lowercase string for robust comparisons
+                    try:
+                        f_id = f.get("id")
+                        if f_id is not None:
+                            f["id"] = str(f_id).lower()
+                    except Exception:
+                        pass
+
                 new_files.append(f)
             if upgraded:
                 data["files"] = new_files
-                _save_manifest(storage, agent_id, data)
+                try:
+                    _save_manifest(storage, agent_id, data)
+                except Exception as exc:
+                    # Do not fail requests due to upgrade errors; log and continue
+                    logger.warning("KB manifest upgrade write failed for agent %s: %s", agent_id, exc)
             return data
         except Exception:
             # fallback: empty manifest if corrupted
@@ -76,8 +101,18 @@ def _save_manifest(storage: AzureMediaStorage, agent_id: str, manifest: Dict[str
     manifest["updated_at"] = now().isoformat()
     data = json.dumps(manifest, ensure_ascii=False)
     # Write using bytes IO to satisfy storage backend (Azure)
-    with storage.open(_manifest_path(agent_id), "wb") as fh:
-        fh.write(data.encode("utf-8"))
+    try:
+        # Ensure parent directory exists for local file-based storage backends
+        try:
+            local_path = storage.path(_manifest_path(agent_id))  # type: ignore[attr-defined]
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        except Exception:
+            pass
+        with storage.open(_manifest_path(agent_id), "wb") as fh:
+            fh.write(data.encode("utf-8"))
+    except Exception:
+        # Propagate so caller can handle and return clean JSON error
+        raise
 
 
 def _get_agent_or_404(agent_id: str) -> Agent:
@@ -138,76 +173,130 @@ class AgentKnowledgeDocumentsView(APIView):
         serializer.is_valid(raise_exception=True)
         file = serializer.validated_data["file"]
 
-        # Size limit
-        if getattr(file, "size", None) is not None and file.size > self._MAX_BYTES:
-            return Response({"detail": "File too large. Max 20 MB."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
-
-        # Content type / magic sniff: accept application/pdf or octet-stream with PDF header
-        content_type = getattr(file, "content_type", "") or ""
-        if content_type not in ("application/pdf", "application/octet-stream"):
-            return Response({"detail": "Only PDF files are allowed."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
-        # If octet-stream, try magic check
-        try:
-            file_obj = getattr(file, "file", None) or file
-            if content_type != "application/pdf" and not self._is_probable_pdf(file_obj):
-                return Response({"detail": "Invalid PDF content."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
-        except Exception:
-            return Response({"detail": "Unable to read uploaded file."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-
-        storage = AzureMediaStorage()
-        docs_prefix = _docs_prefix(agent_id)
-        original_name = getattr(file, "name", "document.pdf")
-        filename = self._sanitize_filename(original_name)
-        blob_name = filename
-        path = f"{docs_prefix}/{blob_name}"
-
-        if storage.exists(path):
-            return Response({"detail": "File already exists."}, status=status.HTTP_409_CONFLICT)
-
-        # Enforce single-document policy: only one document can be attached per agent
-        manifest_existing = _load_manifest(storage, agent_id)
-        existing_files = manifest_existing.get("files", [])
-        if isinstance(existing_files, list) and len(existing_files) >= 1:
+        # Concurrency lock per agent to avoid race conditions
+        lock_key = f"kb:lock:{agent_id}"
+        # Increase lock timeout to allow for slower storage writes
+        if not cache.add(lock_key, "1", timeout=120):
             return Response({
-                "detail": "Es ist nur ein Dokument erlaubt. Bitte löschen Sie das vorhandene Dokument, bevor Sie ein neues hochladen.",
-                "code": "kb_single_document_limit"
+                "detail": "Ein Upload läuft bereits. Bitte versuchen Sie es in wenigen Sekunden erneut.",
+                "code": "kb_upload_in_progress",
             }, status=status.HTTP_409_CONFLICT)
 
-        # Save the uploaded file
         try:
-            with storage.open(path, "wb") as dest:
-                for chunk in file.chunks():
-                    dest.write(chunk)
-        except Exception as exc:
-            logger.exception("KB upload: failed to write blob to storage for agent %s: %s", agent_id, exc)
-            return Response({"detail": "Storage write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Size limit pre-check (best-effort)
+            if getattr(file, "size", None) is not None and file.size > self._MAX_BYTES:
+                return Response({"detail": "File too large. Max 20 MB."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
 
-        # Prefer client-reported size to avoid backend size lookups that can fail on some storages
-        size = getattr(file, "size", None)
-        if size is None:
+            # Always verify PDF magic header
             try:
-                size = storage.size(path)
+                file_obj = getattr(file, "file", None) or file
+                if not self._is_probable_pdf(file_obj):
+                    return Response({"detail": "Invalid PDF content."}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
             except Exception:
-                size = 0
+                return Response({"detail": "Unable to read uploaded file."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-        # Update manifest
-        manifest = _load_manifest(storage, agent_id)
-        manifest["version"] = int(manifest.get("version", 1)) + 1
-        # Remove existing entry with same name if any
-        manifest["files"] = [f for f in manifest.get("files", []) if f.get("name") != filename]
-        manifest["files"].append({
-            "id": str(uuid.uuid4()),
-            "name": original_name,
-            "blob_name": blob_name,
-            "size": size,
-            "updated_at": now().isoformat(),
-        })
-        _save_manifest(storage, agent_id, manifest)
+            storage = AzureMediaStorage()
+            docs_prefix = _docs_prefix(agent_id)
+            original_name = getattr(file, "name", "document.pdf")
+            # Sanitize the display name to avoid hidden/unicode separators and unsafe chars
+            safe_display_name = self._sanitize_filename(original_name)
+            # Use UUID-based blob name to avoid collisions and expensive exists()
+            blob_name = f"{uuid.uuid4()}.pdf"
+            path = f"{docs_prefix}/{blob_name}"
 
-        return Response({
-            "version": manifest["version"],
-            "files": manifest["files"],
-        })
+            # Enforce single-document policy: only one document can be attached per agent
+            manifest_existing = _load_manifest(storage, agent_id)
+            existing_files = manifest_existing.get("files", [])
+            if isinstance(existing_files, list) and len(existing_files) >= 1:
+                return Response({
+                    "detail": "Es ist nur ein Dokument erlaubt. Bitte löschen Sie das vorhandene Dokument, bevor Sie ein neues hochladen.",
+                    "code": "kb_single_document_limit"
+                }, status=status.HTTP_409_CONFLICT)
+
+            # Save the uploaded file with streaming size enforcement
+            bytes_written = 0
+            try:
+                # Ensure parent directory exists for local file-based storage backends
+                try:
+                    local_path = storage.path(path)  # type: ignore[attr-defined]
+                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                except Exception:
+                    pass
+                with storage.open(path, "wb") as dest:
+                    for chunk in file.chunks():
+                        dest.write(chunk)
+                        try:
+                            bytes_written += len(chunk)
+                        except Exception:
+                            # Fallback if chunk has no __len__
+                            pass
+                        if getattr(file, "size", None) is None and bytes_written > self._MAX_BYTES:
+                            raise ValueError("file_too_large_stream")
+            except ValueError as ve:
+                if str(ve) == "file_too_large_stream":
+                    try:
+                        storage.delete(path)
+                    except Exception:
+                        pass
+                    return Response({"detail": "File too large. Max 20 MB."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
+                # Unexpected ValueError: treat as storage error
+                logger.exception("KB upload: unexpected value error for agent %s: %s", agent_id, ve)
+                return Response({"detail": "Storage write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception as exc:
+                logger.exception("KB upload: failed to write blob to storage for agent %s: %s", agent_id, exc)
+                return Response({"detail": "Storage write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Prefer client-reported size else use streaming count or backend size
+            size = getattr(file, "size", None)
+            if size is None:
+                size = bytes_written
+                if not size:
+                    try:
+                        size = storage.size(path)
+                    except Exception:
+                        size = 0
+
+            # Update manifest
+            manifest = _load_manifest(storage, agent_id)
+            manifest["version"] = int(manifest.get("version", 1)) + 1
+            # Single-document policy: keep only the new file
+            deterministic_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{blob_name}"))
+            manifest["files"] = [{
+                "id": deterministic_id,
+                "name": safe_display_name,
+                "blob_name": blob_name,
+                "size": size,
+                "updated_at": now().isoformat(),
+            }]
+            try:
+                _save_manifest(storage, agent_id, manifest)
+            except Exception as exc:
+                # Rollback uploaded blob to keep consistency
+                try:
+                    storage.delete(path)
+                except Exception:
+                    pass
+                logger.exception("KB upload: failed to write manifest for agent %s: %s", agent_id, exc)
+                return Response({"detail": "Manifest write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            files_public = []
+            for f in manifest.get("files", []) or []:
+                files_public.append({
+                    "id": f.get("id"),
+                    "name": f.get("name"),
+                    "size": f.get("size", 0),
+                    "updated_at": f.get("updated_at"),
+                })
+            return Response({
+                "version": manifest["version"],
+                "files": files_public,
+            })
+        finally:
+            # Release concurrency lock
+            try:
+                cache.delete(lock_key)
+            except Exception:
+                pass
 
     @extend_schema(
         responses={200: DocumentListResponseSerializer},
@@ -222,9 +311,24 @@ class AgentKnowledgeDocumentsView(APIView):
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
+        # Ensure ids are deterministic and stable in responses (in case upgrade couldn't persist)
+        files_public = []
+        for f in manifest.get("files", []) or []:
+            try:
+                basis = f.get("blob_name") or f.get("name") or ""
+                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}"))
+                file_id = (str(f.get("id")) if f.get("id") else deterministic).lower()
+            except Exception:
+                file_id = str(f.get("id") or uuid.uuid4()).lower()
+            files_public.append({
+                "id": file_id,
+                "name": f.get("name"),
+                "size": f.get("size", 0),
+                "updated_at": f.get("updated_at"),
+            })
         return Response({
             "version": manifest.get("version", 1),
-            "files": manifest.get("files", []),
+            "files": files_public,
         })
 
 
@@ -238,6 +342,7 @@ class AgentKnowledgeDocumentDetailView(APIView):
             OpenApiParameter(name="filename", location=OpenApiParameter.PATH, description="File name", required=True),
         ],
         tags=["Knowledge"],
+        exclude=True,
     )
     def delete(self, request, agent_id, filename):
         agent = _get_agent_or_404(agent_id)
@@ -261,7 +366,19 @@ class AgentKnowledgeDocumentDetailView(APIView):
 
         # Update manifest
         manifest["version"] = int(manifest.get("version", 1)) + 1
-        manifest["files"] = [f for f in manifest.get("files", []) if f.get("id") != entry.get("id") and f.get("name") != filename]
+        # Remove by multiple keys defensively
+        def _keep(f):
+            try:
+                if str(f.get("id")).lower() == str(entry.get("id")).lower():
+                    return False
+                if (f.get("name") or "") == filename:
+                    return False
+                if (f.get("blob_name") or "") == filename:
+                    return False
+                return True
+            except Exception:
+                return True
+        manifest["files"] = [f for f in manifest.get("files", []) if _keep(f)]
         _save_manifest(storage, agent_id, manifest)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -278,6 +395,7 @@ class AgentKnowledgeDocumentPresignView(APIView):
             OpenApiParameter(name="filename", location=OpenApiParameter.PATH, description="File name", required=True),
         ],
         tags=["Knowledge"],
+        exclude=True,
     )
     def post(self, request, agent_id, filename):
         agent = _get_agent_or_404(agent_id)
@@ -298,6 +416,8 @@ class AgentKnowledgeDocumentPresignView(APIView):
         # AzureStorage from django-storages does not provide direct presign in all versions.
         # Strategy: Use url() to get an accessible URL if CDN/public, otherwise return 501.
         try:
+            if not storage.exists(path):
+                raise Http404("File not found")
             url = storage.url(path)
         except Exception:
             return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
@@ -336,13 +456,31 @@ class AgentKnowledgeRebuildView(APIView):
 class AgentKnowledgeDocumentDetailByIdView(APIView):
     permission_classes = [AgentKnowledgePermission]
 
+    @extend_schema(
+        responses={204: None},
+        parameters=[
+            OpenApiParameter(name="agent_id", location=OpenApiParameter.PATH, description="Agent UUID", required=True),
+            OpenApiParameter(name="doc_id", location=OpenApiParameter.PATH, description="Document UUID", required=True),
+        ],
+        tags=["Knowledge"],
+    )
     def delete(self, request, agent_id, doc_id):
         agent = _get_agent_or_404(agent_id)
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
-        entry = next((f for f in manifest.get("files", []) if str(f.get("id")) == str(doc_id)), None)
+        target_id = str(doc_id).lower()
+        # Match by stored id or deterministic id in case manifest id wasn't persisted
+        def _matches(f):
+            try:
+                stored = str(f.get("id", "")).lower()
+                basis = f.get("blob_name") or f.get("name") or ""
+                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
+                return stored == target_id or deterministic == target_id
+            except Exception:
+                return stored == target_id
+        entry = next((f for f in manifest.get("files", []) if _matches(f)), None)
         if not entry:
             raise Http404("File not found")
 
@@ -360,13 +498,31 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
 class AgentKnowledgeDocumentPresignByIdView(APIView):
     permission_classes = [AgentKnowledgePermission]
 
+    @extend_schema(
+        request=PresignRequestSerializer,
+        responses={200: {"type": "object"}},
+        parameters=[
+            OpenApiParameter(name="agent_id", location=OpenApiParameter.PATH, description="Agent UUID", required=True),
+            OpenApiParameter(name="doc_id", location=OpenApiParameter.PATH, description="Document UUID", required=True),
+        ],
+        tags=["Knowledge"],
+    )
     def post(self, request, agent_id, doc_id):
         agent = _get_agent_or_404(agent_id)
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
-        entry = next((f for f in manifest.get("files", []) if str(f.get("id")) == str(doc_id)), None)
+        target_id = str(doc_id).lower()
+        def _matches(f):
+            try:
+                stored = str(f.get("id", "")).lower()
+                basis = f.get("blob_name") or f.get("name") or ""
+                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
+                return stored == target_id or deterministic == target_id
+            except Exception:
+                return stored == target_id
+        entry = next((f for f in manifest.get("files", []) if _matches(f)), None)
         if not entry:
             raise Http404("File not found")
 
