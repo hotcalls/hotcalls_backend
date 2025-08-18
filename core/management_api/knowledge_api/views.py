@@ -32,7 +32,6 @@ from .serializers import (
 )
 
 
-MANIFEST_NAME = "manifest.json"
 logger = logging.getLogger(__name__)
 
 
@@ -42,109 +41,58 @@ def _kb_prefix(agent_id: str) -> str:
 
 def _docs_prefix(agent_id: str) -> str:
     return f"{_kb_prefix(agent_id)}/docs"
-
-
-def _manifest_path(agent_id: str) -> str:
-    return f"{_kb_prefix(agent_id)}/{MANIFEST_NAME}"
-
-
-def _load_manifest(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
-    path = _manifest_path(agent_id)
-    if not storage.exists(path):
-        return {"version": 1, "updated_at": now().isoformat(), "files": []}
-    with storage.open(path, "rb") as fh:
-        try:
-            raw = fh.read()
-            data = json.loads(raw.decode("utf-8")) if isinstance(raw, (bytes, bytearray)) else json.loads(raw)
-            # Gentle upgrade: ensure blob_name first, then deterministic id
-            files = data.get("files", []) or []
-            upgraded = False
-            new_files = []
-            for f in files:
-                # Ensure blob_name exists (older manifests may only have name)
-                if "blob_name" not in f:
-                    f["blob_name"] = f.get("name")
-                    upgraded = True
-
-                # Ensure id exists and is stable (deterministic from agent_id + blob_name)
-                if "id" not in f or not f.get("id"):
-                    try:
-                        basis = f.get("blob_name") or f.get("name") or ""
-                        deterministic = uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")
-                        f["id"] = str(deterministic)
-                    except Exception:
-                        f["id"] = str(uuid.uuid4())
-                    upgraded = True
-                else:
-                    # Normalize id to lowercase string for robust comparisons
-                    try:
-                        f_id = f.get("id")
-                        if f_id is not None:
-                            f["id"] = str(f_id).lower()
-                    except Exception:
-                        pass
-
-                new_files.append(f)
-            if upgraded:
-                data["files"] = new_files
-                try:
-                    _save_manifest(storage, agent_id, data)
-                except Exception as exc:
-                    # Do not fail requests due to upgrade errors; log and continue
-                    logger.warning("KB manifest upgrade write failed for agent %s: %s", agent_id, exc)
-            return data
-        except Exception:
-            # fallback: empty manifest if corrupted
-            return {"version": 1, "updated_at": now().isoformat(), "files": []}
-
-
-def _save_manifest(storage: AzureMediaStorage, agent_id: str, manifest: Dict[str, Any]) -> None:
-    manifest["updated_at"] = now().isoformat()
-    data = json.dumps(manifest, ensure_ascii=False)
-    # Write using bytes IO to satisfy storage backend (Azure)
+def _list_docs(storage: AzureMediaStorage, agent_id: str) -> Tuple[list, str]:
+    """List current docs for an agent from storage only (no manifests). Returns (files, prefix)."""
+    prefix = _docs_prefix(agent_id)
+    dirs, files = ([], [])
     try:
-        # Ensure parent directory exists for local file-based storage backends
+        dirs, files = storage.listdir(prefix)
+    except Exception:
+        dirs, files = ([], [])
+    # Fallback for file-based storage where listdir may not be wired
+    if not files:
         try:
-            local_path = storage.path(_manifest_path(agent_id))  # type: ignore[attr-defined]
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            base_path = storage.path(prefix)  # type: ignore[attr-defined]
+            if os.path.isdir(base_path):
+                files = [f for f in os.listdir(base_path) if os.path.isfile(os.path.join(base_path, f))]
         except Exception:
             pass
-        with storage.open(_manifest_path(agent_id), "wb") as fh:
-            fh.write(data.encode("utf-8"))
-    except Exception:
-        # Propagate so caller can handle and return clean JSON error
-        raise
-
-
-def _prune_manifest_or_raise(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
-    """Strictly prune manifest entries whose blobs are missing and persist.
-
-    Returns the updated manifest. Raises on persistence failure.
-    """
-    manifest = _load_manifest(storage, agent_id)
-    files = list(manifest.get("files", []) or [])
-    if not files:
-        return manifest
-    healed_files = []
-    changed = False
-    for f in files:
-        blob = f.get("blob_name") or f.get("name")
-        if not blob:
-            changed = True
-            continue
-        path = f"{_docs_prefix(agent_id)}/{blob}"
+    items = []
+    for fname in files or []:
         try:
-            if storage.exists(path):
-                healed_files.append(f)
+            doc_id = None
+            name = fname
+            if "__" in fname:
+                part, rest = fname.split("__", 1)
+                try:
+                    uuid.UUID(part)
+                    doc_id = part
+                    name = rest
+                except Exception:
+                    # fallback to deterministic id
+                    doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{fname}"))
             else:
-                changed = True
+                doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{fname}"))
+            path = f"{prefix}/{fname}"
+            try:
+                size = storage.size(path)
+            except Exception:
+                size = 0
+            try:
+                mtime = storage.get_modified_time(path)
+                updated_at = mtime.isoformat()
+            except Exception:
+                updated_at = now().isoformat()
+            items.append({
+                "id": doc_id,
+                "name": name,
+                "blob_name": fname,
+                "size": size,
+                "updated_at": updated_at,
+            })
         except Exception:
-            # If exists() fails, do not delete preemptively; keep entry
-            healed_files.append(f)
-    if changed:
-        manifest["files"] = healed_files
-        _save_manifest(storage, agent_id, manifest)
-    return manifest
+            continue
+    return items, prefix
 
 
 def _retry_until(predicate_fn, attempts: int = 5, delay_seconds: float = 0.15) -> bool:
@@ -226,16 +174,7 @@ class AgentKnowledgeDocumentsView(APIView):
             }, status=status.HTTP_409_CONFLICT)
 
         try:
-            # Strictly heal manifest before single-doc policy check
             storage = AzureMediaStorage()
-            try:
-                _prune_manifest_or_raise(storage, agent_id)
-            except Exception as exc:
-                logger.exception("KB post: strict manifest heal failed for agent %s: %s", agent_id, exc)
-                return Response({
-                    "detail": "Manifest write failed.",
-                    "code": "kb_manifest_write_failed",
-                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             # Size limit pre-check (best-effort)
             if getattr(file, "size", None) is not None and file.size > self._MAX_BYTES:
@@ -253,14 +192,14 @@ class AgentKnowledgeDocumentsView(APIView):
             original_name = getattr(file, "name", "document.pdf")
             # Sanitize the display name to avoid hidden/unicode separators and unsafe chars
             safe_display_name = self._sanitize_filename(original_name)
-            # Use UUID-based blob name to avoid collisions and expensive exists()
-            blob_name = f"{uuid.uuid4()}.pdf"
+            # Use UUID-based blob name; include docId in filename for easy lookup
+            doc_id = str(uuid.uuid4())
+            blob_name = f"{doc_id}__{safe_display_name}"
             path = f"{docs_prefix}/{blob_name}"
 
-            # Enforce single-document policy: only one document can be attached per agent
-            manifest_existing = _load_manifest(storage, agent_id)
-            existing_files = manifest_existing.get("files", [])
-            if isinstance(existing_files, list) and len(existing_files) >= 1:
+            # Enforce single-document policy by listing storage
+            existing, _ = _list_docs(storage, agent_id)
+            if isinstance(existing, list) and len(existing) >= 1:
                 return Response({
                     "detail": "Es ist nur ein Dokument erlaubt. Bitte löschen Sie das vorhandene Dokument, bevor Sie ein neues hochladen.",
                     "code": "kb_single_document_limit"
@@ -309,35 +248,9 @@ class AgentKnowledgeDocumentsView(APIView):
                     except Exception:
                         size = 0
 
-            # Update manifest
-            manifest = _load_manifest(storage, agent_id)
-            manifest["version"] = int(manifest.get("version", 1)) + 1
-            # Single-document policy: keep only the new file
-            deterministic_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{blob_name}"))
-            manifest["files"] = [{
-                "id": deterministic_id,
-                "name": safe_display_name,
-                "blob_name": blob_name,
-                "size": size,
-                "updated_at": now().isoformat(),
-            }]
-            try:
-                _save_manifest(storage, agent_id, manifest)
-            except Exception as exc:
-                # Rollback uploaded blob to keep consistency
-                try:
-                    storage.delete(path)
-                except Exception:
-                    pass
-                logger.exception("KB upload: failed to write manifest for agent %s: %s", agent_id, exc)
-                return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-            # Strict consistency verification: blob must exist and manifest must contain this file
+            # Strict consistency verification: blob must exist
             # Retry-based verification to avoid eventual consistency issues
             ok = _retry_until(lambda: storage.exists(path))
-            ok = ok and _retry_until(
-                lambda: deterministic_id in {str(f.get("id")) for f in (_load_manifest(storage, agent_id).get("files", []) or [])}
-            )
             if not ok:
                 exc = RuntimeError("kb_consistency_violation_after_post")
                 logger.exception("KB upload: consistency verification failed for agent %s: %s", agent_id, exc)
@@ -351,16 +264,14 @@ class AgentKnowledgeDocumentsView(APIView):
                     "code": "kb_consistency_violation",
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-            files_public = []
-            for f in manifest.get("files", []) or []:
-                files_public.append({
-                    "id": f.get("id"),
-                    "name": f.get("name"),
-                    "size": f.get("size", 0),
-                    "updated_at": f.get("updated_at"),
-                })
+            files_public = [{
+                "id": doc_id,
+                "name": safe_display_name,
+                "size": size,
+                "updated_at": now().isoformat(),
+            }]
             return Response({
-                "version": manifest["version"],
+                "version": 1,
                 "files": files_public,
             })
         finally:
@@ -382,52 +293,15 @@ class AgentKnowledgeDocumentsView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        manifest = _load_manifest(storage, agent_id)
-        # Auto-heal: prune manifest entries that no longer exist in storage
-        try:
-            original_files = list(manifest.get("files", []) or [])
-            healed_files = []
-            changed = False
-            for f in original_files:
-                blob = f.get("blob_name") or f.get("name")
-                if not blob:
-                    changed = True
-                    continue
-                path = f"{_docs_prefix(agent_id)}/{blob}"
-                try:
-                    if storage.exists(path):
-                        healed_files.append(f)
-                    else:
-                        changed = True
-                except Exception:
-                    # On storage error assume still exists to avoid false deletion
-                    healed_files.append(f)
-            if changed:
-                manifest["files"] = healed_files
-                try:
-                    _save_manifest(storage, agent_id, manifest)
-                except Exception:
-                    # Ignore heal write failure; proceed with in-memory view
-                    pass
-        except Exception:
-            pass
-        # Ensure ids are deterministic and stable in responses (in case upgrade couldn't persist)
-        files_public = []
-        for f in manifest.get("files", []) or []:
-            try:
-                basis = f.get("blob_name") or f.get("name") or ""
-                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}"))
-                file_id = (str(f.get("id")) if f.get("id") else deterministic).lower()
-            except Exception:
-                file_id = str(f.get("id") or uuid.uuid4()).lower()
-            files_public.append({
-                "id": file_id,
-                "name": f.get("name"),
-                "size": f.get("size", 0),
-                "updated_at": f.get("updated_at"),
-            })
+        files, _ = _list_docs(storage, agent_id)
+        files_public = [{
+            "id": f["id"],
+            "name": f["name"],
+            "size": f.get("size", 0),
+            "updated_at": f.get("updated_at"),
+        } for f in files]
         return Response({
-            "version": manifest.get("version", 1),
+            "version": 1,
             "files": files_public,
         })
 
@@ -569,27 +443,12 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        # Heal manifest strictly first
-        try:
-            manifest = _prune_manifest_or_raise(storage, agent_id)
-        except Exception as exc:
-            logger.exception("KB delete: strict manifest heal failed for agent %s: %s", agent_id, exc)
-            return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         target_id = str(doc_id).lower()
-        # Match by stored id or deterministic id in case manifest id wasn't persisted
-        def _matches(f):
-            try:
-                stored = str(f.get("id", "")).lower()
-                basis = f.get("blob_name") or f.get("name") or ""
-                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
-                return stored == target_id or deterministic == target_id
-            except Exception:
-                return stored == target_id
-        entry = next((f for f in manifest.get("files", []) if _matches(f)), None)
+        files, prefix = _list_docs(storage, agent_id)
+        entry = next((f for f in files if str(f.get("id")).lower() == target_id), None)
         if not entry:
             raise Http404("File not found")
-
-        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
+        path = f"{prefix}/{entry.get('blob_name')}"
         # Delete blob strictly
         try:
             if storage.exists(path):
@@ -602,39 +461,7 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
             logger.exception("KB delete: storage error for %s agent %s: %s", path, agent_id, exc)
             return Response({"detail": "Storage delete failed.", "code": "kb_storage_delete_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        manifest["version"] = int(manifest.get("version", 1)) + 1
-        # Remove by robust matching (id or deterministic id)
-        def _keep(f):
-            try:
-                stored = str(f.get("id", "")).lower()
-                basis = f.get("blob_name") or f.get("name") or ""
-                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
-                return not (stored == target_id or deterministic == target_id)
-            except Exception:
-                return str(f.get("id")) != str(doc_id)
-        manifest["files"] = [f for f in manifest.get("files", []) if _keep(f)]
-        try:
-            _save_manifest(storage, agent_id, manifest)
-        except Exception as exc:
-            logger.exception("KB delete: manifest save failed for agent %s: %s", agent_id, exc)
-            return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Verify manifest does not include target entry anymore
-        # Verify manifest no longer contains target id (with retries)
-        def _manifest_ok():
-            vm = _load_manifest(storage, agent_id)
-            for f in vm.get("files", []) or []:
-                try:
-                    stored = str(f.get("id", "")).lower()
-                    basis = f.get("blob_name") or f.get("name") or ""
-                    deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
-                    if stored == target_id or deterministic == target_id:
-                        return False
-                except Exception:
-                    continue
-            return True
-        if not _retry_until(_manifest_ok):
-            return Response({"detail": "Manifest still contains entry.", "code": "kb_consistency_violation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Nothing else to update; list-only implementation
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -656,21 +483,12 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        manifest = _load_manifest(storage, agent_id)
         target_id = str(doc_id).lower()
-        def _matches(f):
-            try:
-                stored = str(f.get("id", "")).lower()
-                basis = f.get("blob_name") or f.get("name") or ""
-                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
-                return stored == target_id or deterministic == target_id
-            except Exception:
-                return stored == target_id
-        entry = next((f for f in manifest.get("files", []) if _matches(f)), None)
+        files, prefix = _list_docs(storage, agent_id)
+        entry = next((f for f in files if str(f.get("id")).lower() == target_id), None)
         if not entry:
             raise Http404("File not found")
-
-        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
+        path = f"{prefix}/{entry.get('blob_name')}"
         if not storage.exists(path):
             raise Http404("File not found")
         try:
