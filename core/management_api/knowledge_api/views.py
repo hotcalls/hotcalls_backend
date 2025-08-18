@@ -485,12 +485,34 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
             raise Http404("File not found")
 
         path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
-        if storage.exists(path):
-            storage.delete(path)
+        # Best-effort delete; do not fail the request on backend storage errors
+        try:
+            if storage.exists(path):
+                try:
+                    storage.delete(path)
+                except Exception:
+                    # ignore deletion errors to avoid 500s; manifest will still be updated
+                    logger.warning("KB delete: failed to delete blob %s for agent %s", path, agent_id)
+        except Exception:
+            # exists() failed; continue to update manifest anyway
+            logger.warning("KB delete: exists() errored for %s agent %s; proceeding", path, agent_id)
 
         manifest["version"] = int(manifest.get("version", 1)) + 1
-        manifest["files"] = [f for f in manifest.get("files", []) if str(f.get("id")) != str(doc_id)]
-        _save_manifest(storage, agent_id, manifest)
+        # Remove by robust matching (id or deterministic id)
+        def _keep(f):
+            try:
+                stored = str(f.get("id", "")).lower()
+                basis = f.get("blob_name") or f.get("name") or ""
+                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
+                return not (stored == target_id or deterministic == target_id)
+            except Exception:
+                return str(f.get("id")) != str(doc_id)
+        manifest["files"] = [f for f in manifest.get("files", []) if _keep(f)]
+        try:
+            _save_manifest(storage, agent_id, manifest)
+        except Exception as exc:
+            # Avoid 500: deletion already best-effort; log error but return 204
+            logger.exception("KB delete: manifest save failed for agent %s: %s", agent_id, exc)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
