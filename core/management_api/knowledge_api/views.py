@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any, Tuple
 import logging
+import time
 
 from django.http import Http404
 from django.utils.timezone import now
@@ -144,6 +145,18 @@ def _prune_manifest_or_raise(storage: AzureMediaStorage, agent_id: str) -> Dict[
         manifest["files"] = healed_files
         _save_manifest(storage, agent_id, manifest)
     return manifest
+
+
+def _retry_until(predicate_fn, attempts: int = 5, delay_seconds: float = 0.15) -> bool:
+    """Retry a predicate function a few times with small delay; returns True on success."""
+    for _ in range(max(1, attempts)):
+        try:
+            if predicate_fn():
+                return True
+        except Exception:
+            pass
+        time.sleep(max(0.0, delay_seconds))
+    return False
 
 def _get_agent_or_404(agent_id: str) -> Agent:
     try:
@@ -320,14 +333,13 @@ class AgentKnowledgeDocumentsView(APIView):
                 return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             # Strict consistency verification: blob must exist and manifest must contain this file
-            try:
-                if not storage.exists(path):
-                    raise RuntimeError("blob_missing_after_write")
-                verify_manifest = _load_manifest(storage, agent_id)
-                ids = {str(f.get("id")) for f in (verify_manifest.get("files", []) or [])}
-                if deterministic_id not in ids:
-                    raise RuntimeError("manifest_missing_new_entry")
-            except Exception as exc:
+            # Retry-based verification to avoid eventual consistency issues
+            ok = _retry_until(lambda: storage.exists(path))
+            ok = ok and _retry_until(
+                lambda: deterministic_id in {str(f.get("id")) for f in (_load_manifest(storage, agent_id).get("files", []) or [])}
+            )
+            if not ok:
+                exc = RuntimeError("kb_consistency_violation_after_post")
                 logger.exception("KB upload: consistency verification failed for agent %s: %s", agent_id, exc)
                 # Attempt to cleanup the blob to avoid orphan
                 try:
@@ -582,8 +594,9 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
         try:
             if storage.exists(path):
                 storage.delete(path)
-            # Verify deletion
-            if storage.exists(path):
+            # Verify deletion with small retries
+            ok = _retry_until(lambda: (not storage.exists(path)))
+            if not ok:
                 return Response({"detail": "Storage delete failed.", "code": "kb_storage_delete_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as exc:
             logger.exception("KB delete: storage error for %s agent %s: %s", path, agent_id, exc)
@@ -607,16 +620,21 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
             return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Verify manifest does not include target entry anymore
-        verify_manifest = _load_manifest(storage, agent_id)
-        for f in verify_manifest.get("files", []) or []:
-            try:
-                stored = str(f.get("id", "")).lower()
-                basis = f.get("blob_name") or f.get("name") or ""
-                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
-                if stored == target_id or deterministic == target_id:
-                    return Response({"detail": "Manifest still contains entry.", "code": "kb_consistency_violation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            except Exception:
-                continue
+        # Verify manifest no longer contains target id (with retries)
+        def _manifest_ok():
+            vm = _load_manifest(storage, agent_id)
+            for f in vm.get("files", []) or []:
+                try:
+                    stored = str(f.get("id", "")).lower()
+                    basis = f.get("blob_name") or f.get("name") or ""
+                    deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
+                    if stored == target_id or deterministic == target_id:
+                        return False
+                except Exception:
+                    continue
+            return True
+        if not _retry_until(_manifest_ok):
+            return Response({"detail": "Manifest still contains entry.", "code": "kb_consistency_violation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
