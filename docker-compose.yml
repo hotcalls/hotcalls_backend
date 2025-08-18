@@ -100,9 +100,10 @@ services:
       - AGENT_DB_HOST=db  # Docker network override
       - AGENT_DB_PORT=${DB_PORT}
       - AGENT_DB_NAME=${DB_NAME}
-      - DB_USER=${AGENT_DB_USER}  # Read-only user from .env
-      - DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
+      - AGENT_DB_USER=${AGENT_DB_USER}  # Read-only user from .env
+      - AGENT_DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
       - MCP_SERVER_URL=http://mcp:8000
+      - CALL_EVENT_ENDPOINT_URL=http://backend:8000/api/calls/end-of-call/
     depends_on:
       db:
         condition: service_healthy
