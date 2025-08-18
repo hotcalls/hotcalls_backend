@@ -143,6 +143,34 @@ class KnowledgeApiTests(BaseAPITestCase):
         self.assertTrue(isinstance(resp.data['url'], str))
 
     @patch('core.management_api.knowledge_api.views.AzureMediaStorage', new=LocalMediaStorage)
+    def test_phantom_manifest_healed_on_post(self):
+        # Create a phantom entry: manifest contains one file, but blob missing
+        storage = LocalMediaStorage()
+        agent_id = str(self.agent.agent_id)
+        manifest_path = f"kb/agents/{agent_id}/manifest.json"
+        import os
+        os.makedirs(os.path.dirname(storage.path(manifest_path)), exist_ok=True)
+        # Write manifest manually
+        import json, uuid as _uuid
+        phantom = {
+            'version': 2,
+            'files': [{
+                'id': str(_uuid.uuid4()),
+                'name': 'ghost.pdf',
+                'blob_name': 'ghost.pdf',
+                'size': 1234,
+                'updated_at': '2025-01-01T00:00:00Z'
+            }]
+        }
+        from core.management_api.knowledge_api.views import _save_manifest
+        # Use helper to ensure correct write path
+        _save_manifest(storage, agent_id, phantom)
+        # Now upload a real file -> should succeed (heal occurs before limit check)
+        resp = self.user_client.post(self._url(), data={'file': self._pdf('real.pdf', 2048)}, format='multipart')
+        self.assert_response_success(resp)
+        self.assertEqual(len(resp.data['files']), 1)
+
+    @patch('core.management_api.knowledge_api.views.AzureMediaStorage', new=LocalMediaStorage)
     def test_permissions_denied_for_non_member(self):
         # Remove user from workspace members
         self.agent.workspace.users.remove(self.regular_user)

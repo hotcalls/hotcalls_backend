@@ -115,6 +115,36 @@ def _save_manifest(storage: AzureMediaStorage, agent_id: str, manifest: Dict[str
         raise
 
 
+def _prune_manifest_or_raise(storage: AzureMediaStorage, agent_id: str) -> Dict[str, Any]:
+    """Strictly prune manifest entries whose blobs are missing and persist.
+
+    Returns the updated manifest. Raises on persistence failure.
+    """
+    manifest = _load_manifest(storage, agent_id)
+    files = list(manifest.get("files", []) or [])
+    if not files:
+        return manifest
+    healed_files = []
+    changed = False
+    for f in files:
+        blob = f.get("blob_name") or f.get("name")
+        if not blob:
+            changed = True
+            continue
+        path = f"{_docs_prefix(agent_id)}/{blob}"
+        try:
+            if storage.exists(path):
+                healed_files.append(f)
+            else:
+                changed = True
+        except Exception:
+            # If exists() fails, do not delete preemptively; keep entry
+            healed_files.append(f)
+    if changed:
+        manifest["files"] = healed_files
+        _save_manifest(storage, agent_id, manifest)
+    return manifest
+
 def _get_agent_or_404(agent_id: str) -> Agent:
     try:
         return Agent.objects.get(agent_id=agent_id)
@@ -183,6 +213,17 @@ class AgentKnowledgeDocumentsView(APIView):
             }, status=status.HTTP_409_CONFLICT)
 
         try:
+            # Strictly heal manifest before single-doc policy check
+            storage = AzureMediaStorage()
+            try:
+                _prune_manifest_or_raise(storage, agent_id)
+            except Exception as exc:
+                logger.exception("KB post: strict manifest heal failed for agent %s: %s", agent_id, exc)
+                return Response({
+                    "detail": "Manifest write failed.",
+                    "code": "kb_manifest_write_failed",
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
             # Size limit pre-check (best-effort)
             if getattr(file, "size", None) is not None and file.size > self._MAX_BYTES:
                 return Response({"detail": "File too large. Max 20 MB."}, status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE)
@@ -195,7 +236,6 @@ class AgentKnowledgeDocumentsView(APIView):
             except Exception:
                 return Response({"detail": "Unable to read uploaded file."}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
-            storage = AzureMediaStorage()
             docs_prefix = _docs_prefix(agent_id)
             original_name = getattr(file, "name", "document.pdf")
             # Sanitize the display name to avoid hidden/unicode separators and unsafe chars
@@ -277,7 +317,27 @@ class AgentKnowledgeDocumentsView(APIView):
                 except Exception:
                     pass
                 logger.exception("KB upload: failed to write manifest for agent %s: %s", agent_id, exc)
-                return Response({"detail": "Manifest write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+            # Strict consistency verification: blob must exist and manifest must contain this file
+            try:
+                if not storage.exists(path):
+                    raise RuntimeError("blob_missing_after_write")
+                verify_manifest = _load_manifest(storage, agent_id)
+                ids = {str(f.get("id")) for f in (verify_manifest.get("files", []) or [])}
+                if deterministic_id not in ids:
+                    raise RuntimeError("manifest_missing_new_entry")
+            except Exception as exc:
+                logger.exception("KB upload: consistency verification failed for agent %s: %s", agent_id, exc)
+                # Attempt to cleanup the blob to avoid orphan
+                try:
+                    storage.delete(path)
+                except Exception:
+                    pass
+                return Response({
+                    "detail": "Knowledge Base konnte nicht konsistent gespeichert werden.",
+                    "code": "kb_consistency_violation",
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
             files_public = []
             for f in manifest.get("files", []) or []:
@@ -497,7 +557,12 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
         self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
-        manifest = _load_manifest(storage, agent_id)
+        # Heal manifest strictly first
+        try:
+            manifest = _prune_manifest_or_raise(storage, agent_id)
+        except Exception as exc:
+            logger.exception("KB delete: strict manifest heal failed for agent %s: %s", agent_id, exc)
+            return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         target_id = str(doc_id).lower()
         # Match by stored id or deterministic id in case manifest id wasn't persisted
         def _matches(f):
@@ -513,17 +578,16 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
             raise Http404("File not found")
 
         path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
-        # Best-effort delete; do not fail the request on backend storage errors
+        # Delete blob strictly
         try:
             if storage.exists(path):
-                try:
-                    storage.delete(path)
-                except Exception:
-                    # ignore deletion errors to avoid 500s; manifest will still be updated
-                    logger.warning("KB delete: failed to delete blob %s for agent %s", path, agent_id)
-        except Exception:
-            # exists() failed; continue to update manifest anyway
-            logger.warning("KB delete: exists() errored for %s agent %s; proceeding", path, agent_id)
+                storage.delete(path)
+            # Verify deletion
+            if storage.exists(path):
+                return Response({"detail": "Storage delete failed.", "code": "kb_storage_delete_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as exc:
+            logger.exception("KB delete: storage error for %s agent %s: %s", path, agent_id, exc)
+            return Response({"detail": "Storage delete failed.", "code": "kb_storage_delete_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         manifest["version"] = int(manifest.get("version", 1)) + 1
         # Remove by robust matching (id or deterministic id)
@@ -539,8 +603,20 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
         try:
             _save_manifest(storage, agent_id, manifest)
         except Exception as exc:
-            # Avoid 500: deletion already best-effort; log error but return 204
             logger.exception("KB delete: manifest save failed for agent %s: %s", agent_id, exc)
+            return Response({"detail": "Manifest write failed.", "code": "kb_manifest_write_failed"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Verify manifest does not include target entry anymore
+        verify_manifest = _load_manifest(storage, agent_id)
+        for f in verify_manifest.get("files", []) or []:
+            try:
+                stored = str(f.get("id", "")).lower()
+                basis = f.get("blob_name") or f.get("name") or ""
+                deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
+                if stored == target_id or deterministic == target_id:
+                    return Response({"detail": "Manifest still contains entry.", "code": "kb_consistency_violation"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            except Exception:
+                continue
 
         return Response(status=status.HTTP_204_NO_CONTENT)
 
