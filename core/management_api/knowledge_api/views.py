@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 import uuid
 from typing import Dict, Any, Tuple
+import logging
 
 from django.http import Http404
 from django.utils.timezone import now
@@ -26,6 +27,7 @@ from .serializers import (
 
 
 MANIFEST_NAME = "manifest.json"
+logger = logging.getLogger(__name__)
 
 
 def _kb_prefix(agent_id: str) -> str:
@@ -172,11 +174,21 @@ class AgentKnowledgeDocumentsView(APIView):
             }, status=status.HTTP_409_CONFLICT)
 
         # Save the uploaded file
-        with storage.open(path, "wb") as dest:
-            for chunk in file.chunks():
-                dest.write(chunk)
+        try:
+            with storage.open(path, "wb") as dest:
+                for chunk in file.chunks():
+                    dest.write(chunk)
+        except Exception as exc:
+            logger.exception("KB upload: failed to write blob to storage for agent %s: %s", agent_id, exc)
+            return Response({"detail": "Storage write failed."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        size = storage.size(path)
+        # Prefer client-reported size to avoid backend size lookups that can fail on some storages
+        size = getattr(file, "size", None)
+        if size is None:
+            try:
+                size = storage.size(path)
+            except Exception:
+                size = 0
 
         # Update manifest
         manifest = _load_manifest(storage, agent_id)
