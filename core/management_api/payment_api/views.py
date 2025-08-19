@@ -1102,12 +1102,14 @@ def stripe_webhook(request):
         # Minute pack one-time payment via our custom Checkout: credit minutes
         if reason == 'minute_pack' and workspace_id:
             try:
-                from core.models import WorkspaceUsage
+                from core.quotas import get_usage_container
                 workspace = Workspace.objects.get(id=workspace_id)
-                usage = WorkspaceUsage.get_or_create_current_usage(workspace)
-                # Idempotency per session/payment intent handled by global event id cache above
-                usage.extra_call_minutes = (usage.extra_call_minutes or 0) + 100
-                usage.save()
+                # Ensure select_for_update is used inside a transaction
+                with transaction.atomic():
+                    usage = get_usage_container(workspace)
+                    # Idempotency per session/payment intent handled by global event id cache above
+                    usage.extra_call_minutes = (usage.extra_call_minutes or 0) + 100
+                    usage.save()
                 logger.info("Credited 100 minutes to workspace %s via minute pack", workspace_id)
             except Exception as e:
                 logger.exception("Failed to credit minute pack for workspace %s: %s", workspace_id, e)
@@ -1156,7 +1158,7 @@ def stripe_webhook(request):
 
             if total_packs > 0:
                 try:
-                    from core.models import WorkspaceUsage
+                    from core.quotas import get_usage_container
                     # Determine workspace by metadata or by Stripe customer mapping
                     workspace = None
                     if workspace_id:
@@ -1166,10 +1168,12 @@ def stripe_webhook(request):
                         workspace_id = str(workspace.id)
 
                     if workspace is not None:
-                        usage = WorkspaceUsage.get_or_create_current_usage(workspace)
-                        credited_minutes = 100 * total_packs
-                        usage.extra_call_minutes = (usage.extra_call_minutes or 0) + credited_minutes
-                        usage.save()
+                        # Ensure select_for_update is used inside a transaction
+                        with transaction.atomic():
+                            usage = get_usage_container(workspace)
+                            credited_minutes = 100 * total_packs
+                            usage.extra_call_minutes = (usage.extra_call_minutes or 0) + credited_minutes
+                            usage.save()
                         logger.info(
                             "Credited %s minutes to workspace %s via portal minute pack (packs=%s)",
                             credited_minutes, workspace_id, total_packs
