@@ -2,7 +2,7 @@ import stripe
 import logging
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
-from rest_framework.authentication import TokenAuthentication, BasicAuthentication, SessionAuthentication
+from rest_framework.authentication import TokenAuthentication, SessionAuthentication
 from rest_framework.response import Response
 from django.conf import settings
 from django.views.decorators.csrf import csrf_exempt
@@ -1099,7 +1099,7 @@ def stripe_webhook(request):
         logger.info("checkout.session.completed customer=%s subscription=%s workspace=%s meta=%s client_ref=%s",
                     customer_id, subscription_id, workspace_id, metadata, session.get('client_reference_id'))
         
-        # Minute pack one-time payment: credit minutes
+        # Minute pack one-time payment via our custom Checkout: credit minutes
         if reason == 'minute_pack' and workspace_id:
             try:
                 from core.models import WorkspaceUsage
@@ -1112,6 +1112,78 @@ def stripe_webhook(request):
             except Exception as e:
                 logger.exception("Failed to credit minute pack for workspace %s: %s", workspace_id, e)
             return Response({"received": True})
+
+        # Minute pack purchased via Stripe Customer Portal (no metadata):
+        # Detect by matching price_id or product_id from line items
+        try:
+            minute_pack_price_id = getattr(settings, 'STRIPE_MINUTE_PACK_PRICE_ID', '')
+            minute_pack_product_id = getattr(settings, 'STRIPE_MINUTE_PACK_PRODUCT_ID', '')
+        except Exception:
+            minute_pack_price_id = ''
+            minute_pack_product_id = ''
+
+        if minute_pack_price_id or minute_pack_product_id:
+            try:
+                # Retrieve full session with line items expanded
+                full_session = stripe.checkout.Session.retrieve(
+                    session.get('id'),
+                    expand=['line_items.data.price.product']
+                )
+                line_items = (full_session.get('line_items') or {}).get('data', [])
+            except Exception as e:
+                logger.warning("Failed to retrieve/expand checkout.session %s: %s", session.get('id'), e)
+                line_items = []
+
+            total_packs = 0
+            for item in line_items:
+                price = item.get('price') or {}
+                price_id = price.get('id')
+                product = price.get('product')
+                # product can be an ID string or expanded dict
+                product_id = None
+                if isinstance(product, str):
+                    product_id = product
+                elif isinstance(product, dict):
+                    product_id = product.get('id')
+
+                is_minute_pack = (
+                    (minute_pack_price_id and price_id == minute_pack_price_id) or
+                    (minute_pack_product_id and product_id == minute_pack_product_id)
+                )
+                if is_minute_pack:
+                    qty = int(item.get('quantity') or 1)
+                    total_packs += max(qty, 0)
+
+            if total_packs > 0:
+                try:
+                    from core.models import WorkspaceUsage
+                    # Determine workspace by metadata or by Stripe customer mapping
+                    workspace = None
+                    if workspace_id:
+                        workspace = Workspace.objects.get(id=workspace_id)
+                    elif customer_id:
+                        workspace = Workspace.objects.get(stripe_customer_id=customer_id)
+                        workspace_id = str(workspace.id)
+
+                    if workspace is not None:
+                        usage = WorkspaceUsage.get_or_create_current_usage(workspace)
+                        credited_minutes = 100 * total_packs
+                        usage.extra_call_minutes = (usage.extra_call_minutes or 0) + credited_minutes
+                        usage.save()
+                        logger.info(
+                            "Credited %s minutes to workspace %s via portal minute pack (packs=%s)",
+                            credited_minutes, workspace_id, total_packs
+                        )
+                        return Response({"received": True})
+                    else:
+                        logger.warning(
+                            "Unable to resolve workspace for portal minute pack; customer=%s workspace_in_meta=%s",
+                            customer_id, workspace_id
+                        )
+                except Workspace.DoesNotExist:
+                    logger.warning("Workspace not found for portal minute pack; customer=%s", customer_id)
+                except Exception as e:
+                    logger.exception("Failed to credit portal minute pack: %s", e)
 
         if workspace_id and subscription_id:
             try:
@@ -1138,7 +1210,7 @@ def stripe_webhook(request):
                     price_id = subscription['items']['data'][0]['price']['id']
                     print(f"💰 Price ID: {price_id}")
                     # Try to match with a plan
-                    from core.models import Plan
+                    from core.models import Plan, WorkspaceSubscription
                     plan = Plan.objects.filter(
                         stripe_price_id_monthly=price_id
                     ).first() or Plan.objects.filter(
@@ -1147,7 +1219,6 @@ def stripe_webhook(request):
                     
                     if plan:
                         # Create WorkspaceSubscription record (this is what the quota system expects!)
-                        from core.models import WorkspaceSubscription
                         from datetime import datetime, timezone
                         
                         # Deactivate any existing subscriptions
@@ -1417,7 +1488,7 @@ def check_workspace_subscription(request, workspace_id):
 def get_workspace_usage_status(request, workspace_id):
     """Get comprehensive usage and quota status for workspace"""
     from core.quotas import get_feature_usage_status_readonly, current_billing_window
-    from core.models import Feature, WorkspaceSubscription
+    from core.models import Feature
     from datetime import datetime, timezone
     
     try:

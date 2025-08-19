@@ -15,6 +15,8 @@ from rest_framework import status
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from django.core.cache import cache
+import requests
+import json
 
 from core.models import Agent
 # Storage backend: prefer Azure in production, but gracefully fallback to local storage in tests/dev
@@ -207,6 +209,84 @@ class AgentKnowledgeDocumentsView(APIView):
                     pass
             agent.kb_pdf = file
             agent.save(update_fields=['kb_pdf', 'updated_at'])
+
+            # After storing the PDF, synchronously generate a verbatim text via OpenAI Vision
+            try:
+                # Resolve storage path and URL for the PDF
+                storage = AzureMediaStorage()
+                pdf_path = f"{_docs_prefix(agent_id)}/{safe_display_name}"
+                try:
+                    pdf_url = storage.url(pdf_path)
+                except Exception:
+                    pdf_url = None
+
+                openai_api_key = os.getenv('OPENAI_API_KEY')
+                model = os.getenv('KNOWLEDGE_VISION_MODEL', 'gpt-4o-mini')
+                timeout_sec = int(os.getenv('KNOWLEDGE_VISION_TIMEOUT', '60'))
+
+                if openai_api_key and pdf_url:
+                    system_prompt = (
+                        "You are an OCR assistant. Return the document text VERBATIM. "
+                        "No paraphrasing, no normalization, do not correct spelling or punctuation. "
+                        "Preserve line breaks and whitespace as-is. If unreadable, output [UNREADABLE]."
+                    )
+                    input_payload = [
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": "Extract verbatim text from this PDF."},
+                                {"type": "input_image", "image_url": pdf_url},
+                            ],
+                        },
+                    ]
+
+                    resp = requests.post(
+                        url="https://api.openai.com/v1/responses",
+                        headers={
+                            "Authorization": f"Bearer {openai_api_key}",
+                            "Content-Type": "application/json",
+                        },
+                        data=json.dumps({
+                            "model": model,
+                            "input": input_payload,
+                            "temperature": 0,
+                            "top_p": 0,
+                        }),
+                        timeout=timeout_sec,
+                    )
+                    if resp.status_code in [200, 201]:
+                        data = resp.json()
+                        text = None
+                        if isinstance(data, dict):
+                            text = data.get("output_text") or data.get("content") or data.get("text")
+                            if not text and isinstance(data.get("output"), list):
+                                try:
+                                    text = "\n".join([str(x) for x in data.get("output") if x])
+                                except Exception:
+                                    pass
+                        text = text or ""
+
+                        # Save .txt next to the PDF
+                        try:
+                            base_no_ext = os.path.splitext(safe_display_name)[0]
+                            txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                            with storage.open(txt_path, "wb") as fh:
+                                fh.write(text.encode("utf-8"))
+                        except Exception as write_exc:
+                            logger.warning("KB: failed to write txt for %s: %s", agent_id, write_exc)
+                    else:
+                        try:
+                            logger.warning("KB: OpenAI Vision HTTP %s: %s", resp.status_code, resp.text)
+                        except Exception:
+                            logger.warning("KB: OpenAI Vision HTTP %s", resp.status_code)
+                else:
+                    if not openai_api_key:
+                        logger.warning("KB: OPENAI_API_KEY not set; skipping OCR")
+                    if not pdf_url:
+                        logger.warning("KB: storage.url() not available; skipping OCR")
+            except Exception as vision_exc:
+                logger.warning("KB: Vision OCR failed for %s: %s", agent_id, vision_exc)
 
             # Response format compatible with frontend (single file list)
             try:
@@ -433,6 +513,7 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
         target_id = str(doc_id).lower()
+
         def _matches(f):
             try:
                 stored = str(f.get("id", "")).lower()
@@ -440,19 +521,55 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
                 deterministic = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent_id}/{basis}")).lower()
                 return stored == target_id or deterministic == target_id
             except Exception:
-                return stored == target_id
+                return False
+
         entry = next((f for f in manifest.get("files", []) if _matches(f)), None)
-        if not entry:
-            raise Http404("File not found")
 
-        path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
-        if not storage.exists(path):
-            raise Http404("File not found")
-        try:
-            url = storage.url(path)
-        except Exception:
-            return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+        url = None
+        text_url = None
 
-        return Response({"url": url})
+        if entry:
+            path = f"{_docs_prefix(agent_id)}/{entry.get('blob_name') or entry.get('name')}"
+            if not storage.exists(path):
+                raise Http404("File not found")
+            try:
+                url = storage.url(path)
+            except Exception:
+                return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+            try:
+                base_no_ext = os.path.splitext(os.path.basename(path))[0]
+                txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                if storage.exists(txt_path):
+                    text_url = storage.url(txt_path)
+            except Exception:
+                pass
+        else:
+            # Fallback: single-file mode using agent.kb_pdf
+            if not agent.kb_pdf:
+                raise Http404("File not found")
+            current_name = os.path.basename(agent.kb_pdf.name)
+            deterministic = uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent.agent_id}/{current_name}")
+            if str(deterministic) != str(doc_id):
+                raise Http404("File not found")
+            path = f"{_docs_prefix(agent_id)}/{current_name}"
+            if not storage.exists(path):
+                raise Http404("File not found")
+            try:
+                url = storage.url(path)
+            except Exception:
+                return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
+            try:
+                base_no_ext = os.path.splitext(current_name)[0]
+                txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                if storage.exists(txt_path):
+                    text_url = storage.url(txt_path)
+            except Exception:
+                pass
+
+        out = {"url": url}
+        if text_url:
+            out["text_url"] = text_url
+        return Response(out)
 
 

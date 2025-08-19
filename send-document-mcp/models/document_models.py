@@ -9,3 +9,4 @@ class SendDocumentResponse(BaseModel):
     error: Optional[str] = Field(None, description="Error message if sending failed")
 
 
+
