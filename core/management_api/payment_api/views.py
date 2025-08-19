@@ -1467,3 +1467,44 @@ def get_workspace_usage_status(request, workspace_id):
             {"error": "Workspace not found"},
             status=status.HTTP_404_NOT_FOUND
         ) 
+
+
+@extend_schema(
+    summary="Purchase a 100-minute pack",
+    description="Credits 100 extra call minutes to the current billing period for the workspace.",
+    responses={
+        200: OpenApiResponse(description="✅ Minute pack credited"),
+        401: OpenApiResponse(description="🚫 Authentication required"),
+        403: OpenApiResponse(description="🚫 Not a member of this workspace"),
+        404: OpenApiResponse(description="🚫 Workspace not found"),
+    },
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@permission_classes([IsWorkspaceMember])
+def purchase_minute_pack(request, workspace_id):
+    """Credit a 100-minute pack to the current billing period (simple internal action)."""
+    from core.quotas import get_usage_container
+    from decimal import Decimal
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+    except Workspace.DoesNotExist:
+        return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+
+    # Only workspace admin or staff should be able to credit minute packs
+    if not (request.user.is_staff or (workspace.admin_user_id and workspace.admin_user_id == request.user.id)):
+        return Response({"error": "Only workspace admin can purchase minute packs"}, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        usage = get_usage_container(workspace)
+        # Guard in case field does not exist yet
+        if not hasattr(usage, 'extra_call_minutes'):
+            return Response({"error": "Minute packs not supported on this deployment"}, status=status.HTTP_400_BAD_REQUEST)
+        usage.extra_call_minutes = (usage.extra_call_minutes or Decimal('0')) + Decimal('100')
+        usage.save(update_fields=['extra_call_minutes', 'updated_at'])
+        return Response({
+            "message": "Minute pack credited",
+            "extra_call_minutes": float(usage.extra_call_minutes)
+        }, status=status.HTTP_200_OK)
+    except Exception as exc:
+        return Response({"error": str(exc)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR) 

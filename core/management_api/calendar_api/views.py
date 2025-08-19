@@ -123,6 +123,46 @@ class CalendarViewSet(viewsets.ModelViewSet):
             active=True
         ).select_related('workspace').prefetch_related('google_calendar', 'microsoft_calendar')
     
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a calendar and also remove any Event Types (CalendarConfiguration) that
+        reference this calendar inside their conflict_check_calendars list.
+
+        Note: FK cascade will already delete configurations where this calendar is
+        the main target (`calendar` FK). This method additionally cleans up configs
+        that only reference the calendar for conflict checks, to avoid orphaned
+        Event Types that depend on a non-existent calendar.
+        """
+        from core.models import CalendarConfiguration
+        calendar = self.get_object()
+        # Collect affected configurations that reference this calendar in conflict list
+        try:
+            with transaction.atomic():
+                # Pre-compute IDs to delete (conflict-based)
+                calendar_id_str = str(calendar.id)
+                conflict_candidates = CalendarConfiguration.objects.filter(
+                    calendar__workspace=calendar.workspace
+                )
+                conflict_ids_to_delete = []
+                for cfg in conflict_candidates.only('id', 'conflict_check_calendars'):
+                    conflicts = cfg.conflict_check_calendars or []
+                    # Normalize to strings for comparison consistency
+                    if any(str(x) == calendar_id_str for x in conflicts):
+                        conflict_ids_to_delete.append(cfg.id)
+
+                # Perform the base deletion (cascades target-based configs)
+                response = super().destroy(request, *args, **kwargs)
+
+                # Delete remaining conflict-based configs, if any
+                if conflict_ids_to_delete:
+                    CalendarConfiguration.objects.filter(id__in=conflict_ids_to_delete).delete()
+
+                return response
+        except Exception as e:
+            logger.error(f"Failed to fully delete calendar {calendar.id} with conflict configs: {e}")
+            # Fall back to default behavior if cleanup failed
+            return super().destroy(request, *args, **kwargs)
+    
     # 🎯 GOOGLE OAUTH ENDPOINTS
     
     @extend_schema(
@@ -353,7 +393,9 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 sub.delete()
             connection.active = False
             connection.save(update_fields=['active', 'updated_at'])
-            Calendar.objects.filter(workspace=connection.workspace, provider='outlook').update(active=False)
+            # Remove all calendars belonging to this connection entirely so FK cascade
+            # deletes target-based Event Types as well. Conflict-based configs are handled below.
+            Calendar.objects.filter(microsoft_calendar__connection=connection).delete()
 
             # Delete affected Event Types if any
             deleted_count = 0
@@ -724,15 +766,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             # Revoke token at Google
             revoked = GoogleOAuthService.revoke_token(connection.refresh_token)
             
-            # Deactivate connection and related calendars
+            # Deactivate connection and remove calendars tied to it (delete to trigger CASCADE)
             connection.active = False
             connection.save()
-            
-            # Deactivate related calendars in the same workspace
-            Calendar.objects.filter(
-                workspace=connection.workspace,
-                provider='google'
-            ).update(active=False)
+            Calendar.objects.filter(google_calendar__connection=connection).delete()
             # Delete affected configurations when confirm
             deleted_count = 0
             if affected['count'] > 0:

@@ -7,12 +7,12 @@ from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from core.models import Agent, Lead
-from core.management_api.calendar_api.permissions import CalendarLiveKitPermission
+from core.management_api.communication_api.permissions import LiveKitOrAuthenticatedWorkspaceUser
 from core.utils.crypto import decrypt_text
 
 
 class CommunicationViewSet(viewsets.ViewSet):
-    permission_classes = [CalendarLiveKitPermission]
+    permission_classes = [LiveKitOrAuthenticatedWorkspaceUser]
 
     @extend_schema(
         summary="📄 Send agent document to lead",

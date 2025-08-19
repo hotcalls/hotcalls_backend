@@ -175,10 +175,11 @@ def enforce_and_record(
             defaults={"used_amount": Decimal('0')},
         )
         
-        # Get limit from plan
+        # Get limit from plan (may be None for unlimited)
         limit = feature_usage.limit
+        effective_limit = limit
         
-        # SPECIAL CASE: For capacity limits (max_users, max_agents), check actual entity count
+        # SPECIAL CASE: For capacity limits (max_users, max_agents, max_funnels), check actual entity count
         if feature.feature_name == 'max_agents':
             from core.models import Agent
             current_count = Agent.objects.filter(workspace=workspace).count()
@@ -186,18 +187,30 @@ def enforce_and_record(
         elif feature.feature_name == 'max_users':
             current_count = workspace.users.count()
             new_value = current_count + amount
+        elif feature.feature_name == 'max_funnels':
+            from core.models import LeadFunnel
+            current_count = LeadFunnel.objects.filter(workspace=workspace).count()
+            new_value = current_count + amount
         else:
             # For consumption limits (call_minutes), use quota tracking
+            # Include any extra minutes purchased for this billing period
+            # effective_limit = plan limit + usage_container.extra_call_minutes (if exists)
+            if feature.feature_name == 'call_minutes':
+                # Some deployments may not yet have the field; guard access
+                extra = getattr(usage_container, 'extra_call_minutes', None)
+                if extra is not None and effective_limit is not None:
+                    effective_limit = effective_limit + Decimal(str(extra))
             new_value = feature_usage.used_amount + amount
         
         # Check quota
-        if limit is not None and new_value > limit:
+        # Compare against effective limit (plan + extras)
+        if effective_limit is not None and new_value > effective_limit:
             raise QuotaExceeded(
-                f"{feature.feature_name}: {new_value} exceeds plan limit {limit}"
+                f"{feature.feature_name}: {new_value} exceeds plan limit {effective_limit}"
             )
         
         # Record usage atomically (only for consumption-based features, not capacity limits)
-        if feature.feature_name not in ['max_agents', 'max_users']:
+        if feature.feature_name not in ['max_agents', 'max_users', 'max_funnels']:
             feature_usage.used_amount = models.F("used_amount") + amount
             feature_usage.save(update_fields=["used_amount"])
 
@@ -400,12 +413,15 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
             period_end=period_end,
         ).first()
         
-        # SPECIAL CASE: For capacity limits (max_users, max_agents), count actual entities
+        # SPECIAL CASE: For capacity limits (max_users, max_agents, max_funnels), count actual entities
         if feature.feature_name == 'max_agents':
             from core.models import Agent
             used = Decimal(str(Agent.objects.filter(workspace=workspace).count()))
         elif feature.feature_name == 'max_users':
             used = Decimal(str(workspace.users.count()))
+        elif feature.feature_name == 'max_funnels':
+            from core.models import LeadFunnel
+            used = Decimal(str(LeadFunnel.objects.filter(workspace=workspace).count()))
         else:
             # For consumption limits (call_minutes), use quota tracking
             if not usage_container:
@@ -434,15 +450,22 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
         except PlanFeature.DoesNotExist:
             limit = None
             
+        # For call_minutes include extra purchased minutes for this period
+        effective_limit = limit
+        if feature.feature_name == 'call_minutes' and usage_container is not None and limit is not None:
+            extra = getattr(usage_container, 'extra_call_minutes', None)
+            if extra is not None:
+                effective_limit = effective_limit + Decimal(str(extra))
+        
         remaining = None
-        unlimited = limit is None
+        unlimited = effective_limit is None
         
         if not unlimited:
-            remaining = max(limit - used, Decimal('0'))
+            remaining = max(effective_limit - used, Decimal('0'))
             
         return {
             'used': used,
-            'limit': limit,
+            'limit': effective_limit,
             'remaining': remaining, 
             'unlimited': unlimited
         }

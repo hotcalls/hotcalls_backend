@@ -335,7 +335,7 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         tags=["Workspace Management"],
         responses={200: OpenApiResponse(description="✅ Test email sent (or error returned)")}
     )
-    @action(detail=True, methods=['post'], url_path='smtp-test')
+    @action(detail=True, methods=['post'], url_path='smtp-test', permission_classes=[IsWorkspaceMemberOrStaff])
     def smtp_test(self, request, pk=None):
         from django.core.mail import get_connection, EmailMessage
         from core.utils.crypto import decrypt_text

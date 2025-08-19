@@ -871,6 +871,13 @@ class WorkspaceUsage(models.Model):
     )
     period_start = models.DateTimeField()
     period_end = models.DateTimeField()
+    # Extra purchased call minutes for the current billing period
+    extra_call_minutes = models.DecimalField(
+        max_digits=15,
+        decimal_places=3,
+        default=0,
+        help_text="Extra purchased call minutes credited to this billing period"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

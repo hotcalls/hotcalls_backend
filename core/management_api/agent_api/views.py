@@ -1,4 +1,5 @@
 from rest_framework import viewsets, status, filters
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
@@ -486,13 +487,18 @@ class AgentViewSet(viewsets.ModelViewSet):
         request=AgentSendDocumentUploadSerializer,
         responses={200: AgentSendDocumentInfoSerializer}
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
     def send_document(self, request, pk=None):
         agent = self.get_object()
         serializer = AgentSendDocumentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        upload = serializer.validated_data['file']
-        agent.send_document = upload
+        # Delete previous file if replacing
+        if agent.send_document:
+            try:
+                agent.send_document.delete(save=False)
+            except Exception:
+                pass
+        agent.send_document = serializer.validated_data['file']
         if 'email_default_subject' in serializer.validated_data:
             agent.email_default_subject = serializer.validated_data.get('email_default_subject')
         if 'email_default_body' in serializer.validated_data:
@@ -511,14 +517,27 @@ class AgentViewSet(viewsets.ModelViewSet):
         return Response(out.data)
 
     @extend_schema(
-        summary="📄 Get agent send-document status",
-        description="Return whether a send-document is configured and the default subject/body.",
+        summary="📄 Get/delete agent send-document",
+        description="GET: Status des PDF + Defaults. DELETE: PDF und Defaults entfernen.",
         tags=["Agent Management"],
         responses={200: AgentSendDocumentInfoSerializer}
     )
-    @action(detail=True, methods=['get'], url_path='send-document')
-    def get_send_document(self, request, pk=None):
+    @action(detail=True, methods=['get', 'delete'], url_path='send-document')
+    def send_document_status(self, request, pk=None):
         agent = self.get_object()
+        if request.method == 'DELETE':
+            if agent.send_document:
+                try:
+                    agent.send_document.delete(save=False)
+                except Exception:
+                    pass
+            agent.send_document = None
+            agent.email_default_subject = None
+            agent.email_default_body = None
+            agent.save(update_fields=['send_document', 'email_default_subject', 'email_default_body', 'updated_at'])
+            return Response({'deleted': True})
+
+        # GET
         file_name = agent.send_document.name.split('/')[-1] if agent.send_document else None
         file_url = agent.send_document.url if agent.send_document and hasattr(agent.send_document, 'url') else None
         data = AgentSendDocumentInfoSerializer({
@@ -529,25 +548,6 @@ class AgentViewSet(viewsets.ModelViewSet):
             'email_default_body': agent.email_default_body,
         }).data
         return Response(data)
-
-    @extend_schema(
-        summary="🗑️ Delete agent send-document",
-        description="Remove the configured PDF and clear default subject/body.",
-        tags=["Agent Management"]
-    )
-    @action(detail=True, methods=['delete'], url_path='send-document')
-    def delete_send_document(self, request, pk=None):
-        agent = self.get_object()
-        if agent.send_document:
-            try:
-                agent.send_document.delete(save=False)
-            except Exception:
-                pass
-        agent.send_document = None
-        agent.email_default_subject = None
-        agent.email_default_body = None
-        agent.save(update_fields=['send_document', 'email_default_subject', 'email_default_body', 'updated_at'])
-        return Response({'deleted': True})
     
     @extend_schema(
         summary="⚙️ Get agent configuration",

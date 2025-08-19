@@ -98,6 +98,13 @@ class WorkspaceSmtpSettingsSerializer(serializers.Serializer):
         }
 
     def update_instance(self, workspace: Workspace, data: dict) -> Workspace:
+        # Basic consistency validations
+        if data.get('smtp_use_tls') and data.get('smtp_use_ssl'):
+            raise serializers.ValidationError('smtp_use_tls and smtp_use_ssl cannot both be true')
+        if data.get('smtp_enabled'):
+            for key in ['smtp_host', 'smtp_from_email']:
+                if not data.get(key) and not getattr(workspace, key):
+                    raise serializers.ValidationError(f'{key} is required when smtp_enabled is true')
         workspace.smtp_enabled = data.get('smtp_enabled', workspace.smtp_enabled)
         workspace.smtp_host = data.get('smtp_host', workspace.smtp_host)
         workspace.smtp_port = data.get('smtp_port', workspace.smtp_port)

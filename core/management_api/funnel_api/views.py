@@ -20,6 +20,7 @@ from .serializers import (
     LeadProcessingStatsSerializer
 )
 from .filters import LeadFunnelFilter
+from core.quotas import enforce_and_record, QuotaExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,18 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         """Create a new lead funnel with atomic transaction"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        
+        # Explicit quota enforcement for max_funnels using the validated workspace
+        workspace = serializer.validated_data.get('workspace')
+        try:
+            enforce_and_record(
+                workspace=workspace,
+                route_name='funnel_api:leadfunnel-list',
+                http_method='POST',
+                amount=1,
+            )
+        except QuotaExceeded as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
         
         with transaction.atomic():
             funnel = serializer.save()

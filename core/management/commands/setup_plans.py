@@ -73,6 +73,11 @@ class Command(BaseCommand):
                 'description': 'Maximum number of agents allowed per workspace',
                 'unit': 'general_unit',
             },
+            {
+                'name': 'max_funnels',
+                'description': 'Maximum number of lead funnels allowed per workspace',
+                'unit': 'general_unit',
+            },
         ]
         
         features = {}
@@ -128,8 +133,9 @@ class Command(BaseCommand):
         # Add features to Start plan
         self._add_feature_to_plan(start_plan, features['call_minutes'], 250)
         self._add_feature_to_plan(start_plan, features['overage_rate_cents'], 49)  # 0,49€ = 49 Cent
-        self._add_feature_to_plan(start_plan, features['max_users'], 1)  # 1 User
+        self._add_feature_to_plan(start_plan, features['max_users'], 3)  # 3 User (Admin + 2 User)
         self._add_feature_to_plan(start_plan, features['max_agents'], 1)  # 1 Agent pro Workspace
+        self._add_feature_to_plan(start_plan, features['max_funnels'], 1)  # 1 Funnel pro Workspace
         
         # PRO PLAN
         pro_plan = self._create_plan(
@@ -150,8 +156,9 @@ class Command(BaseCommand):
         # Add features to Pro plan
         self._add_feature_to_plan(pro_plan, features['call_minutes'], 1000)
         self._add_feature_to_plan(pro_plan, features['overage_rate_cents'], 29)  # 0,29€ = 29 Cent
-        self._add_feature_to_plan(pro_plan, features['max_users'], 3)  # 3 User
+        self._add_feature_to_plan(pro_plan, features['max_users'], 5)  # 5 User (Admin + 4 User)
         self._add_feature_to_plan(pro_plan, features['max_agents'], 3)  # 3 Agents pro Workspace
+        self._add_feature_to_plan(pro_plan, features['max_funnels'], 3)  # 3 Funnels pro Workspace
         
         # ENTERPRISE PLAN
         enterprise_plan = self._create_plan(
@@ -174,6 +181,7 @@ class Command(BaseCommand):
         self._add_feature_to_plan(enterprise_plan, features['overage_rate_cents'], 0)  # No overage
         self._add_feature_to_plan(enterprise_plan, features['max_users'], 999999)  # Unlimited users
         self._add_feature_to_plan(enterprise_plan, features['max_agents'], 999999)  # Unlimited agents
+        self._add_feature_to_plan(enterprise_plan, features['max_funnels'], 999999)  # Unlimited funnels
 
     def _create_plan(self, name, price_monthly, description, stripe_product_id=None, stripe_price_id_monthly=None, cosmetic_features=None):
         """Create a single plan with Stripe IDs and cosmetic features"""
@@ -319,6 +327,14 @@ class Command(BaseCommand):
                 'http_method': 'POST',
                 'feature': features['max_users'],
                 'description': 'Adding users to workspace'
+            },
+            
+            # Funnel Management (consumes max_funnels feature)
+            {
+                'route_name': 'funnel_api:leadfunnel-list',
+                'http_method': 'POST',
+                'feature': features['max_funnels'],
+                'description': 'Creating new lead funnels'
             },
             
             # NOTE: Overdraft protection is handled in trigger_call task - calls allowed

@@ -12,7 +12,8 @@ from .views import (
     cancel_subscription,
     resume_subscription,
     check_workspace_subscription,
-    get_workspace_usage_status
+    get_workspace_usage_status,
+    purchase_minute_pack
 )
 
 urlpatterns = [
@@ -70,4 +71,9 @@ urlpatterns = [
     path('workspaces/<uuid:workspace_id>/usage/', 
          get_workspace_usage_status, 
          name='workspace-usage-status'),
+    
+    # Minute pack purchase (100 minutes per pack at 0.19€/min)
+    path('workspaces/<uuid:workspace_id>/purchase-minute-pack/',
+         purchase_minute_pack,
+         name='purchase-minute-pack'),
 ] 
