@@ -23,6 +23,7 @@ async def _make_call_async(
     *,
     call_task_id: Optional[str] = None,
     room_name: Optional[str] = None,
+    answer_timeout_s: Optional[float] = None,
 ) -> Dict[str, Any]:
     """
     Place an outbound call via LiveKit and return identifiers.
@@ -80,12 +81,18 @@ async def _make_call_async(
         # 0) Preflight agent token
         token_check = await preflight_check_agent_token_async(agent_name)
         if not token_check.get("valid"):
+            reason = token_check.get("reason") or "token_missing"
+            # Preserve reason granularity (e.g., check_failed: <msg>)
+            abort_reason = (
+                "token_missing" if reason == "token_missing" else
+                ("check_failed" if str(reason).startswith("check_failed") else "dispatch_failed")
+            )
             return {
                 "success": False,
-                "error": f"Agent {agent_name}: {token_check.get('reason')}",
+                "error": f"Agent {agent_name}: {reason}",
                 "to_number": callee_phone,
                 "agent_name": agent_name,
-                "abort_reason": "token_missing",
+                "abort_reason": abort_reason,
             }
 
         # 1) Dispatch agent to room with metadata

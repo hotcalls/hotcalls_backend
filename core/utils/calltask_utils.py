@@ -13,7 +13,7 @@ from django.conf import settings
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.utils import timezone as dj_timezone
-from django.db import connection, transaction
+from django.db import connection, transaction, close_old_connections
 from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
 import hashlib
 
@@ -517,6 +517,14 @@ def preflight_check_agent_token(agent_name: str) -> dict:
         return {"valid": False, "reason": "no_agent_name", "expires_at": None}
 
     try:
+        # Ensure DB connection is usable before querying
+        try:
+            connection.ensure_connection()
+        except Exception:
+            # Reset stale connections and try once more
+            close_old_connections()
+            connection.ensure_connection()
+
         agent = LiveKitAgent.objects.filter(
             name=agent_name, expires_at__gt=timezone.now()
         ).first()
