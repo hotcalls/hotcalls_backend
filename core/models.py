@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 from django.utils import timezone
+import os
 import datetime
 import secrets
 
@@ -884,6 +885,12 @@ class FeatureUsage(models.Model):
         return None if lim is None else max(lim - self.used_amount, 0)
 
 
+def agent_kb_upload_path(instance, filename):
+    """Deterministic path for agent Knowledge Base PDF, like voices storage."""
+    base_name = os.path.basename(filename)
+    return f"kb/agents/{instance.agent_id}/{base_name}"
+
+
 class Agent(models.Model):
     """AI agents for each workspace"""
     agent_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -958,6 +965,13 @@ class Agent(models.Model):
         help_text="Agent prompt/instructions for AI behavior",
         blank=True
     )
+    # Knowledge Base: single PDF file stored like voices (no manifest)
+    kb_pdf = models.FileField(
+        upload_to=agent_kb_upload_path,
+        null=True,
+        blank=True,
+        help_text="Single Knowledge Base PDF for this agent"
+    )
     config_id = models.CharField(
         max_length=255,
         null=True,
@@ -993,13 +1007,6 @@ class Agent(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    # Knowledge base (DB-only, like Voices): Single optional document per agent
-    kb_doc_id = models.UUIDField(null=True, blank=True, help_text="Knowledge Base document ID")
-    kb_doc_name = models.CharField(max_length=512, null=True, blank=True, help_text="Knowledge Base document display name")
-    kb_doc_url = models.URLField(max_length=1000, null=True, blank=True, help_text="Knowledge Base document URL (PDF)")
-    kb_doc_size = models.IntegerField(null=True, blank=True, help_text="Knowledge Base document size in bytes")
-    kb_doc_updated_at = models.DateTimeField(null=True, blank=True, help_text="When the KB document was last updated")
     
     def __str__(self):
         return f"{self.name} ({self.workspace.workspace_name})"
