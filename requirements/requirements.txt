@@ -51,3 +51,4 @@ cryptography>=41.0.0
 
 # Phone number parsing/validation (Google libphonenumber port)
 phonenumbers>=8.13.40
+openai>=1.40.0

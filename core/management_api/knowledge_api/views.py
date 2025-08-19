@@ -17,6 +17,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from django.core.cache import cache
 import requests
 import json
+from openai import OpenAI
 
 from core.models import Agent
 # Storage backend: prefer Azure in production, but gracefully fallback to local storage in tests/dev
@@ -224,51 +225,34 @@ class AgentKnowledgeDocumentsView(APIView):
                     pdf_url = None
 
                 openai_api_key = os.getenv('OPENAI_API_KEY')
-                model = os.getenv('KNOWLEDGE_VISION_MODEL', 'gpt-4o-mini')
-                timeout_sec = int(os.getenv('KNOWLEDGE_VISION_TIMEOUT', '60'))
+                model = os.getenv('KNOWLEDGE_VISION_MODEL', 'gpt-4o')
+                if openai_api_key:
+                    try:
+                        client = OpenAI(api_key=openai_api_key)
+                        # Upload PDF bytes directly to OpenAI as user_data
+                        with storage.open(agent.kb_pdf.name, "rb") as fh:
+                            up = client.files.create(file=fh, purpose="user_data")
 
-                if openai_api_key and pdf_url:
-                    system_prompt = (
-                        "You are an OCR assistant. Return the document text VERBATIM. "
-                        "No paraphrasing, no normalization, do not correct spelling or punctuation. "
-                        "Preserve line breaks and whitespace as-is. If unreadable, output [UNREADABLE]."
-                    )
-                    input_payload = [
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "input_text", "text": "Extract verbatim text from this PDF."},
-                                {"type": "input_image", "image_url": pdf_url},
-                            ],
-                        },
-                    ]
-
-                    resp = requests.post(
-                        url="https://api.openai.com/v1/responses",
-                        headers={
-                            "Authorization": f"Bearer {openai_api_key}",
-                            "Content-Type": "application/json",
-                        },
-                        data=json.dumps({
-                            "model": model,
-                            "input": input_payload,
-                            "temperature": 0,
-                            "top_p": 0,
-                        }),
-                        timeout=timeout_sec,
-                    )
-                    if resp.status_code in [200, 201]:
-                        data = resp.json()
-                        text = None
-                        if isinstance(data, dict):
-                            text = data.get("output_text") or data.get("content") or data.get("text")
-                            if not text and isinstance(data.get("output"), list):
-                                try:
-                                    text = "\n".join([str(x) for x in data.get("output") if x])
-                                except Exception:
-                                    pass
-                        text = text or ""
+                        # Ask vision-capable model to extract full plain text
+                        resp = client.responses.create(
+                            model=model,
+                            temperature=0,
+                            input=[{
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": (
+                                            "Extract the full plain text from this PDF. "
+                                            "Preserve reading order, merge hyphenated line breaks, "
+                                            "and render tables as TSV (tab-separated). Output ONLY text."
+                                        )
+                                    },
+                                    {"type": "input_file", "file_id": up.id},
+                                ],
+                            }],
+                        )
+                        text = getattr(resp, "output_text", None) or ""
 
                         # Save .txt next to the PDF
                         try:
@@ -279,16 +263,10 @@ class AgentKnowledgeDocumentsView(APIView):
                                 fh.write(text.encode("utf-8"))
                         except Exception as write_exc:
                             logger.warning("KB: failed to write txt for %s: %s", agent_id, write_exc)
-                    else:
-                        try:
-                            logger.warning("KB: OpenAI Vision HTTP %s: %s", resp.status_code, resp.text)
-                        except Exception:
-                            logger.warning("KB: OpenAI Vision HTTP %s", resp.status_code)
+                    except Exception as ocr_exc:
+                        logger.warning("KB: OpenAI OCR failed for %s: %s", agent_id, ocr_exc)
                 else:
-                    if not openai_api_key:
-                        logger.warning("KB: OPENAI_API_KEY not set; skipping OCR")
-                    if not pdf_url:
-                        logger.warning("KB: storage.url() not available; skipping OCR")
+                    logger.warning("KB: OPENAI_API_KEY not set; skipping OCR")
             except Exception as vision_exc:
                 logger.warning("KB: Vision OCR failed for %s: %s", agent_id, vision_exc)
 
