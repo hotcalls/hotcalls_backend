@@ -94,6 +94,7 @@ urlpatterns = [
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
     path('api/funnels/', include(('core.management_api.funnel_api.urls', 'funnel_api'), namespace='funnel_api')),
     path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
+    path('api/communication/', include(('core.management_api.communication_api.urls', 'communication_api'), namespace='communication_api')),
 
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
     # Subscription management is handled by payment_api above

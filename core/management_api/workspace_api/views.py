@@ -22,7 +22,9 @@ from .serializers import (
     WorkspaceInvitationSerializer,
     WorkspaceInviteUserSerializer,
     WorkspaceInviteBulkSerializer,
-    InvitationDetailSerializer
+    InvitationDetailSerializer,
+    WorkspaceSmtpSettingsSerializer,
+    WorkspaceSmtpTestSerializer,
 )
 from .permissions import (
     WorkspacePermission, 
@@ -307,6 +309,68 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         workspace = serializer.save(creator=self.request.user, admin_user=self.request.user)
         workspace.users.add(self.request.user)
         workspace.save()
+
+    @extend_schema(
+        summary="✉️ Get/Set SMTP settings",
+        description="Retrieve or update SMTP settings for the workspace (password write-only).",
+        request=WorkspaceSmtpSettingsSerializer,
+        responses={200: WorkspaceSmtpSettingsSerializer},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['get', 'put', 'patch'], url_path='smtp-settings')
+    def smtp_settings(self, request, pk=None):
+        workspace = self.get_object()
+        # Any workspace member can manage SMTP as per requirement
+        if request.method in ['PUT', 'PATCH']:
+            serializer = WorkspaceSmtpSettingsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.update_instance(workspace, serializer.validated_data)
+        data = WorkspaceSmtpSettingsSerializer().to_representation(workspace)
+        return Response(data)
+
+    @extend_schema(
+        summary="📨 SMTP test send",
+        description="Send a test email using the workspace SMTP configuration.",
+        request=WorkspaceSmtpTestSerializer,
+        tags=["Workspace Management"],
+        responses={200: OpenApiResponse(description="✅ Test email sent (or error returned)")}
+    )
+    @action(detail=True, methods=['post'], url_path='smtp-test')
+    def smtp_test(self, request, pk=None):
+        from django.core.mail import get_connection, EmailMessage
+        from core.utils.crypto import decrypt_text
+        workspace = self.get_object()
+        serializer = WorkspaceSmtpTestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        to_email = serializer.validated_data['to_email']
+
+        # Build runtime SMTP connection from workspace settings
+        if not workspace.smtp_enabled:
+            return Response({'error': 'SMTP is not enabled for this workspace'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (workspace.smtp_host and workspace.smtp_from_email):
+            return Response({'error': 'Incomplete SMTP configuration'}, status=status.HTTP_400_BAD_REQUEST)
+
+        password = decrypt_text(workspace.smtp_password_encrypted) or ''
+        try:
+            conn = get_connection(
+                host=workspace.smtp_host,
+                port=workspace.smtp_port,
+                username=workspace.smtp_username or None,
+                password=password or None,
+                use_tls=workspace.smtp_use_tls,
+                use_ssl=workspace.smtp_use_ssl,
+            )
+            msg = EmailMessage(
+                subject='SMTP Test',
+                body='This is a test email from Hotcalls workspace SMTP settings.',
+                from_email=workspace.smtp_from_email,
+                to=[to_email],
+                connection=conn,
+            )
+            msg.send(fail_silently=False)
+            return Response({'success': True})
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, *args, **kwargs):
         """

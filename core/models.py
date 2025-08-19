@@ -637,6 +637,45 @@ class Workspace(models.Model):
         default='none',
         help_text="Current subscription status (mirrors Stripe status)"
     )
+    # Per-workspace SMTP configuration (sender). Password is stored encrypted at rest.
+    smtp_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable outbound email via this workspace SMTP configuration"
+    )
+    smtp_host = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="SMTP hostname"
+    )
+    smtp_port = models.IntegerField(
+        default=587,
+        help_text="SMTP port"
+    )
+    smtp_use_tls = models.BooleanField(
+        default=True,
+        help_text="Use STARTTLS"
+    )
+    smtp_use_ssl = models.BooleanField(
+        default=False,
+        help_text="Use implicit SSL/TLS"
+    )
+    smtp_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="SMTP username"
+    )
+    smtp_password_encrypted = models.TextField(
+        blank=True,
+        default='',
+        help_text="SMTP password (encrypted at rest)"
+    )
+    smtp_from_email = models.EmailField(
+        blank=True,
+        default='',
+        help_text="Sender email address for outbound messages"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -890,6 +929,11 @@ def agent_kb_upload_path(instance, filename):
     base_name = os.path.basename(filename)
     return f"kb/agents/{instance.agent_id}/{base_name}"
 
+def agent_send_document_upload_path(instance, filename):
+    """Storage path for the single PDF the agent can send via email."""
+    base_name = os.path.basename(filename)
+    return f"docs/agents/{instance.agent_id}/{base_name}"
+
 
 class Agent(models.Model):
     """AI agents for each workspace"""
@@ -971,6 +1015,24 @@ class Agent(models.Model):
         null=True,
         blank=True,
         help_text="Single Knowledge Base PDF for this agent"
+    )
+    # Email sending configuration
+    send_document = models.FileField(
+        upload_to=agent_send_document_upload_path,
+        null=True,
+        blank=True,
+        help_text="Single PDF that the agent can send via email"
+    )
+    email_default_subject = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Default subject when sending the document via email"
+    )
+    email_default_body = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Default body when sending the document via email"
     )
     config_id = models.CharField(
         max_length=255,

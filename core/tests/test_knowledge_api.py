@@ -142,10 +142,6 @@ class KnowledgeApiTests(BaseAPITestCase):
         self.assertIn('url', resp.data)
         self.assertTrue(isinstance(resp.data['url'], str))
 
-    # Manifest is removed; phantom test obsolete
-    def test_phantom_manifest_healed_on_post(self):
-        pass
-
     @patch('core.management_api.knowledge_api.views.AzureMediaStorage', new=LocalMediaStorage)
     def test_permissions_denied_for_non_member(self):
         # Remove user from workspace members

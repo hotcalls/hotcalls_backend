@@ -211,6 +211,33 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+class AgentSendDocumentUploadSerializer(serializers.Serializer):
+    """Serializer for uploading the agent's single PDF and optional defaults."""
+    file = serializers.FileField(required=True)
+    email_default_subject = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=255)
+    email_default_body = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+    def validate_file(self, f):
+        # Only PDF, max 20MB
+        max_bytes = 20 * 1024 * 1024
+        content_type = getattr(f, 'content_type', '') or ''
+        name_lower = (getattr(f, 'name', '') or '').lower()
+        if not (content_type in ('application/pdf',) or name_lower.endswith('.pdf')):
+            raise serializers.ValidationError('Only PDF files are allowed')
+        if f.size and f.size > max_bytes:
+            raise serializers.ValidationError('File exceeds 20 MB limit')
+        return f
+
+
+class AgentSendDocumentInfoSerializer(serializers.Serializer):
+    """Serializer to expose current send-document status/defaults."""
+    has_document = serializers.BooleanField()
+    filename = serializers.CharField(allow_null=True)
+    url = serializers.CharField(allow_null=True)
+    email_default_subject = serializers.CharField(allow_null=True)
+    email_default_body = serializers.CharField(allow_null=True)
+
+
 class PhoneNumberCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating phone numbers"""
     

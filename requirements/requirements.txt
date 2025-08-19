@@ -46,5 +46,8 @@ django-health-check>=3.17.0     # Health check endpoints for K8s
 whitenoise>=6.6.0               # Static file serving fallback
 django-extensions>=3.2.0        # Useful Django extensions 
 
+# Encryption
+cryptography>=41.0.0
+
 # Phone number parsing/validation (Google libphonenumber port)
 phonenumbers>=8.13.40

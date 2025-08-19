@@ -7,7 +7,8 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from core.models import Agent, PhoneNumber
 from .serializers import (
     AgentSerializer, AgentCreateSerializer, AgentUpdateSerializer, PhoneNumberSerializer,
-    AgentPhoneAssignmentSerializer, AgentConfigSerializer
+    AgentPhoneAssignmentSerializer, AgentConfigSerializer,
+    AgentSendDocumentUploadSerializer, AgentSendDocumentInfoSerializer
 )
 from .filters import AgentFilter, PhoneNumberFilter
 from .permissions import AgentPermission, PhoneNumberPermission, AgentPhoneManagementPermission
@@ -477,6 +478,76 @@ class AgentViewSet(viewsets.ModelViewSet):
             'message': 'Phone number removed successfully',
             'removed_phone': removed_phone
         })
+
+    @extend_schema(
+        summary="📄 Upload agent send-document (PDF)",
+        description="Upload the single PDF the agent may send via email, and optionally set default subject/body.",
+        tags=["Agent Management"],
+        request=AgentSendDocumentUploadSerializer,
+        responses={200: AgentSendDocumentInfoSerializer}
+    )
+    @action(detail=True, methods=['post'])
+    def send_document(self, request, pk=None):
+        agent = self.get_object()
+        serializer = AgentSendDocumentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        upload = serializer.validated_data['file']
+        agent.send_document = upload
+        if 'email_default_subject' in serializer.validated_data:
+            agent.email_default_subject = serializer.validated_data.get('email_default_subject')
+        if 'email_default_body' in serializer.validated_data:
+            agent.email_default_body = serializer.validated_data.get('email_default_body')
+        agent.save()
+
+        file_name = agent.send_document.name.split('/')[-1] if agent.send_document else None
+        file_url = agent.send_document.url if agent.send_document and hasattr(agent.send_document, 'url') else None
+        out = AgentSendDocumentInfoSerializer({
+            'has_document': bool(agent.send_document),
+            'filename': file_name,
+            'url': file_url,
+            'email_default_subject': agent.email_default_subject,
+            'email_default_body': agent.email_default_body,
+        })
+        return Response(out.data)
+
+    @extend_schema(
+        summary="📄 Get agent send-document status",
+        description="Return whether a send-document is configured and the default subject/body.",
+        tags=["Agent Management"],
+        responses={200: AgentSendDocumentInfoSerializer}
+    )
+    @action(detail=True, methods=['get'], url_path='send-document')
+    def get_send_document(self, request, pk=None):
+        agent = self.get_object()
+        file_name = agent.send_document.name.split('/')[-1] if agent.send_document else None
+        file_url = agent.send_document.url if agent.send_document and hasattr(agent.send_document, 'url') else None
+        data = AgentSendDocumentInfoSerializer({
+            'has_document': bool(agent.send_document),
+            'filename': file_name,
+            'url': file_url,
+            'email_default_subject': agent.email_default_subject,
+            'email_default_body': agent.email_default_body,
+        }).data
+        return Response(data)
+
+    @extend_schema(
+        summary="🗑️ Delete agent send-document",
+        description="Remove the configured PDF and clear default subject/body.",
+        tags=["Agent Management"]
+    )
+    @action(detail=True, methods=['delete'], url_path='send-document')
+    def delete_send_document(self, request, pk=None):
+        agent = self.get_object()
+        if agent.send_document:
+            try:
+                agent.send_document.delete(save=False)
+            except Exception:
+                pass
+        agent.send_document = None
+        agent.email_default_subject = None
+        agent.email_default_body = None
+        agent.save(update_fields=['send_document', 'email_default_subject', 'email_default_body', 'updated_at'])
+        return Response({'deleted': True})
     
     @extend_schema(
         summary="⚙️ Get agent configuration",
