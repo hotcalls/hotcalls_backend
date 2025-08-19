@@ -484,6 +484,9 @@ API_VERSION = 'v1'
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+# Minute-Pack configuration (one-time top-ups)
+STRIPE_MINUTE_PACK_PRICE_ID = os.getenv('STRIPE_MINUTE_PACK_PRICE_ID', '')
+STRIPE_MINUTE_PACK_PRODUCT_ID = os.getenv('STRIPE_MINUTE_PACK_PRODUCT_ID', '')
 
 # File upload settings
 # Maximum size for file uploads via forms (1GB for voice files and images)
