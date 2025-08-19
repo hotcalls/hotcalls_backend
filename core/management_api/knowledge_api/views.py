@@ -65,10 +65,10 @@ class AgentKnowledgeDocumentsView(APIView):
         ])
 
         file_info = {
-            "id": agent.kb_doc_id,
+            "id": str(agent.kb_doc_id),
             "name": agent.kb_doc_name or "document.pdf",
-            "size": agent.kb_doc_size or 0,
-            "updated_at": agent.kb_doc_updated_at,
+            "size": int(agent.kb_doc_size or 0),
+            "updated_at": (agent.kb_doc_updated_at or timezone.now()).isoformat(),
             "url": agent.kb_doc_url,
         }
         return Response({
@@ -90,10 +90,10 @@ class AgentKnowledgeDocumentsView(APIView):
         files = []
         if agent.kb_doc_id and agent.kb_doc_url:
             files.append({
-                "id": agent.kb_doc_id,
+                "id": str(agent.kb_doc_id),
                 "name": agent.kb_doc_name or "document.pdf",
-                "size": agent.kb_doc_size or 0,
-                "updated_at": agent.kb_doc_updated_at or timezone.now(),
+                "size": int(agent.kb_doc_size or 0),
+                "updated_at": (agent.kb_doc_updated_at or timezone.now()).isoformat(),
                 "url": agent.kb_doc_url,
             })
         return Response({"version": 1, "files": files})
