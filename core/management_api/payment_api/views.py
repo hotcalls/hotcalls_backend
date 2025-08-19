@@ -582,6 +582,60 @@ def create_checkout_session(request):
 
 
 @extend_schema(
+    summary="🧾 Create Stripe checkout for 100-minute pack (one-time)",
+    description="Creates a Stripe Checkout Session to purchase a 100-minute pack as a one-time payment.",
+    tags=["Payment Management"]
+)
+@api_view(['POST'])
+@authentication_classes([TokenAuthentication, CsrfExemptSessionAuthentication])
+@permission_classes([IsWorkspaceMember])
+def create_minute_pack_checkout(request):
+    """Create Stripe Checkout Session for one-time 100-minute pack purchase."""
+    try:
+        workspace_id = request.data.get('workspace_id')
+        if not workspace_id:
+            return Response({"error": "workspace_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        price_id = getattr(settings, 'STRIPE_MINUTE_PACK_PRICE_ID', '')
+        if not price_id:
+            return Response({"error": "STRIPE_MINUTE_PACK_PRICE_ID is not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        workspace = Workspace.objects.get(id=workspace_id)
+
+        success_url = f"{settings.SITE_URL}/dashboard/settings?tab=billing&topup=success&session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{settings.SITE_URL}/dashboard/settings?tab=billing&topup=cancelled"
+
+        session_params = {
+            'payment_method_types': ['card'],
+            'mode': 'payment',
+            'line_items': [{
+                'price': price_id,
+                'quantity': 1,
+            }],
+            'success_url': success_url,
+            'cancel_url': cancel_url,
+            'client_reference_id': str(workspace.id),
+            'metadata': {
+                'workspace_id': str(workspace.id),
+                'reason': 'minute_pack',
+                'minutes': '100',
+            },
+        }
+
+        if workspace.stripe_customer_id:
+            session_params['customer'] = workspace.stripe_customer_id
+
+        session = stripe.checkout.Session.create(**session_params)
+        return Response({
+            'checkout_url': session.url,
+            'session_id': session.id,
+        })
+    except Workspace.DoesNotExist:
+        return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
+    except stripe.error.StripeError as e:
+        return Response({"error": f"Stripe error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+@extend_schema(
     summary="🔄 Change subscription plan (price)",
     description="Update the current Stripe subscription to a new price with proper proration.",
     request=ChangePlanSerializer,
@@ -1040,10 +1094,25 @@ def stripe_webhook(request):
         subscription_id = session.get('subscription')
         metadata = session.get('metadata', {})
         workspace_id = metadata.get('workspace_id') or session.get('client_reference_id')
+        reason = metadata.get('reason')
         
         logger.info("checkout.session.completed customer=%s subscription=%s workspace=%s meta=%s client_ref=%s",
                     customer_id, subscription_id, workspace_id, metadata, session.get('client_reference_id'))
         
+        # Minute pack one-time payment: credit minutes
+        if reason == 'minute_pack' and workspace_id:
+            try:
+                from core.models import WorkspaceUsage
+                workspace = Workspace.objects.get(id=workspace_id)
+                usage = WorkspaceUsage.get_or_create_current_usage(workspace)
+                # Idempotency per session/payment intent handled by global event id cache above
+                usage.extra_call_minutes = (usage.extra_call_minutes or 0) + 100
+                usage.save()
+                logger.info("Credited 100 minutes to workspace %s via minute pack", workspace_id)
+            except Exception as e:
+                logger.exception("Failed to credit minute pack for workspace %s: %s", workspace_id, e)
+            return Response({"received": True})
+
         if workspace_id and subscription_id:
             try:
                 workspace = Workspace.objects.get(id=workspace_id)

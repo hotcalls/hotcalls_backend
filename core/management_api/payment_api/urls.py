@@ -7,6 +7,7 @@ from .views import (
     stripe_webhook,
     list_stripe_products,
     create_checkout_session,
+    create_minute_pack_checkout,
     change_subscription_plan,
     get_subscription_status,
     cancel_subscription,
@@ -51,6 +52,11 @@ urlpatterns = [
     path('stripe/change-plan/', 
          change_subscription_plan, 
          name='change-subscription-plan'),
+
+    # One-time minute pack checkout (Stripe Checkout)
+    path('stripe/minute-pack-checkout/',
+         create_minute_pack_checkout,
+         name='minute-pack-checkout'),
     
     path('workspaces/<uuid:workspace_id>/subscription/', 
          get_subscription_status, 
