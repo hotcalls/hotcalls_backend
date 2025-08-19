@@ -212,11 +212,14 @@ class AgentKnowledgeDocumentsView(APIView):
 
             # After storing the PDF, synchronously generate a verbatim text via OpenAI Vision
             try:
-                # Resolve storage path and URL for the PDF
+                # Resolve actual stored path and URL for the PDF (use FileField path)
                 storage = AzureMediaStorage()
-                pdf_path = f"{_docs_prefix(agent_id)}/{safe_display_name}"
                 try:
-                    pdf_url = storage.url(pdf_path)
+                    pdf_path = agent.kb_pdf.name  # already includes upload_to path
+                except Exception:
+                    pdf_path = None
+                try:
+                    pdf_url = storage.url(pdf_path) if pdf_path else None
                 except Exception:
                     pdf_url = None
 
@@ -269,8 +272,9 @@ class AgentKnowledgeDocumentsView(APIView):
 
                         # Save .txt next to the PDF
                         try:
-                            base_no_ext = os.path.splitext(safe_display_name)[0]
-                            txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                            base_no_ext = os.path.splitext(os.path.basename(pdf_path or safe_display_name))[0]
+                            dir_path = os.path.dirname(pdf_path) if pdf_path else _docs_prefix(agent_id)
+                            txt_path = f"{dir_path}/{base_no_ext}.txt"
                             with storage.open(txt_path, "wb") as fh:
                                 fh.write(text.encode("utf-8"))
                         except Exception as write_exc:
@@ -539,7 +543,7 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
 
             try:
                 base_no_ext = os.path.splitext(os.path.basename(path))[0]
-                txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                txt_path = f"{os.path.dirname(path)}/{base_no_ext}.txt"
                 if storage.exists(txt_path):
                     text_url = storage.url(txt_path)
             except Exception:
@@ -552,7 +556,7 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
             deterministic = uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent.agent_id}/{current_name}")
             if str(deterministic) != str(doc_id):
                 raise Http404("File not found")
-            path = f"{_docs_prefix(agent_id)}/{current_name}"
+            path = agent.kb_pdf.name
             if not storage.exists(path):
                 raise Http404("File not found")
             try:
@@ -561,7 +565,7 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
                 return Response({"detail": "Presign not supported by storage backend."}, status=status.HTTP_501_NOT_IMPLEMENTED)
             try:
                 base_no_ext = os.path.splitext(current_name)[0]
-                txt_path = f"{_docs_prefix(agent_id)}/{base_no_ext}.txt"
+                txt_path = f"{os.path.dirname(path)}/{base_no_ext}.txt"
                 if storage.exists(txt_path):
                     text_url = storage.url(txt_path)
             except Exception:
