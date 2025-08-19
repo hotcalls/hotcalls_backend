@@ -994,6 +994,13 @@ class Agent(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    # Knowledge base (DB-only, like Voices): Single optional document per agent
+    kb_doc_id = models.UUIDField(null=True, blank=True, help_text="Knowledge Base document ID")
+    kb_doc_name = models.CharField(max_length=512, null=True, blank=True, help_text="Knowledge Base document display name")
+    kb_doc_url = models.URLField(max_length=1000, null=True, blank=True, help_text="Knowledge Base document URL (PDF)")
+    kb_doc_size = models.IntegerField(null=True, blank=True, help_text="Knowledge Base document size in bytes")
+    kb_doc_updated_at = models.DateTimeField(null=True, blank=True, help_text="When the KB document was last updated")
+    
     def __str__(self):
         return f"{self.name} ({self.workspace.workspace_name})"
 
