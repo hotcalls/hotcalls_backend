@@ -18,6 +18,7 @@ from django.core.cache import cache
 import requests
 import json
 from openai import OpenAI
+from django.core.files.base import ContentFile
 
 from core.models import Agent
 # Storage backend: prefer Azure in production, but gracefully fallback to local storage in tests/dev
@@ -253,18 +254,67 @@ class AgentKnowledgeDocumentsView(APIView):
                             }],
                         )
                         text = getattr(resp, "output_text", None) or ""
+                        logger.info("KB: OCR via file_id succeeded for agent=%s, bytes=%s", agent_id, len(text))
 
-                        # Save .txt next to the PDF
+                        # Save .txt next to the PDF (overwrite if exists)
                         try:
                             base_no_ext = os.path.splitext(os.path.basename(pdf_path or safe_display_name))[0]
                             dir_path = os.path.dirname(pdf_path) if pdf_path else _docs_prefix(agent_id)
                             txt_path = f"{dir_path}/{base_no_ext}.txt"
-                            with storage.open(txt_path, "wb") as fh:
-                                fh.write(text.encode("utf-8"))
+                            try:
+                                if storage.exists(txt_path):
+                                    storage.delete(txt_path)
+                            except Exception:
+                                pass
+                            storage.save(txt_path, ContentFile(text.encode("utf-8")))
+                            logger.info("KB: saved txt at %s", txt_path)
                         except Exception as write_exc:
                             logger.warning("KB: failed to write txt for %s: %s", agent_id, write_exc)
                     except Exception as ocr_exc:
-                        logger.warning("KB: OpenAI OCR failed for %s: %s", agent_id, ocr_exc)
+                        logger.warning("KB: OpenAI OCR via file_id failed for %s: %s", agent_id, ocr_exc)
+                        # Fallback: try using file_url if available
+                        try:
+                            pdf_url_fallback = None
+                            try:
+                                pdf_url_fallback = storage.url(pdf_path) if pdf_path else None
+                            except Exception:
+                                pdf_url_fallback = None
+                            if pdf_url_fallback:
+                                client = OpenAI(api_key=openai_api_key)
+                                resp2 = client.responses.create(
+                                    model=os.getenv('KNOWLEDGE_VISION_MODEL', 'gpt-4o-mini'),
+                                    temperature=0,
+                                    input=[{
+                                        "role": "user",
+                                        "content": [
+                                            {
+                                                "type": "input_text",
+                                                "text": (
+                                                    "Extract the full plain text from this PDF. "
+                                                    "Preserve reading order, merge hyphenated line breaks, "
+                                                    "and render tables as TSV (tab-separated). Output ONLY text."
+                                                )
+                                            },
+                                            {"type": "input_file", "file_url": pdf_url_fallback},
+                                        ],
+                                    }],
+                                )
+                                text2 = getattr(resp2, "output_text", None) or ""
+                                logger.info("KB: OCR via file_url fallback succeeded for agent=%s, bytes=%s", agent_id, len(text2))
+                                base_no_ext = os.path.splitext(os.path.basename(pdf_path or safe_display_name))[0]
+                                dir_path = os.path.dirname(pdf_path) if pdf_path else _docs_prefix(agent_id)
+                                txt_path = f"{dir_path}/{base_no_ext}.txt"
+                                try:
+                                    if storage.exists(txt_path):
+                                        storage.delete(txt_path)
+                                except Exception:
+                                    pass
+                                storage.save(txt_path, ContentFile(text2.encode("utf-8")))
+                                logger.info("KB: saved txt at %s (fallback)", txt_path)
+                            else:
+                                logger.warning("KB: No pdf_url available for fallback OCR")
+                        except Exception as fb_exc:
+                            logger.warning("KB: OpenAI OCR fallback failed for %s: %s", agent_id, fb_exc)
                 else:
                     logger.warning("KB: OPENAI_API_KEY not set; skipping OCR")
             except Exception as vision_exc:
