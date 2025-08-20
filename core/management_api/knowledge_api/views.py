@@ -532,8 +532,19 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
     permission_classes = [AgentKnowledgePermission]
 
     @extend_schema(
+        summary="🔗 Presign URLs for a document",
+        description="Returns direct URLs for the PDF (`url`) and, if available, the extracted plain text (`text_url`).",
         request=PresignRequestSerializer,
-        responses={200: {"type": "object"}},
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "Direct HTTPS URL to the PDF"},
+                    "text_url": {"type": "string", "nullable": True, "description": "Direct HTTPS URL to the extracted .txt (if available)"}
+                }
+            },
+            404: {"description": "File not found"}
+        },
         parameters=[
             OpenApiParameter(name="agent_id", location=OpenApiParameter.PATH, description="Agent UUID", required=True),
             OpenApiParameter(name="doc_id", location=OpenApiParameter.PATH, description="Document UUID", required=True),
