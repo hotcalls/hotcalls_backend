@@ -761,6 +761,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             "language": base_agent.language,
             "retry_interval": base_agent.retry_interval,
             "max_retries": base_agent.max_retries,
+            "max_call_duration_minutes": base_agent.max_call_duration_minutes,
             "workdays": base_agent.workdays,
             "call_from": str(base_agent.call_from) if base_agent.call_from else "",
             "call_to": str(base_agent.call_to) if base_agent.call_to else "",

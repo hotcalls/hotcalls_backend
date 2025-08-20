@@ -67,6 +67,8 @@ async def _make_call_async(
             "character": agent_config.get("character", ""),
             "greeting_inbound": agent_config.get("greeting_inbound", ""),
             "greeting_outbound": agent_config.get("greeting_outbound", ""),
+            # Provide max duration in seconds directly to the agent runtime
+            "max_call_duration_s": int(max(1, 60 * int(agent_config.get("max_call_duration_minutes", 30) or 30))),
         },
         "lead_data": {
             "id": lead_data.get("id", ""),

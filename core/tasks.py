@@ -217,6 +217,8 @@ def trigger_call(self, call_task_id):
             "greeting_outbound": agent.greeting_outbound,
             "greeting_inbound": agent.greeting_inbound,
             "character": agent.character,
+            # Provide max duration to agent runtime; convert minutes→seconds downstream
+            "max_call_duration_minutes": agent.max_call_duration_minutes,
             "workspace_name": workspace.workspace_name,
             "sip_trunk_id": sip_trunk_id,  # Pass dynamic trunk ID
         }
