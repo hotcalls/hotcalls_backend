@@ -24,17 +24,18 @@ SUCCESS_DISCONNECTION_REASONS = [
     DisconnectionReason.USER_HANGUP,  # User completed call
     DisconnectionReason.AGENT_HANGUP,  # Agent completed call
     DisconnectionReason.CALL_TRANSFER,  # Call was transferred
-    DisconnectionReason.VOICEMAIL_REACHED,  # Message left successfully
 ]
 
 # Disconnection reasons that should trigger retry WITH attempt increment
-# These are real attempts where the user actively didn't respond/declined
+# These are real attempts where a call was placed and should count against attempts
 RETRY_WITH_INCREMENT_REASONS = [
     DisconnectionReason.DIAL_BUSY,  # Line busy - real attempt
     DisconnectionReason.DIAL_FAILED,  # Call failed - real attempt
     DisconnectionReason.DIAL_NO_ANSWER,  # No answer - real attempt
     DisconnectionReason.USER_DECLINED,  # User actively declined
     DisconnectionReason.MARKED_AS_SPAM,  # User marked as spam
+    DisconnectionReason.INACTIVITY,  # Conversation timed out after connect → counts as an attempt
+    DisconnectionReason.VOICEMAIL_REACHED,  # Message left successfully
 ]
 
 # Disconnection reasons that indicate permanent failure - DELETE immediately
@@ -50,7 +51,6 @@ PERMANENT_FAILURE_REASONS = [
 # Disconnection reasons that should trigger retry WITHOUT attempt increment
 # These are technical/system issues, not user rejections
 RETRY_WITHOUT_INCREMENT_REASONS = [
-    DisconnectionReason.INACTIVITY,  # Timeout, not user fault
     DisconnectionReason.MAX_DURATION_REACHED,  # System limit reached
     DisconnectionReason.CONCURRENCY_LIMIT_REACHED,  # System overload
     DisconnectionReason.ERROR_NO_AUDIO_RECEIVED,  # Technical issue
