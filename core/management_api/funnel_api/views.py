@@ -20,7 +20,6 @@ from .serializers import (
     LeadProcessingStatsSerializer
 )
 from .filters import LeadFunnelFilter
-from core.quotas import enforce_and_record, QuotaExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +39,6 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get funnels for user's workspaces with optimized queries"""
         user = self.request.user
-        
-        # TEMPORARY DEBUG: Get all funnels to bypass workspace filtering
-        # Get user's workspaces
-        # user_workspaces = user.mapping_user_workspaces.all()
         
         # Optimize queries with select_related and prefetch_related
         # Note: 'agent' is a reverse OneToOne relation, so we use prefetch_related
@@ -95,17 +90,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Explicit quota enforcement for max_funnels using the validated workspace
-        workspace = serializer.validated_data.get('workspace')
-        try:
-            enforce_and_record(
-                workspace=workspace,
-                route_name='funnel_api:leadfunnel-list',
-                http_method='POST',
-                amount=1,
-            )
-        except QuotaExceeded as e:
-            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        # No quota enforcement for funnels anymore
         
         with transaction.atomic():
             funnel = serializer.save()
@@ -395,7 +380,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             'meta_form_name': funnel.meta_lead_form.name if funnel.meta_lead_form else None,
         }
         
-        return Response(stats) 
+        return Response(stats)
 
 
 @extend_schema_view(

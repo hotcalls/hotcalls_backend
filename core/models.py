@@ -483,13 +483,6 @@ class Plan(models.Model):
         help_text="Yearly price in EUR"
     )
     
-    # Cosmetic/Access Features (not tracked in usage)
-    cosmetic_features = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Non-measurable plan features like whitelabel, priority support, etc."
-    )
-    
     is_active = models.BooleanField(
         default=True,
         help_text="Is this plan available for new subscriptions?"

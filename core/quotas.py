@@ -179,17 +179,13 @@ def enforce_and_record(
         limit = feature_usage.limit
         effective_limit = limit
         
-        # SPECIAL CASE: For capacity limits (max_users, max_agents, max_funnels), check actual entity count
+        # SPECIAL CASE: For capacity limits (max_users, max_agents), check actual entity count
         if feature.feature_name == 'max_agents':
             from core.models import Agent
             current_count = Agent.objects.filter(workspace=workspace).count()
             new_value = current_count + amount
         elif feature.feature_name == 'max_users':
             current_count = workspace.users.count()
-            new_value = current_count + amount
-        elif feature.feature_name == 'max_funnels':
-            from core.models import LeadFunnel
-            current_count = LeadFunnel.objects.filter(workspace=workspace).count()
             new_value = current_count + amount
         else:
             # For consumption limits (call_minutes), use quota tracking
@@ -210,7 +206,7 @@ def enforce_and_record(
             )
         
         # Record usage atomically (only for consumption-based features, not capacity limits)
-        if feature.feature_name not in ['max_agents', 'max_users', 'max_funnels']:
+        if feature.feature_name not in ['max_agents', 'max_users']:
             feature_usage.used_amount = models.F("used_amount") + amount
             feature_usage.save(update_fields=["used_amount"])
 
@@ -413,15 +409,12 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
             period_end=period_end,
         ).first()
         
-        # SPECIAL CASE: For capacity limits (max_users, max_agents, max_funnels), count actual entities
+        # SPECIAL CASE: For capacity limits (max_users, max_agents), count actual entities
         if feature.feature_name == 'max_agents':
             from core.models import Agent
             used = Decimal(str(Agent.objects.filter(workspace=workspace).count()))
         elif feature.feature_name == 'max_users':
             used = Decimal(str(workspace.users.count()))
-        elif feature.feature_name == 'max_funnels':
-            from core.models import LeadFunnel
-            used = Decimal(str(LeadFunnel.objects.filter(workspace=workspace).count()))
         else:
             # For consumption limits (call_minutes), use quota tracking
             if not usage_container:

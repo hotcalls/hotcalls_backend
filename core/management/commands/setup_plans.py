@@ -33,9 +33,6 @@ class Command(BaseCommand):
         # Create plans with features
         self._create_plans(features)
         
-        # Clean up old cosmetic features that are now in JSON field
-        self._cleanup_old_cosmetic_features()
-        
         # Create endpoint mappings for quota enforcement
         self._create_endpoint_mappings(features)
         
@@ -51,17 +48,11 @@ class Command(BaseCommand):
         self.stdout.write('📋 Creating features...')
         
         # ONLY MEASURABLE/ENFORCEABLE FEATURES
-        # Cosmetic features are now stored in Plan.cosmetic_features JSON field
         feature_definitions = [
             {
                 'name': 'call_minutes',
                 'description': 'Included call minutes per month',
                 'unit': 'minute',
-            },
-            {
-                'name': 'overage_rate_cents',
-                'description': 'Cost per minute after included minutes are used (in cents)',
-                'unit': 'general_unit',
             },
             {
                 'name': 'max_users',
@@ -71,11 +62,6 @@ class Command(BaseCommand):
             {
                 'name': 'max_agents',
                 'description': 'Maximum number of agents allowed per workspace',
-                'unit': 'general_unit',
-            },
-            {
-                'name': 'max_funnels',
-                'description': 'Maximum number of lead funnels allowed per workspace',
                 'unit': 'general_unit',
             },
         ]
@@ -120,22 +106,13 @@ class Command(BaseCommand):
             price_monthly=Decimal('199.00'),
             description='Ideal für Einzelpersonen und kleine Teams',
             stripe_product_id='prod_SlrPR8OxP3GpFW',
-            stripe_price_id_monthly='price_1RqJh1Rreb0r83Oz2N9nVrl9',
-            cosmetic_features={
-                'whitelabel_solution': False,
-                'crm_integrations': False,
-                'priority_support': 'standard',
-                'custom_voice_cloning': False,
-                'advanced_analytics': False,
-            }
+            stripe_price_id_monthly='price_1RqJh1Rreb0r83Oz2N9nVrl9'
         )
         
         # Add features to Start plan
         self._add_feature_to_plan(start_plan, features['call_minutes'], 250)
-        self._add_feature_to_plan(start_plan, features['overage_rate_cents'], 49)  # 0,49€ = 49 Cent
         self._add_feature_to_plan(start_plan, features['max_users'], 3)  # 3 User (Admin + 2 User)
         self._add_feature_to_plan(start_plan, features['max_agents'], 1)  # 1 Agent pro Workspace
-        self._add_feature_to_plan(start_plan, features['max_funnels'], 1)  # 1 Funnel pro Workspace
         
         # PRO PLAN
         pro_plan = self._create_plan(
@@ -143,22 +120,13 @@ class Command(BaseCommand):
             price_monthly=Decimal('549.00'),
             description='Am beliebtesten - Ideal für Unternehmen mit höherem Volumen',
             stripe_product_id='prod_SlrQWBeZ7ecw6d',
-            stripe_price_id_monthly='price_1RqJheRreb0r83OzM0jmhwzX',
-            cosmetic_features={
-                'whitelabel_solution': False,
-                'crm_integrations': True,
-                'priority_support': 'premium',
-                'custom_voice_cloning': False,
-                'advanced_analytics': True,
-            }
+            stripe_price_id_monthly='price_1RqJheRreb0r83OzM0jmhwzX'
         )
         
         # Add features to Pro plan
         self._add_feature_to_plan(pro_plan, features['call_minutes'], 1000)
-        self._add_feature_to_plan(pro_plan, features['overage_rate_cents'], 29)  # 0,29€ = 29 Cent
         self._add_feature_to_plan(pro_plan, features['max_users'], 5)  # 5 User (Admin + 4 User)
         self._add_feature_to_plan(pro_plan, features['max_agents'], 3)  # 3 Agents pro Workspace
-        self._add_feature_to_plan(pro_plan, features['max_funnels'], 3)  # 3 Funnels pro Workspace
         
         # ENTERPRISE PLAN
         enterprise_plan = self._create_plan(
@@ -166,27 +134,16 @@ class Command(BaseCommand):
             price_monthly=None,  # Individuell
             description='Individuelle Lösungen für große Unternehmen und Agenturen - Preis auf Anfrage',
             stripe_product_id=None,  # No Stripe product - custom pricing
-            stripe_price_id_monthly=None,  # Enterprise hat keinen festen Preis
-            cosmetic_features={
-                'whitelabel_solution': True,
-                'crm_integrations': True,
-                'priority_support': 'enterprise',
-                'custom_voice_cloning': True,
-                'advanced_analytics': True,
-            }
+            stripe_price_id_monthly=None  # Enterprise hat keinen festen Preis
         )
         
         # Add features to Enterprise plan
         self._add_feature_to_plan(enterprise_plan, features['call_minutes'], 999999)  # Unlimited
-        self._add_feature_to_plan(enterprise_plan, features['overage_rate_cents'], 0)  # No overage
         self._add_feature_to_plan(enterprise_plan, features['max_users'], 999999)  # Unlimited users
         self._add_feature_to_plan(enterprise_plan, features['max_agents'], 999999)  # Unlimited agents
-        self._add_feature_to_plan(enterprise_plan, features['max_funnels'], 999999)  # Unlimited funnels
 
-    def _create_plan(self, name, price_monthly, description, stripe_product_id=None, stripe_price_id_monthly=None, cosmetic_features=None):
-        """Create a single plan with Stripe IDs and cosmetic features"""
-        if cosmetic_features is None:
-            cosmetic_features = {}
+    def _create_plan(self, name, price_monthly, description, stripe_product_id=None, stripe_price_id_monthly=None):
+        """Create a single plan with Stripe IDs"""
             
         plan, created = Plan.objects.get_or_create(
             plan_name=name,
@@ -194,7 +151,6 @@ class Command(BaseCommand):
                 'price_monthly': price_monthly,
                 'stripe_product_id': stripe_product_id,
                 'stripe_price_id_monthly': stripe_price_id_monthly,
-                'cosmetic_features': cosmetic_features,
                 'is_active': True
             }
         )
@@ -204,7 +160,6 @@ class Command(BaseCommand):
             plan.price_monthly = price_monthly
             plan.stripe_product_id = stripe_product_id
             plan.stripe_price_id_monthly = stripe_price_id_monthly
-            plan.cosmetic_features = cosmetic_features
             plan.save()
         
         status = '✅ Created' if created else '🔄 Updated'
@@ -216,12 +171,6 @@ class Command(BaseCommand):
             self.stdout.write(f'      🔗 Stripe Product: {stripe_product_id}')
         if stripe_price_id_monthly:
             self.stdout.write(f'      💳 Stripe Price: {stripe_price_id_monthly}')
-        
-        # Show cosmetic features
-        if cosmetic_features:
-            enabled_features = [k for k, v in cosmetic_features.items() if v and v != 'standard']
-            if enabled_features:
-                self.stdout.write(f'      ✨ Cosmetic Features: {", ".join(enabled_features)}')
         
         return plan
 
@@ -243,40 +192,7 @@ class Command(BaseCommand):
         
         return plan_feature 
 
-    def _cleanup_old_cosmetic_features(self):
-        """Remove old cosmetic features that are now stored in Plan.cosmetic_features JSON field"""
-        from core.models import Feature, PlanFeature
-        
-        self.stdout.write('🧹 Cleaning up old cosmetic features...')
-        
-        # List of cosmetic features that should be removed from Feature table
-        cosmetic_feature_names = [
-            'whitelabel_solution',
-            'crm_integrations', 
-            'priority_support',
-            'custom_voice_cloning',
-            'advanced_analytics'
-        ]
-        
-        total_deleted = 0
-        
-        for feature_name in cosmetic_feature_names:
-            try:
-                feature = Feature.objects.get(feature_name=feature_name)
-                
-                # Delete all PlanFeature mappings first (to avoid foreign key constraints)
-                plan_features_deleted = PlanFeature.objects.filter(feature=feature).delete()[0]
-                
-                # Delete the feature itself
-                feature.delete()
-                
-                total_deleted += 1
-                self.stdout.write(f'  🗑️ Deleted: {feature_name} (and {plan_features_deleted} plan mappings)')
-                
-            except Feature.DoesNotExist:
-                self.stdout.write(f'  ✔️ Already removed: {feature_name}')
-        
-        self.stdout.write(f'🎯 Cleaned up {total_deleted} old cosmetic features')
+    # Cosmetic cleanup removed; cosmetic features are no longer supported
 
     def _create_endpoint_mappings(self, features):
         """Create EndpointFeature mappings for quota enforcement"""
@@ -327,14 +243,6 @@ class Command(BaseCommand):
                 'http_method': 'POST',
                 'feature': features['max_users'],
                 'description': 'Adding users to workspace'
-            },
-            
-            # Funnel Management (consumes max_funnels feature)
-            {
-                'route_name': 'funnel_api:leadfunnel-list',
-                'http_method': 'POST',
-                'feature': features['max_funnels'],
-                'description': 'Creating new lead funnels'
             },
             
             # NOTE: Overdraft protection is handled in trigger_call task - calls allowed

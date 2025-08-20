@@ -73,6 +73,8 @@ class PlanViewSet(viewsets.ModelViewSet):
             plan_features = {}
             for pf in plan.planfeature_set.all():
                 feature_name = pf.feature.feature_name
+                if feature_name not in ['call_minutes', 'max_users', 'max_agents']:
+                    continue
                 all_features.add(feature_name)
                 plan_features[feature_name] = {
                     'limit': pf.limit,
@@ -86,7 +88,7 @@ class PlanViewSet(viewsets.ModelViewSet):
         
         return Response({
             'comparison': comparison_data,
-            'available_features': list(all_features),
+            'available_features': [f for f in list(all_features) if f in ['call_minutes', 'max_users', 'max_agents']],
             'count': len(comparison_data)
         })
     
@@ -116,12 +118,9 @@ class PlanViewSet(viewsets.ModelViewSet):
         
         pricing_data = []
         for plan in queryset:
-            # Hole Minuten und Überschreitungskosten
+            # Hole Minuten (keine Overage-Anzeige mehr)
             call_minutes = plan.planfeature_set.filter(
                 feature__feature_name='call_minutes'
-            ).first()
-            overage_rate = plan.planfeature_set.filter(
-                feature__feature_name='overage_rate_cents'
             ).first()
             
             pricing_data.append({
@@ -129,9 +128,7 @@ class PlanViewSet(viewsets.ModelViewSet):
                 'name': plan.plan_name,
                 'monthly_price': plan.price_monthly,
                 'formatted_price': f"{plan.price_monthly}€/Monat" if plan.price_monthly else "Individuell",
-                'included_minutes': call_minutes.limit if call_minutes else 0,
-                'overage_rate_per_minute': (overage_rate.limit / 100) if overage_rate else 0,
-                'overage_rate_formatted': f"{overage_rate.limit/100:.2f}€/Min" if overage_rate else "Keine Zusatzkosten"
+                'included_minutes': call_minutes.limit if call_minutes else 0
             })
         
         return Response({

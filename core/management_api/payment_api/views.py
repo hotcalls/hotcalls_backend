@@ -1513,8 +1513,8 @@ def get_workspace_usage_status(request, workspace_id):
             period_start = period_end = None
             days_remaining = None
         
-        # Get all measurable features (exclude cosmetic ones)
-        features = Feature.objects.all()
+        # Get all measurable features (only those we support)
+        features = Feature.objects.filter(feature_name__in=['call_minutes', 'max_users', 'max_agents'])
         feature_usage = {}
         
         for feature in features:
@@ -1600,10 +1600,6 @@ def get_workspace_usage_status(request, workspace_id):
             } if period_start and period_end else None,
             'features': feature_usage
         }
-        
-        # Add cosmetic features from plan if available
-        if plan and plan.cosmetic_features:
-            response_data['cosmetic_features'] = plan.cosmetic_features
         
         return Response(response_data, status=status.HTTP_200_OK)
         
