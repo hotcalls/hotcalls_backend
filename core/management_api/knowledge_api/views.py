@@ -230,9 +230,11 @@ class AgentKnowledgeDocumentsView(APIView):
                 if openai_api_key:
                     try:
                         client = OpenAI(api_key=openai_api_key)
-                        # Upload PDF bytes directly to OpenAI as user_data
+                        # Upload PDF bytes directly to OpenAI as user_data (tuple form)
                         with storage.open(agent.kb_pdf.name, "rb") as fh:
-                            up = client.files.create(file=fh, purpose="user_data")
+                            pdf_bytes = fh.read()
+                        upload_name = os.path.basename(agent.kb_pdf.name) or safe_display_name or "document.pdf"
+                        up = client.files.create(file=(upload_name, pdf_bytes, "application/pdf"), purpose="user_data")
 
                         # Ask vision-capable model to extract full plain text
                         resp = client.responses.create(
