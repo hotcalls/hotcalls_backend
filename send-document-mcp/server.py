@@ -10,14 +10,10 @@ load_dotenv('.env')
 
 
 def resolve_livekit_token(explicit_token: str | None = None) -> str:
-    """Resolve LiveKit token from explicit arg or environment fallback.
-    Raises if token is not available."""
+    """Resolve LiveKit token strictly from explicit arg. No fallbacks."""
     if explicit_token:
         return explicit_token
-    env_token = os.getenv('LIVEKIT_TOKEN')
-    if env_token:
-        return env_token
-    raise ValueError("Missing LiveKit token. Provide 'livekit_token' in tool args or set X-LiveKit-Token forwarding path.")
+    raise ValueError("Missing LiveKit token. Provide 'livekit_token' in tool args.")
 
 
 # MCP server instance
@@ -29,6 +25,7 @@ mcp = FastMCP(
 
     Use send_document_to_lead to trigger the email delivery.
     Always obtain user confirmation before sending documents.
+    Authentication: pass the LiveKit token via tool arg; MCP forwards it in X-LiveKit-Token header.
     """,
     host="0.0.0.0",
     port=8000
