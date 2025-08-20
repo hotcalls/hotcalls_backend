@@ -93,7 +93,7 @@ services:
 
   outboundagent:
     image: python:3.11-slim
-    working_dir: /app/outboundagent
+    working_dir: /app
     env_file: .env
     environment:
       # Database: Use read-only user from .env, only override host for Docker
@@ -109,7 +109,7 @@ services:
         condition: service_healthy
     volumes:
       - ./outboundagent:/app/outboundagent:delegated
-    command: bash -lc "pip install -r requirements.txt && pip install watchfiles && python -m watchfiles 'python agent.py start'"
+    command: bash -lc "pip install -r outboundagent/requirements.txt && pip install watchfiles && python -m watchfiles 'python -m outboundagent.agent start' outboundagent"
 
   celery:
     build:
