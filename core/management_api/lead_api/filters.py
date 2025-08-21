@@ -12,6 +12,8 @@ class LeadFilter(django_filters.FilterSet):
     surname = django_filters.CharFilter(lookup_expr='icontains')
     email = django_filters.CharFilter(lookup_expr='icontains')
     phone = django_filters.CharFilter(lookup_expr='icontains')
+    # Workspace filter (by UUID)
+    workspace = django_filters.UUIDFilter(field_name='workspace')
     
     # Date filters
     created_after = django_filters.DateTimeFilter(field_name='created_at', lookup_expr='gte')
@@ -26,7 +28,7 @@ class LeadFilter(django_filters.FilterSet):
     
     class Meta:
         model = Lead
-        fields = ['name', 'surname', 'email', 'phone']
+        fields = ['name', 'surname', 'email', 'phone', 'workspace']
     
     def filter_search(self, queryset, name, value):
         """Global search across multiple fields"""

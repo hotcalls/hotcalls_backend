@@ -7,10 +7,14 @@ from .views import (
     stripe_webhook,
     list_stripe_products,
     create_checkout_session,
+    create_minute_pack_checkout,
+    change_subscription_plan,
     get_subscription_status,
     cancel_subscription,
+    resume_subscription,
     check_workspace_subscription,
-    get_workspace_usage_status
+    get_workspace_usage_status,
+    purchase_minute_pack
 )
 
 urlpatterns = [
@@ -45,6 +49,14 @@ urlpatterns = [
     path('stripe/create-checkout-session/', 
          create_checkout_session, 
          name='create-checkout-session'),
+    path('stripe/change-plan/', 
+         change_subscription_plan, 
+         name='change-subscription-plan'),
+
+    # One-time minute pack checkout (Stripe Checkout)
+    path('stripe/minute-pack-checkout/',
+         create_minute_pack_checkout,
+         name='minute-pack-checkout'),
     
     path('workspaces/<uuid:workspace_id>/subscription/', 
          get_subscription_status, 
@@ -57,9 +69,17 @@ urlpatterns = [
     path('workspaces/<uuid:workspace_id>/subscription/cancel/', 
          cancel_subscription, 
          name='cancel-subscription'),
+    path('workspaces/<uuid:workspace_id>/subscription/resume/', 
+         resume_subscription, 
+         name='resume-subscription'),
     
     # Usage and quota management
     path('workspaces/<uuid:workspace_id>/usage/', 
          get_workspace_usage_status, 
          name='workspace-usage-status'),
+    
+    # Minute pack purchase (100 minutes per pack at 0.19€/min)
+    path('workspaces/<uuid:workspace_id>/purchase-minute-pack/',
+         purchase_minute_pack,
+         name='purchase-minute-pack'),
 ] 

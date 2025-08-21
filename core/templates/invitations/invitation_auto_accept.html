@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Einladung wird angenommen...</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; display: grid; place-items: center; min-height: 100vh; background: #fff; color: #111; }
+      .box { text-align: center; padding: 24px; }
+    </style>
+</head>
+<body>
+  <div class="box">
+    <p>Einladung wird angenommen...</p>
+  </div>
+  <script>
+    (async function() {
+      try {
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          window.location.replace("{{ login_redirect }}");
+          return;
+        }
+        const resp = await fetch("{{ accept_api_url }}", {
+          method: 'POST',
+          headers: {
+            'Authorization': 'Token ' + token,
+            'Content-Type': 'application/json'
+          }
+        });
+        if (resp.ok) {
+          window.location.replace("{{ dashboard_redirect }}");
+          return;
+        }
+        // If unauthorized, force login with next back here
+        if (resp.status === 401) {
+          window.location.replace("{{ login_redirect }}");
+          return;
+        }
+        // On any other error, still send to dashboard to avoid blank page
+        window.location.replace("{{ dashboard_redirect }}");
+      } catch (e) {
+        window.location.replace("{{ dashboard_redirect }}");
+      }
+    })();
+  </script>
+</body>
+</html>
+
+

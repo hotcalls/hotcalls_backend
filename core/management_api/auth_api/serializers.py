@@ -33,7 +33,10 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Create user with email verification required and automatic workspace creation"""
+        """Create user with email verification required and automatic workspace creation
+        - If the registration originates from an invitation accept flow (next=/invitations/<token>/accept/),
+          do NOT create a default workspace here. The user will be added to the invited workspace.
+        """
         validated_data.pop('password_confirm')
         password = validated_data.pop('password')
         
@@ -47,8 +50,27 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         # Send verification email
         send_email_verification(user, self.context.get('request'))
         
-        # Create workspace for the user automatically
-        workspace = create_user_workspace(user)
+        # Create workspace for the user automatically unless this is an invite-origin registration
+        workspace = None
+        try:
+            request = self.context.get('request')
+            next_param = None
+            if request is not None:
+                # support both JSON body next and query param next
+                next_param = request.query_params.get('next') or request.data.get('next')
+            is_invite_signup = bool(next_param and '/invitations/' in next_param and '/accept/' in next_param)
+        except Exception:
+            is_invite_signup = False
+
+        # Additionally, if there is an existing pending invitation for this email, skip default workspace
+        try:
+            from core.models import WorkspaceInvitation
+            has_pending_invite = WorkspaceInvitation.objects.filter(email=user.email, status='pending').exists()
+        except Exception:
+            has_pending_invite = False
+
+        if not is_invite_signup and not has_pending_invite:
+            workspace = create_user_workspace(user)
         
         # Log workspace creation result
         if workspace:

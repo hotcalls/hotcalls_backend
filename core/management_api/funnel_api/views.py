@@ -40,10 +40,6 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         """Get funnels for user's workspaces with optimized queries"""
         user = self.request.user
         
-        # TEMPORARY DEBUG: Get all funnels to bypass workspace filtering
-        # Get user's workspaces
-        # user_workspaces = user.mapping_user_workspaces.all()
-        
         # Optimize queries with select_related and prefetch_related
         # Note: 'agent' is a reverse OneToOne relation, so we use prefetch_related
         queryset = LeadFunnel.objects.all().select_related(
@@ -93,6 +89,8 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         """Create a new lead funnel with atomic transaction"""
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        
+        # No quota enforcement for funnels anymore
         
         with transaction.atomic():
             funnel = serializer.save()
@@ -269,7 +267,13 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'])
     def variables(self, request, pk=None):
-        """Return available variables (core + custom keys from recent leads)."""
+        """Return available variables (core + custom keys from recent leads).
+
+        Keys are normalized to EN canonical. We also provide a German label for display.
+        For CSV sources, we expose all top-level keys found in `Lead.variables` in addition to
+        any nested `variables.custom` keys. Core contact keys are always provided separately and
+        are excluded from the custom list.
+        """
         funnel = self.get_object()
         # Core variables always available
         core_vars = [
@@ -279,19 +283,67 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             {'key': 'email', 'label': 'E-Mail', 'category': 'contact', 'type': 'email'},
             {'key': 'phone', 'label': 'Telefon', 'category': 'contact', 'type': 'phone'},
         ]
-        # Collect custom keys from recent leads
-        recent = list(funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100])
+
+        # Collect custom keys from recent leads' variables
+        recent = list(
+            funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100]
+        )
+
+        excluded = {"first_name", "last_name", "full_name", "email", "phone", "matched_keys", "raw", "meta", "source", "import_batch_id", "external_id", "id", "lead_id"}
         custom_keys = set()
+
+        # Canonical mapping for display labels (EN key -> DE label)
+        LABEL_DE = {
+            'first_name': 'Vorname',
+            'last_name': 'Nachname',
+            'full_name': 'Vollständiger Name',
+            'email': 'E-Mail',
+            'phone': 'Telefon',
+            'company': 'Firma',
+            'industry': 'Branche',
+            'employee_count': 'Mitarbeiteranzahl',
+            'budget': 'Budget',
+        }
+
         for vars_dict in recent:
-            if isinstance(vars_dict, dict):
-                custom = vars_dict.get('custom') or {}
-                if isinstance(custom, dict):
-                    for k in custom.keys():
-                        custom_keys.add(str(k))
+            if not isinstance(vars_dict, dict):
+                continue
+            # 1) Collect flat keys from variables (CSV stores fields here)
+            for k, v in vars_dict.items():
+                try:
+                    key_str = str(k)
+                except Exception:
+                    continue
+                if key_str not in excluded:
+                    custom_keys.add(key_str)
+
+            # 2) Additionally collect keys from variables.custom (if present)
+            custom = vars_dict.get('custom') or {}
+            if isinstance(custom, dict):
+                for k in custom.keys():
+                    try:
+                        key_str = str(k)
+                    except Exception:
+                        continue
+                    custom_keys.add(key_str)
+
+        def label_de(key: str) -> str:
+            return LABEL_DE.get(key, key.replace('_', ' ').title())
+
         custom_vars = [
-            {'key': f'custom.{k}', 'label': k.replace('_', ' ').title(), 'category': 'custom', 'type': 'string'}
+            {
+                'key': k,
+                'label': label_de(k),
+                'category': 'custom',
+                'type': 'string'
+            }
             for k in sorted(custom_keys)
         ]
+
+        # Also translate labels for core vars to DE consistently
+        for item in core_vars:
+            item['label'] = label_de(item['key'])
+
         return Response(core_vars + custom_vars)
 
     @extend_schema(
@@ -328,7 +380,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
             'meta_form_name': funnel.meta_lead_form.name if funnel.meta_lead_form else None,
         }
         
-        return Response(stats) 
+        return Response(stats)
 
 
 @extend_schema_view(

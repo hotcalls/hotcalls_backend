@@ -5,7 +5,9 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample
 
-from core.models import User, Blacklist
+from core.models import User, Blacklist, Workspace
+from django.db.models import Count
+from rest_framework.authtoken.models import Token
 from .serializers import (
     UserSerializer, UserCreateSerializer, UserUpdateSerializer,
     UserStatusChangeSerializer, AdminUserCreateSerializer,
@@ -399,6 +401,91 @@ class UserViewSet(viewsets.ModelViewSet):
             serializer.save()
             return Response(UserSerializer(request.user).data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @extend_schema(
+        summary="🗑️ Delete my account",
+        description="Self-service deletion: removes the user from all workspaces and deactivates the account."
+                    " Blocks if the user is admin of any workspace or the last remaining member,"
+                    " or if there is an active/auslaufendes subscription in an admin workspace.",
+        responses={
+            204: OpenApiResponse(description="✅ Account deleted (deactivated) and sessions invalidated"),
+            400: OpenApiResponse(
+                description="❌ Cannot delete due to blockers",
+                examples=[
+                    OpenApiExample(
+                        'Blockers',
+                        summary='Admin or last member or active subscription',
+                        value={
+                            'admin_in_workspaces': [{'id': 'uuid', 'name': 'Workspace'}],
+                            'sole_member_workspaces': [{'id': 'uuid', 'name': 'Workspace'}],
+                            'active_subscriptions_in_admin_workspaces': [{'id': 'uuid', 'name': 'Workspace', 'subscription_status': 'active'}],
+                        }
+                    )
+                ]
+            ),
+            401: OpenApiResponse(description="🚫 Authentication required")
+        },
+        tags=["User Management"]
+    )
+    @action(detail=False, methods=['delete'], permission_classes=[IsAuthenticated])
+    def delete_me(self, request):
+        """Allow the authenticated user to delete their own account (soft delete)."""
+        user = request.user
+
+        # Workspaces where the user is admin
+        admin_ws = Workspace.objects.filter(admin_user_id=user.id)
+
+        # Workspaces where the user is the sole member
+        sole_ws = (
+            Workspace.objects.filter(users=user)
+            .annotate(member_count=Count('users'))
+            .filter(member_count=1)
+        )
+
+        # Active/chargeable subscriptions in admin workspaces
+        active_admin_ws = admin_ws.filter(
+            stripe_subscription_id__isnull=False,
+            subscription_status__in=['active', 'past_due', 'unpaid']
+        )
+
+        if admin_ws.exists() or sole_ws.exists() or active_admin_ws.exists():
+            def ws_minimal(qs, with_status=False):
+                data = []
+                for w in qs:
+                    item = {'id': str(w.id), 'name': w.workspace_name}
+                    if with_status:
+                        item['subscription_status'] = getattr(w, 'subscription_status', None)
+                    data.append(item)
+                return data
+
+            return Response({
+                'admin_in_workspaces': ws_minimal(admin_ws),
+                'sole_member_workspaces': ws_minimal(sole_ws),
+                'active_subscriptions_in_admin_workspaces': ws_minimal(active_admin_ws, with_status=True)
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Remove user from all workspaces
+        for w in Workspace.objects.filter(users=user).all():
+            w.users.remove(user)
+
+        # Soft delete: deactivate and anonymize profile fields
+        try:
+            user.is_active = False
+            user.status = 'forever_disabled'
+            user.first_name = ''
+            user.last_name = ''
+            user.phone = ''
+            user.save(update_fields=['is_active', 'status', 'first_name', 'last_name', 'phone'])
+        except Exception:
+            # Ensure deactivation even if field updates fail
+            user.is_active = False
+            user.status = 'forever_disabled'
+            user.save(update_fields=['is_active', 'status'])
+
+        # Invalidate tokens/sessions
+        Token.objects.filter(user=user).delete()
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
     
     @extend_schema(
         summary="🔄 Change user status",

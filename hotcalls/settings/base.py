@@ -120,6 +120,10 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'hotcalls.wsgi.application'
 
+# Authentication redirect target for non-API views (used by invitation templates)
+# Route users to the SPA login so they see the normal Hotcalls login UI
+LOGIN_URL = '/login'
+
 # Database configuration - FAIL FAST if not configured!
 # In staging/production, these MUST come from environment variables
 if ENVIRONMENT != 'development':
@@ -480,6 +484,9 @@ API_VERSION = 'v1'
 STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
 STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
 STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+# Minute-Pack configuration (one-time top-ups)
+STRIPE_MINUTE_PACK_PRICE_ID = os.getenv('STRIPE_MINUTE_PACK_PRICE_ID', '')
+STRIPE_MINUTE_PACK_PRODUCT_ID = os.getenv('STRIPE_MINUTE_PACK_PRODUCT_ID', '')
 
 # File upload settings
 # Maximum size for file uploads via forms (1GB for voice files and images)
@@ -530,4 +537,22 @@ GOOGLE_SCOPES = [
     'https://www.googleapis.com/auth/calendar.events',
     'https://www.googleapis.com/auth/userinfo.email',
     'openid'  # Required by Google OAuth for user identification
+]
+
+# Microsoft 365 / Exchange Online OAuth Configuration
+# Keep it simple and similar to Google; values are read from environment.
+MS_CLIENT_ID = os.getenv('MS_CLIENT_ID', '')
+MS_CLIENT_SECRET = os.getenv('MS_CLIENT_SECRET', '')
+MS_AUTH_TENANT = os.getenv('MS_AUTH_TENANT', 'organizations')  # restrict to work/school accounts
+MS_REDIRECT_URI = f"{SITE_URL}/api/calendars/microsoft_callback/"
+MS_SCOPES = [
+    'openid',
+    'profile',
+    'email',
+    'offline_access',
+    'User.Read',
+    'Calendars.ReadWrite',
+    'MailboxSettings.Read',
+    'OnlineMeetings.Read',
+    # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
 ]

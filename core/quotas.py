@@ -175,8 +175,9 @@ def enforce_and_record(
             defaults={"used_amount": Decimal('0')},
         )
         
-        # Get limit from plan
+        # Get limit from plan (may be None for unlimited)
         limit = feature_usage.limit
+        effective_limit = limit
         
         # SPECIAL CASE: For capacity limits (max_users, max_agents), check actual entity count
         if feature.feature_name == 'max_agents':
@@ -188,12 +189,20 @@ def enforce_and_record(
             new_value = current_count + amount
         else:
             # For consumption limits (call_minutes), use quota tracking
+            # Include any extra minutes purchased for this billing period
+            # effective_limit = plan limit + usage_container.extra_call_minutes (if exists)
+            if feature.feature_name == 'call_minutes':
+                # Some deployments may not yet have the field; guard access
+                extra = getattr(usage_container, 'extra_call_minutes', None)
+                if extra is not None and effective_limit is not None:
+                    effective_limit = effective_limit + Decimal(str(extra))
             new_value = feature_usage.used_amount + amount
         
         # Check quota
-        if limit is not None and new_value > limit:
+        # Compare against effective limit (plan + extras)
+        if effective_limit is not None and new_value > effective_limit:
             raise QuotaExceeded(
-                f"{feature.feature_name}: {new_value} exceeds plan limit {limit}"
+                f"{feature.feature_name}: {new_value} exceeds plan limit {effective_limit}"
             )
         
         # Record usage atomically (only for consumption-based features, not capacity limits)
@@ -434,15 +443,22 @@ def get_feature_usage_status_readonly(workspace, feature_name: str) -> dict:
         except PlanFeature.DoesNotExist:
             limit = None
             
+        # For call_minutes include extra purchased minutes for this period
+        effective_limit = limit
+        if feature.feature_name == 'call_minutes' and usage_container is not None and limit is not None:
+            extra = getattr(usage_container, 'extra_call_minutes', None)
+            if extra is not None:
+                effective_limit = effective_limit + Decimal(str(extra))
+        
         remaining = None
-        unlimited = limit is None
+        unlimited = effective_limit is None
         
         if not unlimited:
-            remaining = max(limit - used, Decimal('0'))
+            remaining = max(effective_limit - used, Decimal('0'))
             
         return {
             'used': used,
-            'limit': limit,
+            'limit': effective_limit,
             'remaining': remaining, 
             'unlimited': unlimited
         }

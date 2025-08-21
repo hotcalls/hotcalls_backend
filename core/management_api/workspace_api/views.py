@@ -22,7 +22,9 @@ from .serializers import (
     WorkspaceInvitationSerializer,
     WorkspaceInviteUserSerializer,
     WorkspaceInviteBulkSerializer,
-    InvitationDetailSerializer
+    InvitationDetailSerializer,
+    WorkspaceSmtpSettingsSerializer,
+    WorkspaceSmtpTestSerializer,
 )
 from .permissions import (
     WorkspacePermission, 
@@ -30,7 +32,8 @@ from .permissions import (
     IsWorkspaceMemberOrStaff,
     WorkspaceInvitationPermission,
     InvitationAcceptancePermission,
-    PublicInvitationViewPermission
+    PublicInvitationViewPermission,
+    IsWorkspaceAdmin
 )
 from .filters import WorkspaceFilter
 
@@ -238,8 +241,8 @@ from .filters import WorkspaceFilter
         
         **🔐 Permission Requirements**:
         - **❌ Regular Users**: No access to workspace deletion
-        - **❌ Staff Members**: Cannot delete workspaces
-        - **✅ Superuser ONLY**: Can delete workspaces
+        - **✅ Workspace Admin**: Can delete their own workspace
+        - **✅ Superuser**: Can delete any workspace
         
         **💥 Critical Impact**:
         - Removes all workspace data and relationships
@@ -255,11 +258,11 @@ from .filters import WorkspaceFilter
             204: OpenApiResponse(description="✅ Workspace deleted successfully"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(
-                description="🚫 Permission denied - Only superusers can delete workspaces",
+                description="🚫 Permission denied - Only workspace admin or superusers can delete workspaces",
                 examples=[
                     OpenApiExample(
                         'Insufficient Permissions',
-                        summary='Non-superuser attempted workspace deletion',
+                        summary='Non-admin attempted workspace deletion',
                         value={'detail': 'You do not have permission to perform this action.'}
                     )
                 ]
@@ -302,11 +305,144 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             return Workspace.objects.filter(users=user)
     
     def perform_create(self, serializer):
-        """Create workspace and automatically add creator as member"""
-        workspace = serializer.save()
-        # Add the creator as a member of the workspace
+        """Create workspace and automatically add creator as member and admin"""
+        workspace = serializer.save(creator=self.request.user, admin_user=self.request.user)
         workspace.users.add(self.request.user)
         workspace.save()
+
+    @extend_schema(
+        summary="✉️ Get/Set SMTP settings",
+        description="Retrieve or update SMTP settings for the workspace (password write-only).",
+        request=WorkspaceSmtpSettingsSerializer,
+        responses={200: WorkspaceSmtpSettingsSerializer},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['get', 'put', 'patch'], url_path='smtp-settings')
+    def smtp_settings(self, request, pk=None):
+        workspace = self.get_object()
+        # Any workspace member can manage SMTP as per requirement
+        if request.method in ['PUT', 'PATCH']:
+            serializer = WorkspaceSmtpSettingsSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            serializer.update_instance(workspace, serializer.validated_data)
+        data = WorkspaceSmtpSettingsSerializer().to_representation(workspace)
+        return Response(data)
+
+    @extend_schema(
+        summary="📨 SMTP test send",
+        description="Send a test email using the workspace SMTP configuration.",
+        request=WorkspaceSmtpTestSerializer,
+        tags=["Workspace Management"],
+        responses={200: OpenApiResponse(description="✅ Test email sent (or error returned)")}
+    )
+    @action(detail=True, methods=['post'], url_path='smtp-test', permission_classes=[IsWorkspaceMemberOrStaff])
+    def smtp_test(self, request, pk=None):
+        from django.core.mail import get_connection, EmailMessage
+        from core.utils.crypto import decrypt_text
+        workspace = self.get_object()
+        serializer = WorkspaceSmtpTestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        to_email = serializer.validated_data['to_email']
+
+        # Build runtime SMTP connection from workspace settings
+        if not workspace.smtp_enabled:
+            return Response({'error': 'SMTP is not enabled for this workspace'}, status=status.HTTP_400_BAD_REQUEST)
+        if not (workspace.smtp_host and workspace.smtp_from_email):
+            return Response({'error': 'Incomplete SMTP configuration'}, status=status.HTTP_400_BAD_REQUEST)
+
+        password = decrypt_text(workspace.smtp_password_encrypted) or ''
+        try:
+            conn = get_connection(
+                host=workspace.smtp_host,
+                port=workspace.smtp_port,
+                username=workspace.smtp_username or None,
+                password=password or None,
+                use_tls=workspace.smtp_use_tls,
+                use_ssl=workspace.smtp_use_ssl,
+            )
+            msg = EmailMessage(
+                subject='SMTP Test',
+                body='This is a test email from Hotcalls workspace SMTP settings.',
+                from_email=workspace.smtp_from_email,
+                to=[to_email],
+                connection=conn,
+            )
+            msg.send(fail_silently=False)
+            return Response({'success': True})
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete a workspace.
+
+        Minimal safeguard: block deletion if there is an active Stripe subscription
+        to avoid orphaned billing. Users must cancel first via payments API.
+        """
+        # Fetch without triggering DRF's object-permission gate; we'll validate manually
+        workspace = get_object_or_404(Workspace, pk=kwargs.get('pk'))
+
+        # Manual permission: only workspace admin or superuser may delete
+        is_admin = False
+        try:
+            is_admin = bool(getattr(workspace, 'is_admin', None) and workspace.is_admin(request.user))
+        except Exception:
+            is_admin = bool(getattr(workspace, 'admin_user_id', None) and workspace.admin_user_id == request.user.id)
+        if not (request.user.is_superuser or is_admin):
+            return Response({"detail": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
+
+        # If there is an active/chargeable subscription, require cancellation first
+        active_statuses = {"active", "past_due", "unpaid"}
+        if (
+            getattr(workspace, "stripe_subscription_id", None)
+            and getattr(workspace, "subscription_status", "none") in active_statuses
+        ):
+            return Response(
+                {
+                    "error": "Workspace hat ein aktives Abonnement. Bitte kündige zuerst dein Abo (es bleibt bis zum Periodenende aktiv)."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return super().destroy(request, *args, **kwargs)
+
+    @extend_schema(
+        summary="🔑 Get my role in this workspace",
+        description="Returns whether the current user is the workspace admin",
+        responses={200: OpenApiResponse(description="OK")},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['get'])
+    def my_role(self, request, pk=None):
+        workspace = self.get_object()
+        return Response({
+            'is_admin': bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id)
+        })
+
+    @extend_schema(
+        summary="👑 Transfer workspace admin",
+        description="Transfer workspace admin role to another member (admin only)",
+        request=WorkspaceUserAssignmentSerializer,
+        responses={200: OpenApiResponse(description="Admin transferred")},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['post'], permission_classes=[IsWorkspaceAdmin])
+    def transfer_admin(self, request, pk=None):
+        workspace = self.get_object()
+        serializer = WorkspaceUserAssignmentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user_ids = serializer.validated_data['user_ids']
+        if not user_ids:
+            return Response({'error': 'new_admin_user_id required in user_ids[0]'}, status=status.HTTP_400_BAD_REQUEST)
+        new_admin_id = user_ids[0]
+        try:
+            new_admin = workspace.users.get(id=new_admin_id)
+        except User.DoesNotExist:
+            return Response({'error': 'User must be a workspace member'}, status=status.HTTP_400_BAD_REQUEST)
+        workspace.admin_user_id = new_admin.id
+        workspace.save(update_fields=['admin_user'])
+        return Response({'message': 'Admin transferred', 'new_admin_user_id': str(new_admin.id)})
     
     @extend_schema(
         summary="👥 Get workspace users",
@@ -464,14 +600,15 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['delete'], permission_classes=[WorkspaceUserManagementPermission])
     def remove_users(self, request, pk=None):
-        """Remove users from a workspace (staff only)"""
-        if not request.user.is_staff:
+        """Remove users from a workspace (workspace admin or staff)"""
+        workspace = self.get_object()
+        # Allow either staff or workspace admin
+        is_workspace_admin = bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id)
+        if not (request.user.is_staff or is_workspace_admin):
             return Response(
-                {'error': 'Only staff can manage workspace users'}, 
+                {'error': 'Only workspace admin or staff can manage workspace users'}, 
                 status=status.HTTP_403_FORBIDDEN
             )
-        
-        workspace = self.get_object()
         serializer = WorkspaceUserAssignmentSerializer(data=request.data)
         
         if serializer.is_valid():

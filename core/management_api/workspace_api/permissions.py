@@ -8,8 +8,7 @@ class WorkspacePermission(permissions.BasePermission):
     - Users can modify workspaces they belong to
     - Users can create their first workspace
     - Staff can view and modify all workspaces
-    - Staff can create unlimited workspaces
-    - Only superusers can delete workspaces
+    - Workspace deletion: allowed for workspace admin (object owner) or superuser
     """
     
     def has_permission(self, request, view):
@@ -36,9 +35,9 @@ class WorkspacePermission(permissions.BasePermission):
             user_workspaces_count = Workspace.objects.filter(users=request.user).count()
             return user_workspaces_count == 0
         
-        # Delete operations: require superuser privileges  
+        # Delete operations: allow evaluation at object level (admin or superuser)
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            return True
             
         return False
     
@@ -54,9 +53,16 @@ class WorkspacePermission(permissions.BasePermission):
             return (request.user in obj.users.all() or 
                    request.user.is_staff)
         
-        # Delete permissions only for superusers
+        # Delete permissions: only workspace admin (or superuser)
         if request.method == 'DELETE':
-            return request.user.is_superuser
+            # Superuser always allowed
+            if request.user.is_superuser:
+                return True
+            # Workspace admin allowed (use model helper for robustness)
+            try:
+                return bool(getattr(obj, 'is_admin', None) and obj.is_admin(request.user))
+            except Exception:
+                return bool(getattr(obj, 'admin_user_id', None) and obj.admin_user_id == request.user.id)
         
         return False
 
@@ -64,13 +70,21 @@ class WorkspacePermission(permissions.BasePermission):
 class WorkspaceUserManagementPermission(permissions.BasePermission):
     """
     Permission for managing users in workspaces
-    - Only staff can add/remove users from workspaces
+    - Staff can always manage
+    - Workspace admin can manage users of their own workspace
     """
     
     def has_permission(self, request, view):
-        return (request.user and 
-                request.user.is_authenticated and 
-                request.user.is_staff)
+        return request.user and request.user.is_authenticated
+
+    def has_object_permission(self, request, view, obj):
+        # Staff allowed
+        if request.user.is_staff:
+            return True
+        # Workspace admin allowed on their workspace
+        from core.models import Workspace
+        workspace = obj if isinstance(obj, Workspace) else getattr(obj, 'workspace', None)
+        return bool(workspace and workspace.admin_user_id and workspace.admin_user_id == request.user.id)
 
 
 class IsWorkspaceMemberOrStaff(permissions.BasePermission):
@@ -139,4 +153,16 @@ class PublicInvitationViewPermission(permissions.BasePermission):
         return True  # Public access
     
     def has_object_permission(self, request, view, obj):
-        return True  # Public access to invitation details 
+        return True  # Public access to invitation details
+
+
+class IsWorkspaceAdmin(permissions.BasePermission):
+    """Allow only workspace admin (or staff) for certain actions."""
+    def has_object_permission(self, request, view, obj):
+        from core.models import Workspace
+        workspace = obj if isinstance(obj, Workspace) else getattr(obj, 'workspace', None)
+        if workspace is None:
+            return False
+        if request.user.is_staff:
+            return True
+        return bool(workspace.admin_user_id and workspace.admin_user_id == request.user.id) 

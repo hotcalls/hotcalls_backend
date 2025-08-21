@@ -8,8 +8,11 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.views import View
+from django.core.cache import cache
 import os
 import mimetypes
+from django.utils import timezone
+from decimal import Decimal, InvalidOperation
 
 
 logger = logging.getLogger(__name__)
@@ -42,8 +45,12 @@ def create_user_workspace(user):
             workspace_name = f"{base_name} {counter}"
             counter += 1
             
-        # Create workspace
-        workspace = Workspace.objects.create(workspace_name=workspace_name)
+        # Create workspace and set initial admin/creator to the user
+        workspace = Workspace.objects.create(
+            workspace_name=workspace_name,
+            creator=user,
+            admin_user=user,
+        )
         
         # Link user to workspace
         workspace.users.add(user)
@@ -318,6 +325,15 @@ def send_workspace_invitation_email(invitation, request=None):
     try:
         # Build invitation URLs
         base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
+        # Always route users through the login first with a single encoded `next` that
+        # already contains all parameters for the accept flow to avoid param loss.
+        next_target = (
+            f"/invitations/{invitation.token}/accept/?"
+            f"invited_workspace={invitation.workspace.id}&skip_welcome=1"
+        )
+        from urllib.parse import quote
+        login_first_url = f"{base_url}/login?next={quote(next_target, safe='')}"
+        # Keep legacy paths for reference (unused in email, but kept for clarity)
         invitation_url = f"{base_url}/invitations/{invitation.token}/"
         accept_url = f"{base_url}/invitations/{invitation.token}/accept/"
         
@@ -400,7 +416,7 @@ def send_workspace_invitation_email(invitation, request=None):
                     <p>Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.</p>
                     
                 <p style="text-align: center;">
-                    <a href="{accept_url}" class="button">🎯 Einladung jetzt annehmen</a>
+                    <a href="{login_first_url}" class="button">🎯 Einladung jetzt annehmen</a>
                 </p>
                 
                 <p style="text-align: center; margin: 20px 0; font-size: 14px; color: #666;">
@@ -408,7 +424,7 @@ def send_workspace_invitation_email(invitation, request=None):
                 </p>
                 
                 <p>Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
-                <p><a href="{invitation_url}" class="link">{invitation_url}</a></p>
+                <p><a href="{login_first_url}" class="link">{login_first_url}</a></p>
                     
                     <div class="important">
                         <p><strong>Wichtig:</strong> Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.</p>
@@ -440,11 +456,8 @@ Hallo!
 
 Mit Hotcalls kannst du professionelle KI-gestützte Anrufe durchführen und dein Team bei der Lead-Generierung unterstützen.
 
-🎯 EINLADUNG ANNEHMEN:
-{accept_url}
-
-Oder besuche die Einladungsseite:
-{invitation_url}
+🎯 EINLADUNG ANNEHMEN (Login erforderlich):
+{login_first_url}
 
 Wichtig: Diese Einladung ist 7 Tage gültig und kann nur von der eingeladenen E-Mail-Adresse ({invitation.email}) angenommen werden.
 
@@ -479,6 +492,145 @@ Dein Hotcalls Team"""
         return False
 
 
+def _get_billing_period_end(workspace):
+    """Safely get current billing period end for a workspace subscription."""
+    try:
+        subscription = getattr(workspace, 'current_subscription', None)
+        if not subscription:
+            return None
+        from core.quotas import current_billing_window
+        _, period_end = current_billing_window(subscription)
+        return period_end
+    except Exception as exc:
+        logger.error(f"Failed to resolve billing period for workspace {getattr(workspace, 'id', '')}: {exc}")
+        return None
+
+
+def send_minutes_threshold_email(workspace, threshold: int) -> bool:
+    """
+    Send an upgrade notification email to the workspace admin when minutes threshold is reached.
+    Only sends if an admin_user with email is present.
+    """
+    try:
+        admin = getattr(workspace, 'admin_user', None)
+        recipient = getattr(admin, 'email', None) if admin else None
+        if not recipient:
+            logger.info(
+                f"Skipping minutes threshold email for workspace {workspace.id} - no admin_user email configured"
+            )
+            return False
+
+        base_url = getattr(settings, 'BASE_URL', 'http://localhost:8000')
+        plans_url = f"{base_url}/plans"
+        subject = f"Hinweis: {threshold}% deines Minutenkontingents erreicht – jetzt upgraden"
+
+        html_content = f"""
+        <html>
+          <body style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.6;color:#333;\">
+            <div style=\"max-width:640px;margin:0 auto;background:#fff;border:1px solid #eee;border-radius:8px;overflow:hidden;\">
+              <div style=\"background:linear-gradient(135deg,#ff6b35 0%,#ff8c42 100%);padding:24px;color:white;\">
+                <h1 style=\"margin:0;font-size:20px;\">Nutzungs-Hinweis</h1>
+              </div>
+              <div style=\"padding:24px;\">
+                <p>Hallo {recipient},</p>
+                <p>euer Workspace <strong>{workspace.workspace_name}</strong> hat <strong>{threshold}%</strong> des monatlichen Minutenkontingents erreicht.</p>
+                <p>Um Unterbrechungen zu vermeiden, kannst du jetzt bequem den Plan upgraden:</p>
+                <p style=\"text-align:center;margin:28px 0;\">
+                  <a href=\"{plans_url}\" style=\"display:inline-block;background:#ff6b35;color:#fff;padding:12px 20px;border-radius:6px;text-decoration:none;font-weight:600;\">Jetzt upgraden</a>
+                </p>
+                <p style=\"color:#666;font-size:14px;\">Dieser Hinweis wird pro Abrechnungszeitraum nur einmal pro Schwelle versendet.</p>
+              </div>
+            </div>
+          </body>
+        </html>
+        """
+
+        text_content = (
+            f"Nutzungs-Hinweis\n\n"
+            f"Workspace '{workspace.workspace_name}' hat {threshold}% des Minutenkontingents erreicht.\n"
+            f"Jetzt upgraden: {plans_url}\n"
+            f"(Hinweis wird pro Abrechnungszeitraum nur einmal pro Schwelle versendet.)"
+        )
+
+        success = send_mail(
+            subject=subject,
+            message=text_content,
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@hotcalls.com'),
+            recipient_list=[recipient],
+            html_message=html_content,
+            fail_silently=False,
+        )
+        if success:
+            logger.info(
+                f"Minutes threshold email ({threshold}%) sent to admin {recipient} for workspace {workspace.id}"
+            )
+            return True
+        logger.error(
+            f"Failed to send minutes threshold email ({threshold}%) to {recipient} for workspace {workspace.id}"
+        )
+        return False
+    except Exception as exc:
+        logger.error(f"Error sending minutes threshold email for workspace {getattr(workspace, 'id', '')}: {exc}")
+        return False
+
+
+def check_and_notify_minutes_threshold(workspace) -> None:
+    """
+    Check call_minutes usage against 90% and 75% thresholds and notify admin once per billing period.
+    Order: 90% first, then 75%.
+    """
+    try:
+        # Determine billing period end for cache scoping
+        period_end = _get_billing_period_end(workspace)
+        if period_end is None:
+            return
+
+        # Get usage status read-only
+        from core.quotas import get_feature_usage_status_readonly
+        usage = get_feature_usage_status_readonly(workspace, 'call_minutes')
+
+        # Skip unlimited or undefined limits
+        if not usage or usage.get('unlimited') or not usage.get('limit'):
+            return
+
+        used = usage.get('used')
+        limit = usage.get('limit')
+        if used is None or limit in (None, 0):
+            return
+
+        # Compute percentage safely
+        try:
+            percent = (Decimal(used) / Decimal(limit)) if Decimal(limit) > 0 else Decimal('0')
+        except (InvalidOperation, ZeroDivisionError):
+            return
+
+        # Prepare cache window TTL (seconds until end of period)
+        now = timezone.now()
+        if period_end.tzinfo is None:
+            # Ensure period_end is aware
+            period_end = timezone.make_aware(period_end, timezone.get_current_timezone())
+        ttl_seconds = int(max(1, (period_end - now).total_seconds()))
+
+        # Thresholds to evaluate (in order)
+        checks = [
+            (Decimal('0.90'), 90, f"usage_alert_90:{workspace.id}:{period_end.isoformat()}"),
+            (Decimal('0.75'), 75, f"usage_alert_75:{workspace.id}:{period_end.isoformat()}"),
+        ]
+
+        for threshold_value, threshold_pct, cache_key in checks:
+            if percent >= threshold_value:
+                already_notified = cache.get(cache_key)
+                if already_notified:
+                    continue
+                sent = send_minutes_threshold_email(workspace, threshold_pct)
+                if sent:
+                    cache.set(cache_key, True, timeout=ttl_seconds)
+                # Continue loop to potentially set both flags
+    except Exception as exc:
+        logger.error(
+            f"Minutes threshold check failed for workspace {getattr(workspace, 'id', '')}: {exc}",
+            exc_info=True,
+        )
 class CORSMediaView(View):
     """Custom view for serving media files with CORS headers"""
     

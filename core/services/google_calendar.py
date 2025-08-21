@@ -353,9 +353,30 @@ class GoogleCalendarService:
                 logger.warning(f"Calendar {calendar_id} has {access_role} access - may not be able to create events")
                 # Continue anyway - let Google API return appropriate error if needed
             
+            # Map generic fields to Google payload
+            body = {
+                'summary': event_data.get('summary') or event_data.get('subject', ''),
+                'description': event_data.get('description') or event_data.get('body', ''),
+                'start': { 'dateTime': event_data.get('start') },
+                'end': { 'dateTime': event_data.get('end') },
+                'attendees': [{'email': a.get('email'), 'displayName': a.get('name')} for a in event_data.get('attendees', [])]
+            }
+            if event_data.get('location'):
+                body['location'] = event_data.get('location')
+
+            # Automatically create Google Meet link if requested
+            if event_data.get('create_meet'):
+                body['conferenceData'] = {
+                    'createRequest': {
+                        'requestId': f"hotcalls-{int(timezone.now().timestamp())}",
+                        'conferenceSolutionKey': { 'type': 'hangoutsMeet' },
+                    }
+                }
+
             event = service.events().insert(
                 calendarId=calendar_id,
-                body=event_data
+                body=body,
+                conferenceDataVersion=1 if event_data.get('create_meet') else 0
             ).execute()
             
             logger.info(f"Created event {event['id']} in calendar {calendar_id}")
@@ -481,5 +502,11 @@ class CalendarServiceFactory:
             if not hasattr(calendar, 'google_calendar'):
                 raise ValueError(f"Google calendar data not found for calendar {calendar.id}")
             return GoogleCalendarService(calendar.google_calendar)
+        elif calendar.provider == 'outlook':
+            # Lazy import to avoid circular dependencies if MS service is created later
+            from core.services.microsoft_calendar import MicrosoftCalendarService  # type: ignore
+            if not hasattr(calendar, 'microsoft_calendar'):
+                raise ValueError(f"Microsoft calendar data not found for calendar {calendar.id}")
+            return MicrosoftCalendarService(calendar.microsoft_calendar)
         else:
             raise ValueError(f"Unsupported calendar provider: {calendar.provider}") 

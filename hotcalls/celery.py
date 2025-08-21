@@ -70,6 +70,14 @@ app.conf.beat_schedule = {
             'queue': 'celery'
         }
     },
+    # Refresh Microsoft OAuth tokens 30 days before expiry (exactly like Google)
+    'refresh-microsoft-tokens-midnight': {
+        'task': 'core.tasks.refresh_microsoft_calendar_connections',
+        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'options': {
+            'queue': 'celery'
+        }
+    },
     
     # Clean up invalid Meta integrations
     'cleanup-invalid-meta-midnight': {
@@ -105,6 +113,14 @@ app.conf.beat_schedule = {
         'options': {
             'queue': 'celery',
             'expires': 120,  # Task expires after 2 minutes (2x schedule interval)
+        }
+    },
+    # Renew Microsoft Graph subscriptions hourly (mirrors behavior requirement)
+    'renew-microsoft-subscriptions-hourly': {
+        'task': 'core.tasks.renew_microsoft_subscriptions',
+        'schedule': crontab(minute=0),  # every hour at :00
+        'options': {
+            'queue': 'celery'
         }
     },
 } 

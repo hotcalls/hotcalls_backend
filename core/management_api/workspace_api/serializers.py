@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
 from core.models import Workspace, User, WorkspaceInvitation
+from core.utils.crypto import encrypt_text, decrypt_text
 
 
 class WorkspaceUserSerializer(serializers.ModelSerializer):
@@ -17,12 +18,15 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     users = WorkspaceUserSerializer(many=True, read_only=True)
     user_count = serializers.SerializerMethodField()
     is_subscription_active = serializers.SerializerMethodField()
+    admin_user_id = serializers.SerializerMethodField()
+    creator_id = serializers.SerializerMethodField()
     
     class Meta:
         model = Workspace
         fields = [
             'id', 'workspace_name', 'created_at', 'updated_at', 
-            'users', 'user_count', 'is_subscription_active'
+            'users', 'user_count', 'is_subscription_active',
+            'admin_user_id', 'creator_id',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -37,6 +41,20 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         # TODO: Check Stripe subscription status here
         # For now return True if stripe_subscription_id exists
         return bool(obj.stripe_subscription_id)
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_admin_user_id(self, obj):
+        try:
+            return getattr(obj.admin_user, 'id', None)
+        except Exception:
+            return None
+
+    @extend_schema_field(serializers.UUIDField(allow_null=True))
+    def get_creator_id(self, obj):
+        try:
+            return getattr(obj.creator, 'id', None)
+        except Exception:
+            return None
 
 
 class WorkspaceCreateSerializer(serializers.ModelSerializer):
@@ -53,6 +71,56 @@ class WorkspaceUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Workspace
         fields = ['workspace_name']
+
+
+class WorkspaceSmtpSettingsSerializer(serializers.Serializer):
+    """Serializer for per-workspace SMTP configuration (password write-only)."""
+    smtp_enabled = serializers.BooleanField(required=True)
+    smtp_host = serializers.CharField(required=False, allow_blank=True, default='')
+    smtp_port = serializers.IntegerField(required=False, default=587)
+    smtp_use_tls = serializers.BooleanField(required=False, default=True)
+    smtp_use_ssl = serializers.BooleanField(required=False, default=False)
+    smtp_username = serializers.CharField(required=False, allow_blank=True, default='')
+    smtp_password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    smtp_from_email = serializers.EmailField(required=False, allow_blank=True, default='')
+
+    def to_representation(self, instance: Workspace):
+        return {
+            'smtp_enabled': instance.smtp_enabled,
+            'smtp_host': instance.smtp_host,
+            'smtp_port': instance.smtp_port,
+            'smtp_use_tls': instance.smtp_use_tls,
+            'smtp_use_ssl': instance.smtp_use_ssl,
+            'smtp_username': instance.smtp_username,
+            'smtp_from_email': instance.smtp_from_email,
+            # Never expose password; indicate whether it's set
+            'smtp_password_set': bool(instance.smtp_password_encrypted),
+        }
+
+    def update_instance(self, workspace: Workspace, data: dict) -> Workspace:
+        # Basic consistency validations
+        if data.get('smtp_use_tls') and data.get('smtp_use_ssl'):
+            raise serializers.ValidationError('smtp_use_tls and smtp_use_ssl cannot both be true')
+        if data.get('smtp_enabled'):
+            for key in ['smtp_host', 'smtp_from_email']:
+                if not data.get(key) and not getattr(workspace, key):
+                    raise serializers.ValidationError(f'{key} is required when smtp_enabled is true')
+        workspace.smtp_enabled = data.get('smtp_enabled', workspace.smtp_enabled)
+        workspace.smtp_host = data.get('smtp_host', workspace.smtp_host)
+        workspace.smtp_port = data.get('smtp_port', workspace.smtp_port)
+        workspace.smtp_use_tls = data.get('smtp_use_tls', workspace.smtp_use_tls)
+        workspace.smtp_use_ssl = data.get('smtp_use_ssl', workspace.smtp_use_ssl)
+        workspace.smtp_username = data.get('smtp_username', workspace.smtp_username)
+        workspace.smtp_from_email = data.get('smtp_from_email', workspace.smtp_from_email)
+        pwd = data.get('smtp_password')
+        if pwd is not None:
+            workspace.smtp_password_encrypted = encrypt_text(pwd) if pwd else ''
+        workspace.save()
+        return workspace
+
+
+class WorkspaceSmtpTestSerializer(serializers.Serializer):
+    to_email = serializers.EmailField()
 
 
 class WorkspaceUserAssignmentSerializer(serializers.Serializer):

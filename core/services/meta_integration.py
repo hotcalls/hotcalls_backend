@@ -1,4 +1,5 @@
 import hashlib
+import re
 import hmac
 import requests
 import json
@@ -459,11 +460,22 @@ class MetaIntegrationService:
             # Map fields to lead model
             mapped_data = self._map_lead_fields(field_data)
 
-            # Enforce hard gate: require valid name, email and phone
-            raw_name = (mapped_data.get('name') or '').strip()
-            raw_surname = (mapped_data.get('surname') or '').strip()
-            raw_email = mapped_data.get('email') or ''
-            raw_phone = mapped_data.get('phone') or ''
+            # Canonicalize to enforce singular contact fields and canonical variables
+            from core.utils.lead_normalization import canonicalize_lead_payload
+            normalized = canonicalize_lead_payload({
+                'first_name': mapped_data.get('name') or '',
+                'last_name': mapped_data.get('surname') or '',
+                'full_name': mapped_data.get('name') and mapped_data.get('surname') and '' or (mapped_data.get('name') or ''),
+                'email': mapped_data.get('email') or '',
+                'phone': mapped_data.get('phone') or '',
+                'variables': mapped_data.get('variables') or {},
+            })
+
+            # Enforce presence gate: require that name, email and phone are provided in some form
+            raw_name = (normalized.get('first_name') or '').strip()
+            raw_surname = (normalized.get('last_name') or '').strip()
+            raw_email = normalized.get('email') or ''
+            raw_phone = normalized.get('phone') or ''
 
             # Email validation
             email = validate_email_strict(raw_email)
@@ -483,15 +495,16 @@ class MetaIntegrationService:
                 name_first = raw_name
                 name_surname = raw_surname
 
-            if not (name_first and email and phone):
+            # Presence-based acceptance: only fail if fields are missing entirely
+            if not (name_first and raw_email and raw_phone):
                 logger.info(
                     "Lead ignored - invalid or missing required fields",
                     extra={
                         'leadgen_id': leadgen_id,
                         'form_id': form_id,
                         'workspace_id': integration.workspace.id,
-                        'email_valid': bool(email),
-                        'phone_valid': bool(phone),
+                        'email_present': bool(raw_email),
+                        'phone_present': bool(raw_phone),
                         'name_present': bool(name_first),
                         'reason': 'ignored_invalid_fields'
                     }
@@ -500,14 +513,16 @@ class MetaIntegrationService:
                 return None
 
             # ATOMIC: Create Lead record with funnel reference
+            email_to_save = email or raw_email
+            phone_to_save = phone or raw_phone
             lead = Lead.objects.create(
                 name=name_first,
                 surname=name_surname,
-                email=email,
-                phone=phone,
+                email=email_to_save,
+                phone=phone_to_save,
                 workspace=integration.workspace,
                 integration_provider='meta',
-                variables=mapped_data.get('variables', {}),
+                variables=normalized.get('variables', {}),
                 lead_funnel=lead_funnel
             )
             
@@ -594,25 +609,35 @@ class MetaIntegrationService:
         unmatched_fields: List[str] = []
 
         PERSON_NAME_FIELDS = {
+            # First/Given name variants (multi-language)
             'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
-            'firstname', 'fname', 'forename'
+            'firstname', 'fname', 'forename', 'first'
         }
         PERSON_SURNAME_FIELDS = {
+            # Last/Family name variants (multi-language)
             'last_name', 'family_name', 'nachname', 'nom', 'apellido',
-            'lastname', 'lname', 'surname', 'family'
+            'lastname', 'lname', 'surname', 'family', 'last'
         }
         FULL_NAME_FIELDS = {
-            'full_name', 'fullname', 'name', 'display_name',
-            'person_name', 'customer_name', 'user_name'
+            # Full name and contact name variants (multi-language)
+            'full_name', 'fullname', 'name', 'display_name', 'person_name',
+            'customer_name', 'user_name', 'client_name', 'contact_name',
+            'vollstandiger_name', 'kontakt_name'
         }
         EMAIL_FIELDS = {
+            # Email variants (multi-language)
             'email', 'email_address', 'e_mail', 'mail', 'contact_email',
-            'user_email', 'customer_email', 'business_email', 'work_email'
+            'user_email', 'customer_email', 'business_email', 'work_email',
+            'email_adresse', 'e_mail_adresse', 'emailadresse', 'kontakt_email',
+            'kontaktmail'
         }
         PHONE_FIELDS = {
+            # Phone variants (multi-language)
             'phone', 'phone_number', 'telephone', 'telefon', 'mobile',
-            'cell', 'handy', 'contact_phone', 'mobile_number',
-            'cell_phone', 'phone_mobile', 'tel'
+            'cell', 'handy', 'contact_phone', 'mobile_number', 'cell_phone',
+            'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
+            'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
+            'telefono', 'telefone', 'handynummer'
         }
         BUSINESS_FIELDS = {
             'company', 'company_name', 'business', 'business_name',
@@ -639,6 +664,14 @@ class MetaIntegrationService:
         last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
         full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
 
+        # Heuristic: any key containing "name" (but not company/business) is a full name
+        if not full:
+            BUSINESS_TOKENS = {'company', 'business', 'firma', 'unternehmen', 'organization', 'org', 'brand'}
+            for k, v in pairs:
+                if 'name' in k and not any(tok in k for tok in BUSINESS_TOKENS):
+                    full = v
+                    break
+
         email_val = None
         email_key = None
         for k, v in pairs:
@@ -649,6 +682,15 @@ class MetaIntegrationService:
                     email_key = k
                     break
         if not email_val:
+            # Heuristic: keys containing 'email' or 'mail'
+            for k, v in pairs:
+                if ('email' in k or 'mail' in k) and v:
+                    e = validate_email_strict(v)
+                    if e:
+                        email_val = e
+                        email_key = k
+                        break
+        if not email_val:
             for k, v in pairs:
                 if '@' in v:
                     e = validate_email_strict(v)
@@ -656,6 +698,11 @@ class MetaIntegrationService:
                         email_val = e
                         email_key = k
                         break
+        # Fallback: accept first string that contains '@' even if not strictly valid
+        if not email_val:
+            fallback_email = next((v for k, v in pairs if '@' in v), '')
+            if fallback_email:
+                mapped_data['email'] = fallback_email
 
         phone_val = None
         phone_key = None
@@ -673,6 +720,27 @@ class MetaIntegrationService:
                     phone_val = p
                     phone_key = k
                     break
+        # Fallback: accept first phone-like string (prefer known phone fields), minimal sanitization
+        if not phone_val:
+            def _digits_count(s: str) -> int:
+                return sum(ch.isdigit() for ch in s)
+
+            candidate = None
+            # Prefer values from known phone fields
+            for k, v in pairs:
+                if (k in PHONE_FIELDS or any(t in k for t in ['phone', 'telefon', 'tel', 'mobile', 'handy'])) and _digits_count(v) >= 6:
+                    candidate = re.sub(r"[^0-9+]", "", v)
+                    phone_key = k
+                    break
+            # Otherwise any field with 6+ digits
+            if candidate is None:
+                for k, v in pairs:
+                    if _digits_count(v) >= 6:
+                        candidate = re.sub(r"[^0-9+]", "", v)
+                        phone_key = k
+                        break
+            if candidate:
+                mapped_data['phone'] = candidate
 
         name_triplet = extract_name(first, last, full)
         if name_triplet:

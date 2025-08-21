@@ -4,7 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.parsers import JSONParser, FormParser, MultiPartParser
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render, get_object_or_404, redirect
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.contrib.auth import login, logout
@@ -15,7 +15,7 @@ from datetime import timedelta
 from django.utils import timezone
 from rest_framework.authtoken.models import Token
 
-from core.models import User
+from core.models import User, WorkspaceInvitation
 from core.utils import send_email_verification, send_password_reset_email
 from .serializers import (
     UserRegistrationSerializer, EmailLoginSerializer, EmailVerificationSerializer,
@@ -381,14 +381,36 @@ def verify_email(request, token):
         
         # Verify the email
         if user.verify_email(token):
-            # Create initial workspace for the user if they don't have any
+            # Create initial workspace ONLY if user has no pending invitations
             from core.models import Workspace
-            if not Workspace.objects.filter(users=user).exists():
+            has_workspace = Workspace.objects.filter(users=user).exists()
+            has_pending_invite = WorkspaceInvitation.objects.filter(
+                email=user.email,
+                status='pending'
+            ).exists()
+            if not has_workspace and not has_pending_invite:
                 workspace = Workspace.objects.create(
                     workspace_name=f"{user.first_name or user.email.split('@')[0]}'s Workspace"
                 )
                 workspace.users.add(user)
                 workspace.save()
+            
+            # If there is a pending (and still valid) invitation for this email, immediately
+            # send the user into the login-first flow that returns to accept the invite.
+            try:
+                pending = (
+                    WorkspaceInvitation.objects
+                    .filter(email=user.email, status='pending')
+                    .select_related('workspace')
+                )
+                invite = next((inv for inv in pending if inv.is_valid()), None)
+                if invite is not None:
+                    return redirect(
+                        f"/login?next=/invitations/{invite.token}/accept/"
+                        f"&invited_workspace={invite.workspace.id}&skip_welcome=1"
+                    )
+            except Exception:
+                pass
             
             return render(request, 'auth/verification_success.html', {
                 'email': user.email

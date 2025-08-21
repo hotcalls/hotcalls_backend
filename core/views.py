@@ -13,33 +13,29 @@ from .models import WorkspaceInvitation
 
 def invitation_detail(request, token):
     """
-    Display invitation details page (public endpoint)
+    Public invitation landing: keep it simple and send users to login flow.
     """
     try:
-        invitation = WorkspaceInvitation.objects.get(token=token)
-        
-        # Check if invitation is still valid
-        is_valid = invitation.is_valid()
-        
-        context = {
-            'invitation': {
-                'token': invitation.token,
-                'email': invitation.email,
-                'workspace_name': invitation.workspace.workspace_name,
-                'invited_by_name': invitation.invited_by.get_full_name() or invitation.invited_by.email,
-                'created_at': invitation.created_at,
-                'expires_at': invitation.expires_at,
-                'is_valid': is_valid,
-            }
-        }
-        
-        return render(request, 'invitations/invitation_detail.html', context)
-        
+        # Ensure token exists (return proper error if not)
+        WorkspaceInvitation.objects.get(token=token)
     except WorkspaceInvitation.DoesNotExist:
         context = {
             'error_message': 'Diese Einladung wurde nicht gefunden oder ist ungültig.'
         }
         return render(request, 'invitations/invitation_error.html', context, status=404)
+
+    # Always redirect to the login page with a single encoded `next` that
+    # already includes invited_workspace + skip_welcome to enforce post-login routing
+    try:
+        invitation = WorkspaceInvitation.objects.get(token=token)
+        next_target = (
+            f"/invitations/{token}/accept/?"
+            f"invited_workspace={invitation.workspace.id}&skip_welcome=1"
+        )
+    except WorkspaceInvitation.DoesNotExist:
+        next_target = f"/invitations/{token}/accept/"
+    from urllib.parse import quote
+    return redirect(f"/login?next={quote(next_target, safe='')}")
 
 
 @require_http_methods(["GET", "POST"])
@@ -67,32 +63,20 @@ def accept_invitation(request, token):
     
     # Handle GET requests (from email button)
     if request.method == 'GET':
-        # If user is not authenticated, redirect to login with return URL
-        if not request.user.is_authenticated:
-            from django.contrib.auth.views import redirect_to_login
-            return redirect_to_login(request.get_full_path())
-        
-        # If authenticated but wrong email, show error
-        if request.user.email != invitation.email:
-            context = {
-                'error_message': f'Diese Einladung wurde an {invitation.email} gesendet, aber Sie sind als {request.user.email} angemeldet.'
-            }
-            return render(request, 'invitations/invitation_error.html', context, status=403)
-        
-        # Auto-accept the invitation and show success
-        try:
-            invitation.accept(request.user)
-            context = {
-                'workspace_name': invitation.workspace.workspace_name,
-                'workspace_id': str(invitation.workspace.id),
-            }
-            return render(request, 'invitations/invitation_success.html', context)
-        except ValueError as e:
-            context = {'error_message': str(e)}
-            return render(request, 'invitations/invitation_error.html', context, status=400)
-        except Exception as e:
-            context = {'error_message': 'Ein unerwarteter Fehler ist aufgetreten beim Beitreten zum Workspace.'}
-            return render(request, 'invitations/invitation_error.html', context, status=500)
+        # Render auto-accept page (token-based) to avoid session coupling
+        return render(request, 'invitations/invitation_auto_accept.html', {
+            'accept_api_url': f"/api/workspaces/invitations/{token}/accept/",
+            'dashboard_redirect': f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1",
+            'login_redirect': (
+                # Single encoded next containing all params
+                (lambda: (lambda nt: f"/login?next={nt}")(
+                    __import__('urllib.parse').parse.quote(
+                        f"/invitations/{token}/accept/?invited_workspace={invitation.workspace.id}&skip_welcome=1",
+                        safe=''  # encode fully
+                    )
+                ))()
+            )
+        })
     
     # Handle POST requests (from invitation detail form)
     if not request.user.is_authenticated:
@@ -111,11 +95,7 @@ def accept_invitation(request, token):
     # Accept the invitation
     try:
         invitation.accept(request.user)
-        context = {
-            'workspace_name': invitation.workspace.workspace_name,
-            'workspace_id': str(invitation.workspace.id),
-        }
-        return render(request, 'invitations/invitation_success.html', context)
+        return redirect(f"/dashboard?joined_workspace={invitation.workspace.id}&skip_welcome=1")
     except ValueError as e:
         context = {'error_message': str(e)}
         return render(request, 'invitations/invitation_error.html', context, status=400)

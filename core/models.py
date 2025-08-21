@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 from django.utils import timezone
+import os
 import datetime
 import secrets
 
@@ -479,13 +480,6 @@ class Plan(models.Model):
         help_text="Yearly price in EUR"
     )
     
-    # Cosmetic/Access Features (not tracked in usage)
-    cosmetic_features = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Non-measurable plan features like whitelabel, priority support, etc."
-    )
-    
     is_active = models.BooleanField(
         default=True,
         help_text="Is this plan available for new subscriptions?"
@@ -579,6 +573,13 @@ class Workspace(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace_name = models.CharField(max_length=255)
     users = models.ManyToManyField(User, related_name='mapping_user_workspaces')
+    # Ownership and administration
+    creator = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_workspaces'
+    )
+    admin_user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL, related_name='admin_workspaces'
+    )
     
 
     # Subscription
@@ -626,6 +627,45 @@ class Workspace(models.Model):
         default='none',
         help_text="Current subscription status (mirrors Stripe status)"
     )
+    # Per-workspace SMTP configuration (sender). Password is stored encrypted at rest.
+    smtp_enabled = models.BooleanField(
+        default=False,
+        help_text="Enable outbound email via this workspace SMTP configuration"
+    )
+    smtp_host = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="SMTP hostname"
+    )
+    smtp_port = models.IntegerField(
+        default=587,
+        help_text="SMTP port"
+    )
+    smtp_use_tls = models.BooleanField(
+        default=True,
+        help_text="Use STARTTLS"
+    )
+    smtp_use_ssl = models.BooleanField(
+        default=False,
+        help_text="Use implicit SSL/TLS"
+    )
+    smtp_username = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="SMTP username"
+    )
+    smtp_password_encrypted = models.TextField(
+        blank=True,
+        default='',
+        help_text="SMTP password (encrypted at rest)"
+    )
+    smtp_from_email = models.EmailField(
+        blank=True,
+        default='',
+        help_text="Sender email address for outbound messages"
+    )
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -638,6 +678,11 @@ class Workspace(models.Model):
             return self.workspacesubscription_set.get(is_active=True)
         except WorkspaceSubscription.DoesNotExist:
             return None
+
+    def is_admin(self, user: 'User') -> bool:
+        if user is None:
+            return False
+        return bool(self.admin_user and self.admin_user_id == user.id)
     
     class Meta:
         constraints = [
@@ -816,6 +861,13 @@ class WorkspaceUsage(models.Model):
     )
     period_start = models.DateTimeField()
     period_end = models.DateTimeField()
+    # Extra purchased call minutes for the current billing period
+    extra_call_minutes = models.DecimalField(
+        max_digits=15,
+        decimal_places=3,
+        default=0,
+        help_text="Extra purchased call minutes credited to this billing period"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -867,6 +919,17 @@ class FeatureUsage(models.Model):
         """
         lim = self.limit
         return None if lim is None else max(lim - self.used_amount, 0)
+
+
+def agent_kb_upload_path(instance, filename):
+    """Deterministic path for agent Knowledge Base PDF, like voices storage."""
+    base_name = os.path.basename(filename)
+    return f"kb/agents/{instance.agent_id}/{base_name}"
+
+def agent_send_document_upload_path(instance, filename):
+    """Storage path for the single PDF the agent can send via email."""
+    base_name = os.path.basename(filename)
+    return f"docs/agents/{instance.agent_id}/{base_name}"
 
 
 class Agent(models.Model):
@@ -946,6 +1009,37 @@ class Agent(models.Model):
     prompt = models.TextField(
         help_text="Agent prompt/instructions for AI behavior",
         blank=True
+    )
+    # Knowledge Base: single PDF file stored like voices (no manifest)
+    kb_pdf = models.FileField(
+        upload_to=agent_kb_upload_path,
+        null=True,
+        blank=True,
+        help_text="Single Knowledge Base PDF for this agent"
+    )
+    # Email sending configuration
+    send_document = models.FileField(
+        upload_to=agent_send_document_upload_path,
+        null=True,
+        blank=True,
+        help_text="Single PDF that the agent can send via email"
+    )
+    email_default_subject = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Default subject when sending the document via email"
+    )
+    email_default_body = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Default body when sending the document via email"
+    )
+    config_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        help_text="Configuration ID for agent settings"
     )
     phone_number = models.ForeignKey(
         'PhoneNumber',
@@ -1302,6 +1396,105 @@ class GoogleCalendar(models.Model):
     def __str__(self):
         return f"{self.calendar.name} ({self.external_id})"
 
+
+class MicrosoftCalendarConnection(models.Model):
+    """Microsoft 365/Exchange OAuth connection and API credentials"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar_connections'
+    )
+    workspace = models.ForeignKey(
+        'Workspace',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar_connections'
+    )
+
+    # Microsoft account and tenant identifiers
+    primary_email = models.EmailField(help_text="Primary UPN/email of the Microsoft account")
+    tenant_id = models.CharField(max_length=128, help_text="Azure AD Tenant ID (tid)")
+    ms_user_id = models.CharField(max_length=128, help_text="Microsoft user object ID (oid)")
+    display_name = models.CharField(max_length=255, blank=True, default='')
+    timezone_windows = models.CharField(max_length=100, blank=True, default='', help_text="Windows time zone id (e.g., 'W. Europe Standard Time')")
+
+    # OAuth tokens
+    refresh_token = models.TextField(editable=False, help_text="OAuth refresh token (encrypted at rest)")
+    access_token = models.TextField(editable=False, help_text="OAuth access token (encrypted at rest)")
+    token_expires_at = models.DateTimeField(help_text="When access token expires")
+    scopes_granted = models.JSONField(default=list, help_text="Granted OAuth scopes")
+
+    # Connection status
+    active = models.BooleanField(default=True)
+    last_sync = models.DateTimeField(null=True, blank=True)
+    sync_errors = models.JSONField(default=dict, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ['workspace', 'primary_email']
+        indexes = [
+            models.Index(fields=['workspace', 'active']),
+            models.Index(fields=['token_expires_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.workspace_name} - {self.primary_email}"
+
+
+class MicrosoftCalendar(models.Model):
+    """Microsoft-specific calendar metadata"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    calendar = models.OneToOneField(
+        'Calendar',
+        on_delete=models.CASCADE,
+        related_name='microsoft_calendar'
+    )
+    connection = models.ForeignKey(
+        'MicrosoftCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='calendars',
+        null=True,
+        blank=True,
+        help_text="OAuth connection that provides access to this calendar"
+    )
+
+    # Graph Calendar fields
+    external_id = models.CharField(max_length=255, unique=True, help_text="Microsoft Calendar ID")
+    primary = models.BooleanField(default=False)
+    can_edit = models.BooleanField(default=True, help_text="Whether current user can edit this calendar")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.calendar.name} ({self.external_id})"
+
+
+class MicrosoftSubscription(models.Model):
+    """Microsoft Graph subscription (webhook) tracking for a connection"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    connection = models.ForeignKey(
+        'MicrosoftCalendarConnection',
+        on_delete=models.CASCADE,
+        related_name='subscriptions'
+    )
+    subscription_id = models.CharField(max_length=255, unique=True)
+    resource = models.CharField(max_length=255, default='me/events')
+    client_state = models.CharField(max_length=255, blank=True, default='')
+    expiration_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['connection']),
+            models.Index(fields=['expiration_at'])
+        ]
+
+    def __str__(self):
+        return f"Sub {self.subscription_id} ({self.resource})"
 
 class CalendarConfiguration(models.Model):
     """Configuration settings for calendar scheduling"""

@@ -68,9 +68,7 @@ class PlanDetailSerializer(PlanSerializer):
         
         # Gruppiere Features für bessere Lesbarkeit
         feature_groups = {
-            'limits': [],
-            'inclusions': [],
-            'pricing': []
+            'limits': []
         }
         
         for feature in data['features']:
@@ -119,34 +117,7 @@ class PlanDetailSerializer(PlanSerializer):
                         'display': f'🤖 {limit} Agents pro Workspace'
                     })
             
-            elif feature_name == 'overage_rate_cents':
-                if limit == 0:
-                    feature_groups['pricing'].append({
-                        'name': 'Überschreitung',
-                        'value': 'Kostenlos',
-                        'display': '💸 Keine Zusatzkosten bei Überschreitung'
-                    })
-                else:
-                    price_per_min = limit / 100
-                    feature_groups['pricing'].append({
-                        'name': 'Überschreitung',
-                        'value': f"{price_per_min:.2f}€/Min",
-                        'display': f'💸 {price_per_min:.2f}€ pro Minute nach Verbrauch'
-                    })
-            
-            elif feature_name == 'whitelabel_solution':
-                feature_groups['inclusions'].append({
-                    'name': 'Whitelabel',
-                    'value': 'Verfügbar',
-                    'display': '🏷️ Whitelabel Lösung'
-                })
-            
-            elif feature_name == 'crm_integrations':
-                feature_groups['inclusions'].append({
-                    'name': 'CRM Integration',
-                    'value': 'Verfügbar',
-                    'display': '🔗 CRM Integrationen'
-                })
+            # Overage-Preise und Cosmetic-Flags werden nicht mehr dargestellt
         
         data['feature_groups'] = feature_groups
         return data
@@ -202,10 +173,6 @@ class PlanSummarySerializer(serializers.ModelSerializer):
                 else:
                     features.append(f"{limit} Agents pro Workspace")
             
-            elif feature_name == 'whitelabel_solution':
-                features.append("Whitelabel Lösung")
-            
-            elif feature_name == 'crm_integrations':
-                features.append("CRM Integrationen")
+            # Cosmetic-Flags nicht mehr auflisten
         
         return features 
