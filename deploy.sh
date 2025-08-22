@@ -717,6 +717,8 @@ deploy_infrastructure() {
     export DEFAULT_FROM_EMAIL
     export SERVER_EMAIL
     export BASE_URL
+    export API_BASE_URL="${BASE_URL}"  # MCP servers need this
+    export CALENDAR_API_URL="${BASE_URL}"  # Alternative name for same thing
     export LIVEKIT_URL
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
@@ -755,14 +757,14 @@ deploy_infrastructure() {
     export SIP_PROVIDER
     export TRUNK_ID
     
-    # Call Event/Log Configuration
+    # Call Event/Log Configuration (values from .env or defaults)
     export CALL_EVENT_ENDPOINT_URL
     export CALL_EVENT_TIMEOUT="${CALL_EVENT_TIMEOUT:-8.0}"
     export CALL_EVENT_RETRY_ATTEMPTS="${CALL_EVENT_RETRY_ATTEMPTS:-3}"
     export CALL_EVENT_RETRY_BASE_MS="${CALL_EVENT_RETRY_BASE_MS:-300}"
     export CALL_LOG_ENDPOINT_URL
-    export CALL_LOG_TIMEOUT
-    export CALL_LOG_MAX_RETRIES
+    export CALL_LOG_TIMEOUT="${CALL_LOG_TIMEOUT:-10.0}"
+    export CALL_LOG_MAX_RETRIES="${CALL_LOG_MAX_RETRIES:-3}"
     
     export TF_VAR_app_email_host="$EMAIL_HOST"
     export TF_VAR_app_email_port="$EMAIL_PORT"
