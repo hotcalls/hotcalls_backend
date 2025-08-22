@@ -44,31 +44,33 @@ resource "azurerm_storage_container" "backups" {
 }
 
 # Azure CDN Profile for fast global delivery (ALWAYS ON)
-resource "azurerm_cdn_profile" "main" {
-  name                = "${var.storage_account_name}-cdn"
-  location            = "Global"
-  resource_group_name = var.resource_group_name
-  sku                 = "Standard_Microsoft"
-  tags                = var.tags
-}
+# DISABLED - No CDN needed
+# resource "azurerm_cdn_profile" "main" {
+#   name                = "${var.storage_account_name}-cdn"
+#   location            = "Global"
+#   resource_group_name = var.resource_group_name
+#   sku                 = "Standard_Akamai"
+#   tags                = var.tags
+# }
 
 # CDN Endpoint pointing to blob storage (ALWAYS ON)
-resource "azurerm_cdn_endpoint" "storage" {
-  name                = "${var.storage_account_name}-endpoint"
-  profile_name        = azurerm_cdn_profile.main.name
-  location            = azurerm_cdn_profile.main.location
-  resource_group_name = var.resource_group_name
+# DISABLED - No CDN needed
+# resource "azurerm_cdn_endpoint" "storage" {
+#   name                = "${var.storage_account_name}-endpoint"
+#   profile_name        = azurerm_cdn_profile.main.name
+#   location            = azurerm_cdn_profile.main.location
+#   resource_group_name = var.resource_group_name
 
-  origin {
-    name      = "storage"
-    host_name = trimsuffix(replace(azurerm_storage_account.main.primary_blob_endpoint, "https://", ""), "/")
-  }
+#   origin {
+#     name      = "storage"
+#     host_name = trimsuffix(replace(azurerm_storage_account.main.primary_blob_endpoint, "https://", ""), "/")
+#   }
   
-  is_http_allowed  = false
-  is_https_allowed = true
+#   is_http_allowed  = false
+#   is_https_allowed = true
   
-  tags = var.tags
-}
+#   tags = var.tags
+# }
 
 # Private endpoint for storage account
 resource "azurerm_private_endpoint" "storage" {
