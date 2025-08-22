@@ -7,7 +7,7 @@ from .models import (
     MicrosoftCalendarConnection, MicrosoftCalendar,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
-    LeadProcessingStats, LiveKitAgent
+    LeadProcessingStats
 )
 from django.utils import timezone
 
@@ -617,9 +617,4 @@ class LeadProcessingStatsAdmin(admin.ModelAdmin):
     ordering = ('-date',)
 
 
-@admin.register(LiveKitAgent)
-class LiveKitAgentAdmin(admin.ModelAdmin):
-    list_display = ('name', 'concurrency_per_agent', 'expires_at', 'created_at')
-    list_filter = ('expires_at', 'created_at')
-    search_fields = ('name', 'token')
-    ordering = ('-created_at',)
+# LiveKitAgent admin removed - no longer using token authentication

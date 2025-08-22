@@ -5,7 +5,7 @@ import pytest
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import Workspace, Agent, Lead, CallTask, CallStatus, DisconnectionReason, LiveKitAgent, PhoneNumber
+from core.models import Workspace, Agent, Lead, CallTask, CallStatus, DisconnectionReason, PhoneNumber
 
 
 def _staff_client():
@@ -91,10 +91,9 @@ def test_call_log_staff_auth_success():
 
 
 @pytest.mark.django_db
-def test_call_log_livekit_header_success():
+def test_call_log_no_auth_success():
     ws, agent, lead, task = _mk_env()
-    # Create valid LiveKitAgent token
-    lka = LiveKitAgent.objects.create(name="hotcalls_agent", token="sekret-token")
+    # No authentication required anymore
     client = APIClient()
     payload = {
         "lead": str(lead.id),
@@ -107,7 +106,7 @@ def test_call_log_livekit_header_success():
     }
     with patch("core.tasks.update_calltask_from_calllog.delay", side_effect=lambda a, b: None):
         resp = client.post(
-            "/api/calls/call-logs/", payload, format="json", HTTP_X_LIVEKIT_TOKEN=lka.token
+            "/api/calls/call-logs/", payload, format="json"
         )
         assert resp.status_code == 201
         data = resp.json()

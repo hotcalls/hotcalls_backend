@@ -369,11 +369,9 @@ def schedule_agent_call(self):
     try:
         now = timezone.now()
 
-        # Calculate concurrency limit from database (keeping existing approach)
-        from core.models import LiveKitAgent
-
-        agents = LiveKitAgent.objects.filter(expires_at__gt=timezone.now())
-        total_concurrency = sum(agent.concurrency_per_agent for agent in agents)
+        # Concurrency limit - use a default since we removed LiveKitAgent
+        # TODO: Move this to configuration or environment variable
+        total_concurrency = 100  # Default concurrency limit
         concurrency_limit = max(
             total_concurrency, 1
         )  # At least 1 to prevent division by zero

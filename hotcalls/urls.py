@@ -103,7 +103,8 @@ urlpatterns = [
     path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
     
     # LiveKit Token Management API (Superuser only)
-    path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
+    # LiveKit token management removed - no longer using token authentication
+    # path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
     # Knowledge Base API (per Agent, PDF-only)
     path('api/knowledge/', include(('core.management_api.knowledge_api.urls', 'knowledge_api'), namespace='knowledge_api')),
     

@@ -502,7 +502,8 @@ def resolve_call_target(target_ref: str) -> dict:
 
 def preflight_check_agent_token(agent_name: str) -> dict:
     """
-    Check if agent has valid token - for preflight checks.
+    Check if agent has valid token - DEPRECATED, always returns valid.
+    Kept for backward compatibility but no longer checks tokens.
 
     Args:
         agent_name: Name of the agent to check
@@ -510,36 +511,12 @@ def preflight_check_agent_token(agent_name: str) -> dict:
     Returns:
         dict: {"valid": bool, "reason": str, "expires_at": datetime or None}
     """
-    from django.utils import timezone
-    from core.models import LiveKitAgent
-
-    if not agent_name:
-        return {"valid": False, "reason": "no_agent_name", "expires_at": None}
-
-    try:
-        # Ensure DB connection is usable before querying
-        try:
-            connection.ensure_connection()
-        except Exception:
-            # Reset stale connections and try once more
-            close_old_connections()
-            connection.ensure_connection()
-
-        agent = LiveKitAgent.objects.filter(
-            name=agent_name, expires_at__gt=timezone.now()
-        ).first()
-
-        if agent:
-            return {
-                "valid": True,
-                "reason": "valid_token",
-                "expires_at": agent.expires_at,
-            }
-        else:
-            return {"valid": False, "reason": "token_missing", "expires_at": None}
-    except Exception as e:
-        logger.error(f"Error checking agent token for {agent_name}: {e}")
-        return {"valid": False, "reason": f"check_failed: {str(e)}", "expires_at": None}
+    # No longer checking tokens - authentication removed
+    return {
+        "valid": True,
+        "reason": "no_auth_required",
+        "expires_at": None,
+    }
 
 
 async def preflight_check_agent_token_async(agent_name: str) -> dict:
