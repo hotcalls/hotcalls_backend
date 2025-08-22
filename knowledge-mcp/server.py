@@ -9,11 +9,8 @@ from dotenv import load_dotenv
 load_dotenv('.env')
 
 
-def resolve_livekit_token(explicit_token: str | None = None) -> str:
-    if explicit_token:
-        return explicit_token
-    # No env fallback in production; keep strict
-    raise ValueError("Missing LiveKit token. Provide 'livekit_token' in tool args.")
+# Authentication temporarily removed
+# TODO: Add IP-based or shared secret authentication
 
 
 mcp = FastMCP(
@@ -31,18 +28,17 @@ mcp = FastMCP(
 def get_document_text(
     agent_id: str,
     doc_id: str,
-    livekit_token: str | None = None,
     max_chars: int = 200000,
 ) -> TextResponse:
     """
     Retrieve plain text from Knowledge Base document by id via presign + text_url fetch.
     """
     try:
-        token = resolve_livekit_token(livekit_token)
+        # No authentication required temporarily
         base_url = os.getenv('API_BASE_URL', 'http://localhost:8000')
 
         presign_url = f"{base_url}/api/knowledge/agents/{agent_id}/documents/by-id/{doc_id}/presign/"
-        headers = {'X-LiveKit-Token': token, 'Content-Type': 'application/json'}
+        headers = {'Content-Type': 'application/json'}
         resp = requests.post(presign_url, json={}, headers=headers, timeout=30)
         if resp.status_code not in [200, 201]:
             try:

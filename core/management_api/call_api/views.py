@@ -83,16 +83,16 @@ logger = logging.getLogger(__name__)
     create=extend_schema(
         summary="➕ Create call log",
         description="""
-        Create a new call log entry using LiveKit secret authentication.
+        Create a new call log entry.
         
-        **🔐 Authentication Required**:
-        - **Header:** `X-LiveKit-Token: <your-generated-token>`
-        - **No Django Token needed** - only the LiveKit agent token header
+        **🔐 Authentication**:
+        - **Temporary:** No authentication required for POST
+        - **TODO:** Will add IP-based or shared secret authentication
         
         **📱 System Integration**:
         - Designed for external call systems
-        - Automatic call log creation from LiveKit
-        - No user authentication required
+        - Automatic call log creation from agents
+        - Currently open for integration purposes
         
         **📝 Required Information**:
         - `call_task_id` (required, write-only): The originating CallTask ID
@@ -106,15 +106,7 @@ logger = logging.getLogger(__name__)
         - Note: `duration` is computed automatically from the CallTask creation time
         
         """,
-        parameters=[
-            OpenApiParameter(
-                name='X-LiveKit-Token',
-                location=OpenApiParameter.HEADER,
-                description='LiveKit agent token for authentication (generated via /api/livekit/tokens/generate_token/)',
-                required=True,
-                type=str
-            )
-        ],
+        # No authentication parameters required temporarily
         request=CallLogCreateSerializer,
         responses={
             201: OpenApiResponse(response=CallLogSerializer, description="✅ Call log created successfully"),
@@ -329,7 +321,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
 
 @extend_schema(
     summary="End of call (agent → server)",
-    description="Create a CallLog at end of call and trigger CallTask feedback. Accepts LiveKit token or staff.",
+    description="Create a CallLog at end of call and trigger CallTask feedback. Currently no authentication required (temporary).",
     request=CallLogCreateSerializer,
     responses={201: OpenApiResponse(response=CallLogSerializer, description="Created")},
     tags=["Call Management"]

@@ -9,11 +9,8 @@ from dotenv import load_dotenv
 load_dotenv('.env')
 
 
-def resolve_livekit_token(explicit_token: str | None = None) -> str:
-    """Resolve LiveKit token strictly from explicit arg. No fallbacks."""
-    if explicit_token:
-        return explicit_token
-    raise ValueError("Missing LiveKit token. Provide 'livekit_token' in tool args.")
+# Authentication temporarily removed
+# TODO: Add IP-based or shared secret authentication
 
 
 # MCP server instance
@@ -37,8 +34,7 @@ def send_document_to_lead(
     agent_id: str,
     lead_id: str,
     subject: str | None = None,
-    body: str | None = None,
-    livekit_token: str | None = None
+    body: str | None = None
 ) -> SendDocumentResponse:
     """
     Send the configured agent PDF to the given lead using workspace SMTP settings.
@@ -48,17 +44,16 @@ def send_document_to_lead(
         lead_id: Lead identifier
         subject: Optional subject override
         body: Optional body override
-        livekit_token: Optional token if not provided via header forwarding
+
 
     Returns:
         SendDocumentResponse with success flag and optional error
     """
     try:
-        token = resolve_livekit_token(livekit_token)
+        # No authentication required temporarily
 
         url = f"{os.getenv('API_BASE_URL', 'http://localhost:8000')}/api/communication/send-document"
         headers = {
-            'X-LiveKit-Token': token,
             'Content-Type': 'application/json'
         }
         data = {
