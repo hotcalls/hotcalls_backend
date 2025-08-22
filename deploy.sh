@@ -755,7 +755,8 @@ deploy_infrastructure() {
     export SIP_PROVIDER
     export TRUNK_ID
     
-    # Call Log Configuration
+    # Call Event/Log Configuration
+    export CALL_EVENT_ENDPOINT_URL
     export CALL_LOG_ENDPOINT_URL
     export CALL_LOG_TIMEOUT
     export CALL_LOG_MAX_RETRIES
@@ -1378,7 +1379,9 @@ setup_kubernetes_environment() {
     export SIP_PROVIDER_B64="$(echo -n "${SIP_PROVIDER:-}" | base64)"
     export TRUNK_ID_B64="$(echo -n "${TRUNK_ID:-}" | base64)"
     
-    # Call Log Configuration - Base64 encoded
+    # Call Event/Log Configuration - Base64 encoded
+    export CALL_EVENT_ENDPOINT_URL_B64="$(echo -n "${CALL_EVENT_ENDPOINT_URL:-}" | base64)"
+    export CALL_EVENT_RETRY_BASE_MS_B64="$(echo -n "${CALL_EVENT_RETRY_BASE_MS:-300}" | base64)"
     export CALL_LOG_ENDPOINT_URL_B64="$(echo -n "${CALL_LOG_ENDPOINT_URL:-}" | base64)"
     export CALL_LOG_TIMEOUT_B64="$(echo -n "${CALL_LOG_TIMEOUT:-10.0}" | base64)"
     export CALL_LOG_MAX_RETRIES_B64="$(echo -n "${CALL_LOG_MAX_RETRIES:-3}" | base64)"
@@ -1546,11 +1549,15 @@ deploy_kubernetes() {
     # Set BASE_URL based on domain parameter
     if [[ -n "$DOMAIN" ]]; then
         export BASE_URL="https://${DOMAIN}"
-        # Set call log endpoint URL for staging/production
+        # Set call event endpoint URL for staging/production (new endpoint without auth)
+        export CALL_EVENT_ENDPOINT_URL="${BASE_URL}/api/calls/end-of-call/"
+        # Keep old endpoint for backward compatibility
         export CALL_LOG_ENDPOINT_URL="${BASE_URL}/api/calls/call-logs/"
     else
         export BASE_URL="http://localhost:8000"
-        # Set call log endpoint URL for development
+        # Set call event endpoint URL for development (new endpoint without auth)
+        export CALL_EVENT_ENDPOINT_URL="${BASE_URL}/api/calls/end-of-call/"
+        # Keep old endpoint for backward compatibility
         export CALL_LOG_ENDPOINT_URL="${BASE_URL}/api/calls/call-logs/"
     fi
     # ALLOWED_HOSTS is ALWAYS * per user requirement - already set above
