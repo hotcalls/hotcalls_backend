@@ -1483,6 +1483,7 @@ setup_acr_authentication() {
     kubectl rollout restart deployment/${PROJECT_NAME}-celery-worker -n "$NAMESPACE" >/dev/null 2>&1 || true
     kubectl rollout restart deployment/${PROJECT_NAME}-celery-beat -n "$NAMESPACE" >/dev/null 2>&1 || true
     kubectl rollout restart deployment/${PROJECT_NAME}-frontend -n "$NAMESPACE" >/dev/null 2>&1 || true
+    kubectl rollout restart deployment/${PROJECT_NAME}-outboundagent -n "$NAMESPACE" >/dev/null 2>&1 || true
     
     log_success "ACR authentication configured and deployments restarted!"
 }
@@ -1678,6 +1679,11 @@ deploy_kubernetes() {
         envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
+        wait  # Wait for parallel deployments to complete
+        
+        # Force restart to pick up any secret/config changes
+        log_info "Restarting outbound agent to ensure latest environment variables..."
+        kubectl rollout restart deployment/${PROJECT_NAME}-outboundagent -n "$NAMESPACE" >/dev/null 2>&1 || true
     elif [[ "${HAS_OUTBOUNDAGENT:-false}" == "true" ]] && [[ "${REDEPLOY_OUTBOUNDAGENT:-true}" == "false" ]]; then
         log_info "Skipping outbound agent deployment (REDEPLOY_OUTBOUNDAGENT=false)"
     fi
