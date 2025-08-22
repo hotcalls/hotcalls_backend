@@ -28,7 +28,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Case, IntegerField, When
 from django.utils import timezone
-from rest_framework.authtoken.models import Token
+# Token import removed - no longer using DRF token authentication
 
 # ─────────────────────────────
 # Redis client for locking
@@ -106,34 +106,7 @@ def hello_world_test(self):
 
 
 # ─────────────────────────────
-# 2) Daily expired‑token cleanup
-# ─────────────────────────────
-@shared_task(bind=True, name="core.tasks.cleanup_expired_tokens")
-def cleanup_expired_tokens(self):
-    """
-    Remove DRF AuthTokens older than 24 h.
-    """
-    try:
-        threshold = timezone.now() - timedelta(hours=24)
-        expired = Token.objects.filter(created__lt=threshold)
-        count = expired.count()
-        if count:
-            expired.delete()
-            logger.info(f"🗑️ Deleted {count} expired tokens (before {threshold})")
-        else:
-            logger.info("✅ No expired tokens found.")
-        return {
-            "deleted_tokens": count,
-            "threshold": threshold.isoformat(),
-            "timestamp": timezone.now().isoformat(),
-        }
-    except Exception as e:
-        logger.error(f"❌ Token cleanup failed: {e}")
-        return {"error": str(e), "deleted_tokens": 0}
-
-
-# ─────────────────────────────
-# 3) Trigger a single outbound call
+# 2) Trigger a single outbound call
 # ─────────────────────────────
 @shared_task(bind=True, name="core.tasks.trigger_call")
 def trigger_call(self, call_task_id):
@@ -335,7 +308,7 @@ def trigger_call(self, call_task_id):
 
 
 # ─────────────────────────────
-# 4) **THE** periodic scheduler – singleton & fool‑proof
+# 3) **THE** periodic scheduler – singleton & fool‑proof
 # ─────────────────────────────
 @shared_task(
     bind=True,
@@ -369,8 +342,6 @@ def schedule_agent_call(self):
     try:
         now = timezone.now()
 
-        # Concurrency limit - use a default since we removed LiveKitAgent
-        # TODO: Move this to configuration or environment variable
         total_concurrency = 100  # Default concurrency limit
         concurrency_limit = max(
             total_concurrency, 1
@@ -478,7 +449,7 @@ def schedule_agent_call(self):
 
 
 # ─────────────────────────────
-# 5) Minute‑ly stuck‑task garbage collector (unchanged)
+# 4) Minute‑ly stuck‑task garbage collector (unchanged)
 # ─────────────────────────────
 @shared_task(bind=True, name="core.tasks.cleanup_stuck_call_tasks")
 def cleanup_stuck_call_tasks(self):
@@ -542,7 +513,7 @@ def cleanup_stuck_call_tasks(self):
 
 
 # ─────────────────────────────
-# 6) CallTask Feedback Loop
+# 5) CallTask Feedback Loop
 # ─────────────────────────────
 @shared_task(
     bind=True,
