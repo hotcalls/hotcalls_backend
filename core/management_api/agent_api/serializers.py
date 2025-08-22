@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice, LeadFunnel
+from core.models import Agent, PhoneNumber, Voice, LeadFunnel
 
 
 class PhoneNumberSerializer(serializers.ModelSerializer):
@@ -66,7 +66,7 @@ class AgentSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt', 'config_id', 'phone_number', 'phone_number_display',
+            'character', 'prompt', 'phone_number', 'phone_number_display',
             'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
@@ -100,7 +100,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'voice', 
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
-            'character', 'prompt', 'config_id', 'phone_number', 'calendar_configuration'
+            'character', 'prompt', 'phone_number', 'calendar_configuration'
         ]
     
     def validate_workspace(self, value):
@@ -125,17 +125,24 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
         valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        
+
+        # Treat empty or None as all days
+        if value in (None, []):
+            return valid_days
+
         if not isinstance(value, list):
             raise serializers.ValidationError("Workdays must be a list")
-        
+
+        normalized = []
         for day in value:
-            if day.lower() not in valid_days:
+            day_l = str(day).lower()
+            if day_l not in valid_days:
                 raise serializers.ValidationError(
                     f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
                 )
-        
-        return value
+            normalized.append(day_l)
+
+        return normalized
     
     def validate_name(self, value):
         """Validate agent name"""
@@ -172,23 +179,30 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt', 'config_id', 'calendar_configuration'
+            'character', 'prompt', 'calendar_configuration'
         ]
     
     def validate_workdays(self, value):
         """Validate workdays contains only valid day names"""
         valid_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-        
+
+        # Treat empty or None as all days
+        if value in (None, []):
+            return valid_days
+
         if not isinstance(value, list):
             raise serializers.ValidationError("Workdays must be a list")
-        
+
+        normalized = []
         for day in value:
-            if day.lower() not in valid_days:
+            day_l = str(day).lower()
+            if day_l not in valid_days:
                 raise serializers.ValidationError(
                     f"'{day}' is not a valid weekday. Valid days are: {', '.join(valid_days)}"
                 )
-        
-        return value
+            normalized.append(day_l)
+
+        return normalized
     
     def validate_name(self, value):
         """Validate agent name"""
@@ -294,7 +308,7 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS  
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'config_id', 'phone_number', 'calendar_configuration',
+            'character', 'phone_number', 'calendar_configuration',
             'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at']

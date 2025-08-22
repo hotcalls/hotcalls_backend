@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from core.models import LiveKitAgent
+# LiveKit authentication removed - no longer using LiveKitAgent tokens
 
 
 class CalendarPermission(permissions.BasePermission):
@@ -74,13 +74,14 @@ class CalendarConfigurationPermission(permissions.BasePermission):
 class CalendarLiveKitPermission(permissions.BasePermission):
     """
     Unified permission for Calendar APIs.
-    - Primary path: LiveKit token via HTTP_X_LIVEKIT_TOKEN header (bypasses Django auth)
+    - Temporary: Allow unauthenticated access for agent calls
     - Otherwise: fall back to standard Django user auth for regular users
     """
 
     def has_permission(self, request, view):
-        # Primary: allow requests authenticated via LiveKit token
-        if self._is_valid_livekit_request(request):
+        # Temporary: Allow all requests without authentication
+        # TODO: Add IP-based or shared secret authentication
+        if request.method in ['GET', 'POST']:
             return True
 
         # Otherwise require normal Django auth
@@ -99,29 +100,18 @@ class CalendarLiveKitPermission(permissions.BasePermission):
         return request.user.is_staff
 
     def has_object_permission(self, request, view, obj):
-        # LiveKit requests get full object-level permissions
-        if self._is_valid_livekit_request(request):
+        # Temporary: Allow object access without authentication
+        # TODO: Add proper authentication
+        if request.method in permissions.SAFE_METHODS:
             return True
 
-        # Regular Django auth logic for non-LiveKit requests
+        # Regular Django auth logic
         if request.method in permissions.SAFE_METHODS:
             return request.user and request.user.is_authenticated
 
         return request.user.is_staff
 
-    def _is_valid_livekit_request(self, request) -> bool:
-        """Validate LiveKit token header against LiveKitAgent tokens."""
-        token = request.META.get('HTTP_X_LIVEKIT_TOKEN')
-        if not token:
-            return False
-        try:
-            agent = LiveKitAgent.objects.get(token=token)
-            if not agent.is_valid():
-                return False
-            request.livekit_agent = agent
-            return True
-        except LiveKitAgent.DoesNotExist:
-            return False
+    # LiveKit token validation removed - no longer using token-based auth
 
 
 class SuperuserOnlyPermission(permissions.BasePermission):

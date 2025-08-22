@@ -98,16 +98,13 @@ class WebhookLeadService:
             lead_funnel=lead_funnel,
         )
 
-        # Create CallTask immediately
+        # Create CallTask immediately – honor agent working hours via central util
         try:
-            CallTask.objects.create(
-                status=CallStatus.SCHEDULED,
-                attempts=0,
-                phone=lead.phone,
-                workspace=workspace,
-                lead=lead,
+            from core.utils.calltask_utils import create_call_task_safely
+            create_call_task_safely(
                 agent=agent,
-                next_call=timezone.now(),
+                workspace=workspace,
+                target_ref=f"lead:{lead.id}",
             )
             self._update_lead_stats(workspace, 'processed')
         except Exception as e:

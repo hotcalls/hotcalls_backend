@@ -1,10 +1,10 @@
 from rest_framework import viewsets, status, filters, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-# no module-level Count import to avoid lints; import Count locally where needed
+# Avoid unused Count import at module level; import where needed
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
-from django.utils import timezone
+# from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 import logging
 
@@ -83,45 +83,33 @@ logger = logging.getLogger(__name__)
     create=extend_schema(
         summary="➕ Create call log",
         description="""
-        Create a new call log entry using LiveKit secret authentication.
+        Create a new call log entry.
         
-        **🔐 Authentication Required**:
-        - **Header:** `X-LiveKit-Token: <your-generated-token>`
-        - **No Django Token needed** - only the LiveKit agent token header
+        **🔐 Authentication**:
+        - **Temporary:** No authentication required for POST
+        - **TODO:** Will add IP-based or shared secret authentication
         
         **📱 System Integration**:
         - Designed for external call systems
-        - Automatic call log creation from LiveKit
-        - No user authentication required
+        - Automatic call log creation from agents
+        - Currently open for integration purposes
         
         **📝 Required Information**:
-        - `lead`: Associated lead ID (UUID)
-        - `agent`: Agent who made/received the call (UUID)
-        - `from_number`, `to_number`: Phone numbers involved
-        - `duration`: Call duration in seconds
-        - `direction`: Call direction (inbound/outbound)
-        - `status`: Call outcome (optional)
-        - `appointment_datetime`: When appointment scheduled (if status is appointment_scheduled)
+        - `call_task_id` (required, write-only): The originating CallTask ID
+        - Other fields are inferred from the CallTask by default:
+          - `agent`, `lead` from the CallTask
+          - `to_number` from the CallTask phone
+          - `from_number` from the Agent's assigned phone number
+          - `direction` defaults to `outbound`
+        - Optional overrides:
+          - `direction`, `appointment_datetime`, `disconnection_reason`
+        - Note: `duration` is computed automatically from the CallTask creation time
         
-        **✅ Business Logic**:
-        - When status is 'appointment_scheduled', appointment_datetime is required
-        - When status is not 'appointment_scheduled', appointment_datetime must be empty
         """,
-        parameters=[
-            OpenApiParameter(
-                name='X-LiveKit-Token',
-                location=OpenApiParameter.HEADER,
-                description='LiveKit agent token for authentication (generated via /api/livekit/tokens/generate_token/)',
-                required=True,
-                type=str
-            )
-        ],
-        request=CallLogSerializer,
+        # No authentication parameters required temporarily
+        request=CallLogCreateSerializer,
         responses={
-            201: OpenApiResponse(
-                response=CallLogSerializer,
-                description="✅ Call log created successfully"
-            ),
+            201: OpenApiResponse(response=CallLogSerializer, description="✅ Call log created successfully"),
             400: OpenApiResponse(description="❌ Validation error - Check call log data"),
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required for call log creation")
@@ -263,12 +251,23 @@ class CallLogViewSet(viewsets.ModelViewSet):
             return CallLogCreateSerializer
         return CallLogSerializer
     
+    def create(self, request, *args, **kwargs):
+        """Use create-serializer for input but return full CallLogSerializer in response."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        # Re-serialize with read serializer to include read-only fields
+        read_serializer = CallLogSerializer(serializer.instance)
+        headers = self.get_success_headers(read_serializer.data)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+    
     def perform_create(self, serializer):
         """Create call log and record actual call minutes usage"""
         from core.quotas import enforce_and_record
         from decimal import Decimal
         
-        # Create the call log first
+        # call_task_id is required in request but not persisted (popped in serializer.create)
+        # Create the call log first (non-persisted fields are popped in serializer.create)
         call_log = serializer.save()
         
         # Record actual call duration in quota system
@@ -306,7 +305,9 @@ class CallLogViewSet(viewsets.ModelViewSet):
         # Trigger CallTask feedback loop (async, non-blocking)
         try:
             from core.tasks import update_calltask_from_calllog
-            update_calltask_from_calllog.delay(str(call_log.id))
+            # Prefer direct linking via provided call_task_id to avoid heuristic matching
+            provided_calltask_id = self.request.data.get('call_task_id') or self.request.data.get('calltask_id')
+            update_calltask_from_calllog.delay(str(call_log.id), provided_calltask_id)
             logger.info(f"🔄 Triggered CallTask feedback for CallLog {call_log.id}")
             
         except Exception as feedback_err:
@@ -314,6 +315,136 @@ class CallLogViewSet(viewsets.ModelViewSet):
             logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id}: {feedback_err}")
             # Call log creation succeeds regardless of feedback trigger errors
     
+    # ===============================
+    # New function-based endpoint
+    # ===============================
+
+@extend_schema(
+    summary="End of call (agent → server)",
+    description="Create a CallLog at end of call and trigger CallTask feedback. Currently no authentication required (temporary).",
+    request=CallLogCreateSerializer,
+    responses={201: OpenApiResponse(response=CallLogSerializer, description="Created")},
+    tags=["Call Management"]
+)
+@api_view(['POST'])
+@permission_classes([CallLogPermission])
+def end_of_call(request):
+    """Accept end-of-call event, create CallLog, record usage, and trigger feedback.
+
+    Payload supports superset of fields but only relevant ones are used:
+    - call_task_id (required)
+    - disconnection_reason (required)
+    - direction (optional; defaults to outbound)
+    - appointment_datetime (optional)
+    Extra fields are ignored for forward-compatibility.
+    """
+    from decimal import Decimal
+    from core.quotas import enforce_and_record
+    from django.db import transaction, IntegrityError
+
+    # Whitelist known fields; ignore others (accept event_id for idempotency)
+    allowed_keys = {
+        'call_task_id',
+        'disconnection_reason',
+        'direction',
+        'appointment_datetime',
+        'event_id',
+    }
+    incoming = request.data.copy()
+    filtered = {k: incoming.get(k) for k in allowed_keys if k in incoming}
+
+    provided_calltask_id = filtered.get('call_task_id') or request.data.get('calltask_id')
+    event_id = filtered.get('event_id')
+
+    # Idempotency: if event_id provided and exists, return existing log
+    if event_id:
+        try:
+            existing = CallLog.objects.select_related('lead', 'agent').get(event_id=event_id)
+            # Ensure feedback loop if needed
+            try:
+                _maybe_trigger_feedback_if_needed(existing, provided_calltask_id)
+            except Exception as e:
+                logger.error(f"⚠️ Feedback re-enqueue check failed for existing log {existing.id}: {e}")
+            return Response(CallLogSerializer(existing).data, status=status.HTTP_200_OK)
+        except CallLog.DoesNotExist:
+            pass
+
+    # Require call_task_id and disconnection_reason for feedback
+    if not provided_calltask_id:
+        return Response({'call_task_id': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+    if not filtered.get('disconnection_reason'):
+        return Response({'disconnection_reason': ['This field is required.']}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Default direction if omitted
+    if not filtered.get('direction'):
+        filtered['direction'] = 'outbound'
+
+    serializer = CallLogCreateSerializer(data=filtered, context={'request': request})
+    serializer.is_valid(raise_exception=True)
+
+    try:
+        with transaction.atomic():
+            call_log = serializer.save()
+    except IntegrityError:
+        # Race: duplicate event_id creation
+        if event_id:
+            try:
+                existing = CallLog.objects.select_related('lead', 'agent').get(event_id=event_id)
+                try:
+                    _maybe_trigger_feedback_if_needed(existing, provided_calltask_id)
+                except Exception as e:
+                    logger.error(f"⚠️ Feedback re-enqueue check failed for existing log {existing.id}: {e}")
+                return Response(CallLogSerializer(existing).data, status=status.HTTP_200_OK)
+            except CallLog.DoesNotExist:
+                pass
+        raise
+
+    # Record usage minutes only on fresh create
+    try:
+        _record_usage_minutes(call_log)
+    except Exception as quota_err:
+        logger.error(f"⚠️ Failed to record call minutes for call log {call_log.id} (end_of_call): {quota_err}")
+
+    # Trigger feedback for fresh create
+    try:
+        from core.tasks import update_calltask_from_calllog
+        update_calltask_from_calllog.delay(str(call_log.id), str(provided_calltask_id))
+    except Exception as feedback_err:
+        logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id} (end_of_call): {feedback_err}")
+
+    return Response(CallLogSerializer(call_log).data, status=status.HTTP_201_CREATED)
+
+def _record_usage_minutes(call_log: CallLog):
+    from decimal import Decimal
+    from core.quotas import enforce_and_record
+    workspace = getattr(call_log.agent, 'workspace', None)
+    if not workspace:
+        return
+    duration_minutes = Decimal(call_log.duration) / Decimal('60')
+    enforce_and_record(
+        workspace=workspace,
+        route_name="internal:call_duration_used",
+        http_method="POST",
+        amount=duration_minutes
+    )
+
+def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: str | None):
+    if not provided_calltask_id:
+        return
+    try:
+        ct = CallTask.objects.get(id=provided_calltask_id)
+    except CallTask.DoesNotExist:
+        return
+    # Only re-enqueue if task is not terminal
+    try:
+        terminal = {getattr(CallStatus, 'COMPLETED', None), getattr(CallStatus, 'DELETED', None), getattr(CallStatus, 'CANCELLED', None)}
+        if ct.status not in {s for s in terminal if s}:
+            from core.tasks import update_calltask_from_calllog
+            update_calltask_from_calllog.delay(str(call_log.id), provided_calltask_id)
+    except Exception:
+        # Fallback: be conservative and do nothing
+        return
+
     @extend_schema(
         summary="📊 Get call analytics",
         description="""
@@ -541,7 +672,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             "email": "",
             "phone": validated_data['phone'],  # Always use provided phone as fallback
             "lead_source": "",
-            "campaign_id": "",
+            
             "meta_data": {}
         }
         
@@ -555,7 +686,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
                     "email": lead.email,
                     "phone": lead.phone,
                     "lead_source": getattr(lead, 'lead_source', ''),
-                    "campaign_id": getattr(lead, 'campaign_id', ''),
+                    
                     "meta_data": lead.meta_data or {}
                 })
             except Lead.DoesNotExist:
@@ -567,7 +698,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
             request_lead_data = validated_data['lead_data']
             
             # Update basic fields
-            for field in ['name', 'surname', 'email', 'phone', 'lead_source', 'campaign_id']:
+            for field in ['name', 'surname', 'email', 'phone', 'lead_source']:
                 if field in request_lead_data:
                     lead_data[field] = request_lead_data[field]
             
@@ -631,12 +762,12 @@ class CallLogViewSet(viewsets.ModelViewSet):
             "language": base_agent.language,
             "retry_interval": base_agent.retry_interval,
             "max_retries": base_agent.max_retries,
+            "max_call_duration_minutes": base_agent.max_call_duration_minutes,
             "workdays": base_agent.workdays,
             "call_from": str(base_agent.call_from) if base_agent.call_from else "",
             "call_to": str(base_agent.call_to) if base_agent.call_to else "",
             "character": base_agent.character,
             "prompt": base_agent.prompt,
-            "config_id": base_agent.config_id or "",
             "calendar_configuration": str(base_agent.calendar_configuration.id) if base_agent.calendar_configuration else ""
         }
         
@@ -865,7 +996,7 @@ class CallLogViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def duration_distribution(self, request):
         """Get call duration distribution analysis"""
-        from django.db.models import Count, Q
+        from django.db.models import Q
         
         total_calls = CallLog.objects.count()
         
@@ -1010,7 +1141,6 @@ class CallTaskViewSet(viewsets.ModelViewSet):
             agent=agent,
             workspace=workspace,
             target_ref=target_ref,
-            next_call=timezone.now(),
         )
 
         # Bind created instance to serializer for response
@@ -1161,7 +1291,6 @@ def make_test_call(request):
         agent=agent,
         workspace=agent.workspace,
         target_ref=target_ref,
-        next_call=timezone.now(),
     )
     
     # Return success response
@@ -1169,5 +1298,7 @@ def make_test_call(request):
         'success': True,
         'call_task_id': str(call_task.id)
     }, status=status.HTTP_201_CREATED)
+
+
 
  

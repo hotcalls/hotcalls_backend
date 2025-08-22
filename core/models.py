@@ -51,6 +51,8 @@ class DisconnectionReason(models.TextChoices):
     ERROR_UNKNOWN = 'error_unknown', 'Unknown Error'
     ERROR_USER_NOT_JOINED = 'error_user_not_joined', 'User Not Joined'
     REGISTERED_CALL_TIMEOUT = 'registered_call_timeout', 'Registered Call Timeout'
+    # Preflight
+    PREFLIGHT_CALL_LOG_FAILED = 'preflight_call_log_failed', 'Preflight Call Log Failed'
 
 
 # Enum Choices
@@ -71,12 +73,7 @@ CALL_DIRECTION_CHOICES = [
     ('outbound', 'Outbound'),
 ]
 
-CALL_STATUS_CHOICES = [
-    ('appointment_scheduled', 'Appointment Scheduled'),
-    ('not_reached', 'Not Reached'),
-    ('no_interest', 'No Interest'),
-    ('reached', 'Reached'),
-]
+
 
 AGENT_STATUS_CHOICES = [
     ('active', 'Active'),
@@ -987,6 +984,10 @@ class Agent(models.Model):
         help_text="Maximum number of retry attempts for calls",
         default=3
     )
+    max_call_duration_minutes = models.IntegerField(
+        help_text="Maximum allowed call duration (minutes) before auto-cleanup of stuck IN_PROGRESS tasks",
+        default=30
+    )
     workdays = models.JSONField(
         default=list,
         help_text="List of working days, e.g., ['monday', 'tuesday', 'wednesday']",
@@ -1227,12 +1228,25 @@ class Blacklist(models.Model):
 class CallLog(models.Model):
     """Call logs for tracking all calls"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs')
+    # Lead is optional to support calls without a stored lead
+    lead = models.ForeignKey(Lead, on_delete=models.CASCADE, related_name='mapping_lead_calllogs', null=True, blank=True)
     agent = models.ForeignKey(
         Agent, 
         on_delete=models.CASCADE, 
         related_name='mapping_agent_calllogs',
         help_text="Agent who made/received the call"
+    )
+    # Persist the originating CallTask identifier without FK to allow dangling reference
+    call_task_id = models.UUIDField(default=uuid.uuid4, help_text="ID of originating CallTask (not a foreign key, may be dangling)")
+    # Persist canonical target reference from CallTask (e.g., 'lead:<uuid>')
+    target_ref = models.CharField(max_length=255, null=True, blank=True, help_text="Canonical call target reference from CallTask")
+    # Idempotency key for a single call attempt (unique per event)
+    event_id = models.UUIDField(
+        null=True,
+        blank=True,
+        unique=True,
+        db_index=True,
+        help_text="Idempotency key for a single call attempt (one CallLog per event_id)"
     )
     timestamp = models.DateTimeField(auto_now_add=True)
     from_number = models.CharField(max_length=20, help_text="Caller's phone number")
@@ -1250,13 +1264,7 @@ class CallLog(models.Model):
         choices=CALL_DIRECTION_CHOICES, 
         help_text="Call direction"
     )
-    status = models.CharField(
-        max_length=25,
-        choices=CALL_STATUS_CHOICES,
-        null=True,
-        blank=True,
-        help_text="Call outcome status"
-    )
+    # Removed redundant status; use disconnection_reason and appointment_datetime if applicable
     appointment_datetime = models.DateTimeField(
         null=True,
         blank=True,
@@ -1968,10 +1976,10 @@ class CallTask(models.Model):
         help_text="Workspace associated with this call task"
     )
     
-    lead = models.OneToOneField(
+    lead = models.ForeignKey(
         Lead,
         on_delete=models.CASCADE,
-        related_name='call_task',
+        related_name='call_tasks',
         null=True,
         blank=True,
         help_text="Lead associated with this call task (null for test calls)"
@@ -1994,6 +2002,8 @@ class CallTask(models.Model):
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    # Retry reason history (append-only)
+    retry_reasons = models.JSONField(default=list, help_text="Append-only list of retry reason dicts: {reason, hint, at}")
     
     class Meta:
         ordering = ['-created_at']

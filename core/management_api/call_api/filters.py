@@ -14,7 +14,6 @@ class CallLogFilter(django_filters.FilterSet):
     
     # Choice filters
     direction = django_filters.ChoiceFilter(choices=CallLog._meta.get_field('direction').choices)
-    status = django_filters.ChoiceFilter(choices=CallLog._meta.get_field('status').choices)
     
     # Agent filters
     agent = django_filters.UUIDFilter(field_name='agent__agent_id')
@@ -46,7 +45,7 @@ class CallLogFilter(django_filters.FilterSet):
     
     class Meta:
         model = CallLog
-        fields = ['direction', 'status', 'lead', 'agent', 'from_number', 'to_number']
+        fields = ['direction', 'lead', 'agent', 'from_number', 'to_number']
     
     def filter_search(self, queryset, name, value):
         """Global search across multiple fields"""

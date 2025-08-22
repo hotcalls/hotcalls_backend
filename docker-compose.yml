@@ -45,9 +45,8 @@ services:
       - ENVIRONMENT=development
       # Override for Docker networking
       - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
-      # Stripe webhook signing secret (local development)
-      - STRIPE_WEBHOOK_SECRET=whsec_3bd921fa722e74a1c71e01390b170a6ad5cd83c9b6521505ac6bb77f79465f9b
     ports:
       - "8000:8000"
     volumes:
@@ -94,21 +93,23 @@ services:
 
   outboundagent:
     image: python:3.11-slim
-    working_dir: /app/outboundagent
+    working_dir: /app
     env_file: .env
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_NAME=${DB_NAME}
-      - DB_USER=${DB_USER}
-      - DB_PASSWORD=${DB_PASSWORD}
+      # Database: Use read-only user from .env, only override host for Docker
+      - AGENT_DB_HOST=db  # Docker network override
+      - AGENT_DB_PORT=${DB_PORT}
+      - AGENT_DB_NAME=${DB_NAME}
+      - AGENT_DB_USER=${AGENT_DB_USER}  # Read-only user from .env
+      - AGENT_DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
       - MCP_SERVER_URL=http://mcp:8000
+      - CALL_EVENT_ENDPOINT_URL=http://backend:8000/api/calls/end-of-call/
     depends_on:
       db:
         condition: service_healthy
     volumes:
       - ./outboundagent:/app/outboundagent:delegated
-    command: bash -lc "pip install -r requirements.txt && pip install watchfiles && python -m watchfiles 'python agent.py start'"
+    command: bash -lc "pip install -r outboundagent/requirements.txt && pip install watchfiles && python -m watchfiles 'python -m outboundagent.agent start' outboundagent"
 
   celery:
     build:
@@ -119,6 +120,7 @@ services:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
       - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
       db:
@@ -139,6 +141,7 @@ services:
       - DJANGO_SETTINGS_MODULE=hotcalls.settings.development
       - ENVIRONMENT=development
       - DB_HOST=db
+      - AGENT_DB_HOST=db
       - REDIS_HOST=redis
     depends_on:
       db:
