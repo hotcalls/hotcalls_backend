@@ -1386,6 +1386,15 @@ setup_kubernetes_environment() {
     
     # Call Event/Log Configuration - Base64 encoded
     export CALL_EVENT_ENDPOINT_URL_B64="$(echo -n "${CALL_EVENT_ENDPOINT_URL:-}" | base64)"
+    # Compute checksum to force rollout on secret changes
+    export OUTBOUNDAGENT_SECRETS_CHECKSUM="$(
+        printf "%s|%s|%s|%s" \
+            "${CALL_EVENT_ENDPOINT_URL_B64}" \
+            "${CALL_EVENT_TIMEOUT_B64}" \
+            "${CALL_EVENT_RETRY_ATTEMPTS_B64}" \
+            "${CALL_EVENT_RETRY_BASE_MS_B64}" \
+        | sha256sum | awk '{print $1}'
+    )"
     export CALL_EVENT_TIMEOUT_B64="$(echo -n "${CALL_EVENT_TIMEOUT:-8.0}" | base64)"
     export CALL_EVENT_RETRY_ATTEMPTS_B64="$(echo -n "${CALL_EVENT_RETRY_ATTEMPTS:-3}" | base64)"
     export CALL_EVENT_RETRY_BASE_MS_B64="$(echo -n "${CALL_EVENT_RETRY_BASE_MS:-300}" | base64)"

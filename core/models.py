@@ -1867,69 +1867,7 @@ class LeadProcessingStats(models.Model):
         return f"{self.workspace.workspace_name} - {self.date} ({self.processing_rate:.1f}% processed)"
 
 
-class LiveKitAgent(models.Model):
-    """
-    LiveKit Agent Token Management
-    
-    Completely independent table for managing LiveKit authentication tokens.
-    Each agent name can have only one active token with 1-year validity.
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
-    # Agent identification and configuration
-    name = models.CharField(
-        max_length=255,
-        unique=True,
-        help_text="Unique agent name for LiveKit authentication"
-    )
-    
-    # Agent configuration
-    concurrency_per_agent = models.PositiveIntegerField(
-        default=100,
-        help_text="Concurrent calls per agent"
-    )
-    
-    # Token management
-    token = models.CharField(
-        max_length=64,
-        unique=True,
-        help_text="Random string token for authentication"
-    )
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField(help_text="Token expiration date (1 year from creation)")
-    
-    class Meta:
-        db_table = 'core_livekit_agent'
-        indexes = [
-            models.Index(fields=['token']),
-            models.Index(fields=['name']),
-            models.Index(fields=['expires_at']),
-        ]
-    
-    def save(self, *args, **kwargs):
-        # Set expiration to 1 year from now if not set
-        if not self.expires_at:
-            self.expires_at = timezone.now() + timezone.timedelta(days=365)
-        
-        # Generate token if not set
-        if not self.token:
-            self.token = self.generate_token()
-        
-        super().save(*args, **kwargs)
-    
-    def is_valid(self):
-        """Check if token is still valid (not expired)"""
-        return timezone.now() < self.expires_at
-    
-    @staticmethod
-    def generate_token():
-        """Generate a secure random token"""
-        return secrets.token_urlsafe(48)  # 64 character URL-safe token
-    
-    def __str__(self):
-        return f"LiveKitAgent {self.name} ({'valid' if self.is_valid() else 'expired'})"
+# LiveKitAgent model removed - no longer using token authentication
 
 
 ## GoogleCalendarMCPAgent model removed in unified LiveKit-only flow

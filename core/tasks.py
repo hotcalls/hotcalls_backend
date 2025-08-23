@@ -7,7 +7,7 @@ Key improvements
     `schedule_agent_call` task body runs anywhere in the cluster.
 2.  **SingletonTask** base class adds a second layer of protection:
     if the Redis lock somehow fails, the Celery task itself cannot overlap.
-3.  **Atomic hand‑off**: a single `UPDATE … WHERE id=? AND status IN (…)`
+3.  **Atomic jerk‑off**: a single `UPDATE … WHERE id=? AND status IN (…)`
     changes a CallTask's status to `CALL_TRIGGERED`.  If the row was already
     touched, the update count is 0 and we do *not* fire `trigger_call.delay`.
 4.  **No silent falls‑through** – every failure path is logged and returned.
