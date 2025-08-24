@@ -5,15 +5,47 @@ from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, P
 from .models import (
     GoogleCalendarConnection, GoogleCalendar,
     MicrosoftCalendarConnection, MicrosoftCalendar,
+    MicrosoftSubscription,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
-    LeadProcessingStats
+    LeadProcessingStats, CallTask
 )
 from django.utils import timezone
 
 
+class ShowPkMixin:
+    """Mixin to show the object's primary key on the change form."""
+
+    def display_id(self, obj):
+        return str(obj.pk) if obj else "-"
+    display_id.short_description = 'ID'
+
+    def get_readonly_fields(self, request, obj=None):
+        # Always include display_id for existing objects
+        base = super().get_readonly_fields(request, obj)
+        readonly = list(base) if isinstance(base, (list, tuple)) else list(self.readonly_fields)
+        if obj and 'display_id' not in readonly:
+            readonly = ['display_id'] + readonly
+        return readonly
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if not obj:
+            return fieldsets
+        if not fieldsets:
+            return fieldsets
+        # Ensure display_id is the first field in the first fieldset
+        title, opts = fieldsets[0]
+        opts = dict(opts)
+        fields = list(opts.get('fields', ()))
+        if 'display_id' not in fields:
+            fields = ['display_id'] + fields
+            opts['fields'] = tuple(fields)
+            fieldsets = ((title, opts),) + tuple(fieldsets[1:])
+        return fieldsets
+
 @admin.register(User)
-class CustomUserAdmin(BaseUserAdmin):
+class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
     """Custom admin for email-based User model"""
     
     # Display settings
@@ -67,7 +99,7 @@ class CustomUserAdmin(BaseUserAdmin):
 
 
 @admin.register(Voice)
-class VoiceAdmin(admin.ModelAdmin):
+class VoiceAdmin(ShowPkMixin, admin.ModelAdmin):
     """Admin for Voice model"""
     list_display = ('voice_external_id', 'provider', 'created_at', 'updated_at')
     list_filter = ('provider', 'created_at')
@@ -77,7 +109,7 @@ class VoiceAdmin(admin.ModelAdmin):
 
 
 @admin.register(Feature)
-class FeatureAdmin(admin.ModelAdmin):
+class FeatureAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('feature_name', 'unit', 'description', 'created_at')
     list_filter = ('unit', 'created_at')
     search_fields = ('feature_name', 'description')
@@ -85,7 +117,7 @@ class FeatureAdmin(admin.ModelAdmin):
 
 
 @admin.register(PlanFeature)
-class PlanFeatureAdmin(admin.ModelAdmin):
+class PlanFeatureAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('plan', 'feature', 'limit', 'created_at')
     list_filter = ('plan', 'feature', 'created_at')
     search_fields = ('plan__plan_name', 'feature__feature_name')
@@ -93,7 +125,7 @@ class PlanFeatureAdmin(admin.ModelAdmin):
 
 
 @admin.register(EndpointFeature)
-class EndpointFeatureAdmin(admin.ModelAdmin):
+class EndpointFeatureAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('route_name', 'http_method', 'feature', 'created_at')
     list_filter = ('http_method', 'feature', 'feature__unit', 'created_at')
     search_fields = ('route_name', 'feature__feature_name')
@@ -155,7 +187,7 @@ class FeatureUsageInline(admin.TabularInline):
 
 
 @admin.register(Plan)
-class PlanAdmin(admin.ModelAdmin):
+class PlanAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('plan_name', 'get_features_count', 'created_at', 'updated_at')
     search_fields = ('plan_name',)
     ordering = ('plan_name',)
@@ -167,7 +199,7 @@ class PlanAdmin(admin.ModelAdmin):
 
 
 @admin.register(Workspace)
-class WorkspaceAdmin(admin.ModelAdmin):
+class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace_name', 'get_current_plan', 'get_calendars_count', 'get_google_connections_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
@@ -189,7 +221,7 @@ class WorkspaceAdmin(admin.ModelAdmin):
 
 
 @admin.register(Agent)
-class AgentAdmin(admin.ModelAdmin):
+class AgentAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_number', 'calendar_configuration', 'created_at')
     list_filter = ('status', 'voice', 'language', 'phone_number', 'calendar_configuration', 'created_at')
     search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id', 'phone_number__phonenumber')
@@ -215,7 +247,7 @@ class AgentAdmin(admin.ModelAdmin):
 
 
 @admin.register(PhoneNumber)
-class PhoneNumberAdmin(admin.ModelAdmin):
+class PhoneNumberAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('phonenumber', 'get_agents', 'is_active', 'created_at')
     list_filter = ('is_active', 'created_at')
     search_fields = ('phonenumber',)
@@ -227,7 +259,7 @@ class PhoneNumberAdmin(admin.ModelAdmin):
 
 
 @admin.register(SIPTrunk)
-class SIPTrunkAdmin(admin.ModelAdmin):
+class SIPTrunkAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = (
         'provider_name', 'sip_host', 'sip_port', 'jambonz_carrier_id', 'livekit_trunk_id', 'is_active', 'created_at'
     )
@@ -237,7 +269,7 @@ class SIPTrunkAdmin(admin.ModelAdmin):
 
 
 @admin.register(Lead)
-class LeadAdmin(admin.ModelAdmin):
+class LeadAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('name', 'surname', 'email', 'phone', 'created_at')
     list_filter = ('created_at',)
     search_fields = ('name', 'surname', 'email', 'phone')
@@ -245,7 +277,7 @@ class LeadAdmin(admin.ModelAdmin):
 
 
 @admin.register(Blacklist)
-class BlacklistAdmin(admin.ModelAdmin):
+class BlacklistAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('user', 'status', 'reason', 'created_at')
     list_filter = ('status', 'created_at')
     search_fields = ('user__email', 'user__first_name', 'user__last_name', 'reason')
@@ -253,7 +285,7 @@ class BlacklistAdmin(admin.ModelAdmin):
 
 
 @admin.register(CallLog)
-class CallLogAdmin(admin.ModelAdmin):
+class CallLogAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('lead', 'agent', 'from_number', 'to_number', 'direction', 'duration', 'timestamp', 'disconnection_reason')
     list_filter = ('direction', 'timestamp', 'disconnection_reason')
     search_fields = ('lead__name', 'lead__surname', 'agent__name', 'from_number', 'to_number')
@@ -262,7 +294,7 @@ class CallLogAdmin(admin.ModelAdmin):
 
 
 @admin.register(GoogleCalendarConnection)
-class GoogleCalendarConnectionAdmin(admin.ModelAdmin):
+class GoogleCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'account_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
     list_filter = ('active', 'workspace', 'last_sync', 'created_at')
     search_fields = ('workspace__workspace_name', 'account_email')
@@ -293,7 +325,7 @@ class GoogleCalendarConnectionAdmin(admin.ModelAdmin):
 
 
 @admin.register(GoogleCalendar)
-class GoogleCalendarAdmin(admin.ModelAdmin):
+class GoogleCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('get_calendar_name', 'external_id', 'primary', 'time_zone', 'created_at')
     list_filter = ('primary', 'time_zone', 'created_at')
     search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
@@ -321,7 +353,7 @@ class GoogleCalendarAdmin(admin.ModelAdmin):
 
 
 @admin.register(MicrosoftCalendarConnection)
-class MicrosoftCalendarConnectionAdmin(admin.ModelAdmin):
+class MicrosoftCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'primary_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
     list_filter = ('active', 'workspace', 'last_sync', 'created_at')
     search_fields = ('workspace__workspace_name', 'primary_email')
@@ -352,7 +384,7 @@ class MicrosoftCalendarConnectionAdmin(admin.ModelAdmin):
 
 
 @admin.register(MicrosoftCalendar)
-class MicrosoftCalendarAdmin(admin.ModelAdmin):
+class MicrosoftCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('get_calendar_name', 'external_id', 'primary', 'can_edit', 'created_at')
     list_filter = ('primary', 'created_at')
     search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
@@ -374,16 +406,14 @@ class MicrosoftCalendarAdmin(admin.ModelAdmin):
     get_calendar_name.short_description = 'Calendar Name'
     get_calendar_name.admin_order_field = 'calendar__name'
 
-from .models import MicrosoftSubscription
-
 @admin.register(MicrosoftSubscription)
-class MicrosoftSubscriptionAdmin(admin.ModelAdmin):
+class MicrosoftSubscriptionAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('subscription_id', 'connection', 'resource', 'expiration_at', 'created_at')
     list_filter = ('resource', 'expiration_at', 'created_at')
     search_fields = ('subscription_id', 'connection__primary_email', 'resource')
     ordering = ('-created_at',)
 @admin.register(Calendar)
-class CalendarAdmin(admin.ModelAdmin):
+class CalendarAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('name', 'workspace', 'provider', 'active', 'get_configs_count', 'get_connection_status', 'created_at')
     list_filter = ('provider', 'active', 'workspace', 'created_at')
     search_fields = ('name', 'workspace__workspace_name')
@@ -422,7 +452,7 @@ class CalendarAdmin(admin.ModelAdmin):
 
 
 @admin.register(CalendarConfiguration)
-class CalendarConfigurationAdmin(admin.ModelAdmin):
+class CalendarConfigurationAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'get_conflict_calendars_count')
     list_filter = ('calendar__provider', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
     search_fields = ('calendar__workspace__workspace_name', 'calendar__name')
@@ -470,7 +500,7 @@ class CalendarConfigurationAdmin(admin.ModelAdmin):
 
 
 @admin.register(WorkspaceSubscription)
-class WorkspaceSubscriptionAdmin(admin.ModelAdmin):
+class WorkspaceSubscriptionAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'plan', 'started_at', 'ends_at', 'is_active', 'created_at')
     list_filter = ('is_active', 'plan', 'started_at', 'ends_at', 'created_at')
     search_fields = ('workspace__workspace_name', 'plan__plan_name')
@@ -492,7 +522,7 @@ class WorkspaceSubscriptionAdmin(admin.ModelAdmin):
 
 
 @admin.register(WorkspaceUsage)
-class WorkspaceUsageAdmin(admin.ModelAdmin):
+class WorkspaceUsageAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'subscription', 'period_start', 'period_end', 'get_features_count')
     list_filter = ('workspace', 'subscription__plan', 'period_start', 'period_end')
     search_fields = ('workspace__workspace_name', 'subscription__plan__plan_name')
@@ -506,7 +536,7 @@ class WorkspaceUsageAdmin(admin.ModelAdmin):
 
 
 @admin.register(FeatureUsage)
-class FeatureUsageAdmin(admin.ModelAdmin):
+class FeatureUsageAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('get_workspace', 'feature', 'used_amount', 'get_period', 'updated_at')
     list_filter = ('feature', 'feature__unit', 'usage_record__period_start')
     search_fields = ('usage_record__workspace__workspace_name', 'feature__feature_name')
@@ -523,7 +553,7 @@ class FeatureUsageAdmin(admin.ModelAdmin):
 
 
 @admin.register(MetaIntegration)
-class MetaIntegrationAdmin(admin.ModelAdmin):
+class MetaIntegrationAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'page_id', 'status', 'access_token_expires_at', 'created_at')
     list_filter = ('status', 'access_token_expires_at', 'created_at')
     search_fields = ('workspace__workspace_name', 'page_id')
@@ -546,7 +576,7 @@ class MetaIntegrationAdmin(admin.ModelAdmin):
 
 
 @admin.register(WorkspaceInvitation)
-class WorkspaceInvitationAdmin(admin.ModelAdmin):
+class WorkspaceInvitationAdmin(ShowPkMixin, admin.ModelAdmin):
     """Admin for WorkspaceInvitation model"""
     list_display = ('email', 'workspace', 'invited_by', 'status', 'created_at', 'expires_at', 'is_valid_display')
     list_filter = ('status', 'workspace', 'created_at', 'expires_at')
@@ -578,7 +608,7 @@ class WorkspaceInvitationAdmin(admin.ModelAdmin):
     
     def get_readonly_fields(self, request, obj=None):
         """Make certain fields readonly based on object state"""
-        readonly = list(self.readonly_fields)
+        readonly = list(super().get_readonly_fields(request, obj))
         if obj and obj.status != 'pending':
             # Don't allow editing workspace/email after acceptance
             readonly.extend(['workspace', 'email', 'invited_by'])
@@ -586,7 +616,7 @@ class WorkspaceInvitationAdmin(admin.ModelAdmin):
 
 
 @admin.register(MetaLeadForm)
-class MetaLeadFormAdmin(admin.ModelAdmin):
+class MetaLeadFormAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('meta_integration', 'meta_form_id', 'name', 'is_active', 'created_at')
     list_filter = ('meta_integration__workspace', 'created_at')
     search_fields = ('meta_form_id', 'name', 'meta_integration__workspace__workspace_name')
@@ -594,7 +624,7 @@ class MetaLeadFormAdmin(admin.ModelAdmin):
 
 
 @admin.register(LeadFunnel)
-class LeadFunnelAdmin(admin.ModelAdmin):
+class LeadFunnelAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('name', 'workspace', 'meta_lead_form', 'is_active', 'created_at')
     list_filter = ('workspace', 'is_active', 'created_at')
     search_fields = ('name', 'workspace__workspace_name', 'meta_lead_form__meta_form_id')
@@ -602,7 +632,7 @@ class LeadFunnelAdmin(admin.ModelAdmin):
 
 
 @admin.register(WebhookLeadSource)
-class WebhookLeadSourceAdmin(admin.ModelAdmin):
+class WebhookLeadSourceAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('name', 'workspace', 'lead_funnel', 'created_at', 'updated_at')
     list_filter = ('workspace', 'created_at')
     search_fields = ('name', 'workspace__workspace_name')
@@ -610,11 +640,19 @@ class WebhookLeadSourceAdmin(admin.ModelAdmin):
 
 
 @admin.register(LeadProcessingStats)
-class LeadProcessingStatsAdmin(admin.ModelAdmin):
+class LeadProcessingStatsAdmin(ShowPkMixin, admin.ModelAdmin):
     list_display = ('workspace', 'date', 'total_received', 'processed_with_agent', 'processing_rate')
     list_filter = ('workspace', 'date')
     search_fields = ('workspace__workspace_name',)
     ordering = ('-date',)
 
+
+@admin.register(CallTask)
+class CallTaskAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('id', 'status', 'workspace', 'agent', 'phone', 'next_call', 'attempts')
+    list_filter = ('status', 'workspace', 'agent')
+    search_fields = ('phone', 'agent__name', 'workspace__workspace_name', 'id')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
 
 # LiveKitAgent admin removed - no longer using token authentication
