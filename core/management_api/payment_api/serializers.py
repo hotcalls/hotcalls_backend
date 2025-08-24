@@ -29,7 +29,7 @@ class CreateStripeCustomerSerializer(serializers.Serializer):
             
             # Check if user is member of workspace
             request = self.context.get('request')
-            if request and not workspace.users.filter(id=request.user.id).exists():
+            if request and not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
                 raise serializers.ValidationError("You don't have access to this workspace")
                 
             return value
@@ -49,7 +49,7 @@ class StripePortalSessionSerializer(serializers.Serializer):
             
             # Check if user is member of workspace
             request = self.context.get('request')
-            if request and not workspace.users.filter(id=request.user.id).exists():
+            if request and not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
                 raise serializers.ValidationError("You don't have access to this workspace")
             
             # Check if workspace has Stripe customer
@@ -72,7 +72,7 @@ class RetrieveStripeCustomerSerializer(serializers.Serializer):
             
             # Check if user is member of workspace
             request = self.context.get('request')
-            if request and not workspace.users.filter(id=request.user.id).exists():
+            if request and not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
                 raise serializers.ValidationError("You don't have access to this workspace")
                 
             return value
@@ -101,7 +101,7 @@ class CreateCheckoutSessionSerializer(serializers.Serializer):
             
             # Check if user is member of workspace
             request = self.context.get('request')
-            if request and not workspace.users.filter(id=request.user.id).exists():
+            if request and not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
                 raise serializers.ValidationError("You don't have access to this workspace")
             
             # Stripe creates customer automatically during checkout
@@ -140,7 +140,7 @@ class ChangePlanSerializer(serializers.Serializer):
         try:
             workspace = Workspace.objects.get(id=value)
             request = self.context.get('request')
-            if request and not workspace.users.filter(id=request.user.id).exists():
+            if request and not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
                 raise serializers.ValidationError("You don't have access to this workspace")
             if not workspace.stripe_subscription_id:
                 raise serializers.ValidationError("Workspace has no active Stripe subscription")

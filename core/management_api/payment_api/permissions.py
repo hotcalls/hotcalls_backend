@@ -13,6 +13,9 @@ class WorkspacePaymentPermission(permissions.BasePermission):
         return request.user and request.user.is_authenticated
     
     def has_object_permission(self, request, view, obj):
+        # Superusers can do everything
+        if getattr(request.user, 'is_superuser', False):
+            return True
         # For workspace objects
         if isinstance(obj, Workspace):
             # Check if user is member of this workspace
@@ -34,6 +37,9 @@ class IsWorkspaceMember(permissions.BasePermission):
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
+        # Superusers can do everything
+        if getattr(request.user, 'is_superuser', False):
+            return True
         
         # Get workspace_id from different sources
         workspace_id = (
@@ -43,6 +49,7 @@ class IsWorkspaceMember(permissions.BasePermission):
         )
         
         if not workspace_id:
+            # Allow superusers above; non-superusers must provide workspace_id
             return False
         
         try:

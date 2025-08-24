@@ -11,7 +11,7 @@ from django.core.cache import cache
 from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from core.models import Workspace
+from core.models import Workspace, User
 from .serializers import (
     StripeCustomerSerializer,
     CreateStripeCustomerSerializer,
@@ -520,7 +520,7 @@ def list_stripe_products(request):
 )
 @api_view(['POST'])
 @authentication_classes([TokenAuthentication, SessionAuthentication])
-@permission_classes([IsWorkspaceMember])
+@permission_classes([IsAuthenticated])
 def create_checkout_session(request):
     """Create Stripe checkout session for subscription"""
     serializer = CreateCheckoutSessionSerializer(
@@ -554,7 +554,9 @@ def create_checkout_session(request):
             'client_reference_id': str(workspace.id),
             'metadata': {
                 'workspace_id': str(workspace.id),
-                'workspace_name': workspace.workspace_name
+                'workspace_name': workspace.workspace_name,
+                'payer_user_id': str(getattr(request.user, 'id', '')),
+                'payer_email': getattr(request.user, 'email', '') or ''
             }
         }
         
@@ -1246,6 +1248,26 @@ def stripe_webhook(request):
                 
                 workspace.save()
                 logger.info("Workspace updated; subscription %s activated for workspace %s", subscription_id, workspace_id)
+
+                # Automatically add payer to workspace and make admin per policy
+                try:
+                    payer_user_id = metadata.get('payer_user_id') if isinstance(metadata, dict) else None
+                    if payer_user_id:
+                        payer_user = User.objects.filter(id=payer_user_id).first()
+                        if payer_user:
+                            # Ensure membership
+                            if not workspace.users.filter(id=payer_user.id).exists():
+                                workspace.users.add(payer_user)
+                                logger.info("Added payer user %s to workspace %s", payer_user.id, workspace.id)
+
+                            # Assign admin depending on setting or if no admin yet
+                            auto_assign = getattr(settings, 'PAYMENT_AUTO_ASSIGN_PAYER_AS_ADMIN', True)
+                            if auto_assign or not getattr(workspace, 'admin_user_id', None):
+                                workspace.admin_user = payer_user
+                                workspace.save()
+                                logger.info("Assigned payer user %s as admin for workspace %s", payer_user.id, workspace.id)
+                except Exception as admin_e:
+                    logger.warning("Failed to auto-assign payer as admin for workspace %s: %s", workspace.id, admin_e)
             except Workspace.DoesNotExist:
                 logger.error("Workspace not found for checkout session; workspace_id=%s", workspace_id)
             except Exception as e:
@@ -1391,8 +1413,8 @@ def check_workspace_subscription(request, workspace_id):
     try:
         workspace = Workspace.objects.get(id=workspace_id)
         
-        # Check if user is member of workspace
-        if not workspace.users.filter(id=request.user.id).exists():
+        # Check if user is member of workspace unless superuser
+        if not (getattr(request.user, 'is_superuser', False) or workspace.users.filter(id=request.user.id).exists()):
             return Response(
                 {"error": "Not a member of this workspace"},
                 status=status.HTTP_403_FORBIDDEN
@@ -1632,8 +1654,8 @@ def purchase_minute_pack(request, workspace_id):
     except Workspace.DoesNotExist:
         return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    # Only workspace admin or staff should be able to credit minute packs
-    if not (request.user.is_staff or (workspace.admin_user_id and workspace.admin_user_id == request.user.id)):
+    # Only workspace admin, staff, or superuser should be able to credit minute packs
+    if not (request.user.is_superuser or request.user.is_staff or (workspace.admin_user_id and workspace.admin_user_id == request.user.id)):
         return Response({"error": "Only workspace admin can purchase minute packs"}, status=status.HTTP_403_FORBIDDEN)
 
     try:
