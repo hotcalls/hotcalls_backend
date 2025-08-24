@@ -6,14 +6,13 @@ automatically updating or deleting CallTasks based on call outcomes.
 """
 
 import logging
-import os
 from datetime import timedelta
 from zoneinfo import ZoneInfo
 from django.conf import settings
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from django.utils import timezone as dj_timezone
-from django.db import connection, transaction, close_old_connections
+from django.db import connection, transaction
 from core.models import CallTask, CallStatus, DisconnectionReason, Lead, User
 import hashlib
 
@@ -170,45 +169,84 @@ def preflight_dispatch_config(call_task: CallTask) -> dict:
     Returns: {"ok": bool, "from_number": str|None, "sip_trunk_id": str|None, "reason": str|None}
     """
     agent = call_task.agent
-    workspace = call_task.workspace
 
-    # Resolve from_number (agent phone_number → workspace fallback → env)
-    from_number = (
-        agent.phone_number.phonenumber
-        if getattr(agent, "phone_number", None)
-        else getattr(workspace, "phone_number", None)
-    ) or os.getenv("DEFAULT_FROM_NUMBER")
-
-    # Resolve SIP trunk id (agent phone_number.sip_trunk → env)
-    sip_trunk_id = None
-    if getattr(agent, "phone_number", None) and getattr(
-        agent.phone_number, "sip_trunk", None
-    ):
-        sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
-    if not sip_trunk_id:
-        sip_trunk_id = os.getenv("TRUNK_ID")
-
-    if not from_number or not sip_trunk_id:
-        missing = "missing_from_number" if not from_number else "missing_sip_trunk"
+    # Guard 1: require agent phone number string
+    phone_obj = getattr(agent, "phone_number", None)
+    if not phone_obj or not getattr(phone_obj, "phonenumber", None):
+        reason = "missing_from_number"
         try:
-            reschedule_without_increment(
-                call_task, reason="config_missing", hint=missing
-            )
+            reschedule_without_increment(call_task, reason="config_missing", hint=reason)
         except Exception as e:
-            logger.error(
-                f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}"
-            )
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
         return {
             "ok": False,
-            "from_number": from_number,
-            "sip_trunk_id": sip_trunk_id,
-            "reason": missing,
+            "from_number": None,
+            "sip_trunk_id": None,
+            "reason": reason,
         }
 
+    # Optional guard: inactive phone number
+    if hasattr(phone_obj, "is_active") and not phone_obj.is_active:
+        reason = "inactive_from_number"
+        try:
+            reschedule_without_increment(call_task, reason="config_missing", hint=reason)
+        except Exception as e:
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
+        return {
+            "ok": False,
+            "from_number": phone_obj.phonenumber,
+            "sip_trunk_id": None,
+            "reason": reason,
+        }
+
+    # Guard 2: require SIP trunk and trunk id
+    sip_trunk = getattr(phone_obj, "sip_trunk", None)
+    if not sip_trunk:
+        reason = "missing_sip_trunk"
+        try:
+            reschedule_without_increment(call_task, reason="config_missing", hint=reason)
+        except Exception as e:
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
+        return {
+            "ok": False,
+            "from_number": phone_obj.phonenumber,
+            "sip_trunk_id": None,
+            "reason": reason,
+        }
+
+    trunk_id = getattr(sip_trunk, "livekit_trunk_id", None)
+    if not trunk_id:
+        reason = "missing_trunk_id"
+        try:
+            reschedule_without_increment(call_task, reason="config_missing", hint=reason)
+        except Exception as e:
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
+        return {
+            "ok": False,
+            "from_number": phone_obj.phonenumber,
+            "sip_trunk_id": None,
+            "reason": reason,
+        }
+
+    # Optional guard: inactive trunk
+    if hasattr(sip_trunk, "is_active") and not sip_trunk.is_active:
+        reason = "inactive_sip_trunk"
+        try:
+            reschedule_without_increment(call_task, reason="config_missing", hint=reason)
+        except Exception as e:
+            logger.error(f"preflight_dispatch_config reschedule failed for {call_task.id}: {e}")
+        return {
+            "ok": False,
+            "from_number": phone_obj.phonenumber,
+            "sip_trunk_id": trunk_id,
+            "reason": reason,
+        }
+
+    # Success
     return {
         "ok": True,
-        "from_number": from_number,
-        "sip_trunk_id": sip_trunk_id,
+        "from_number": phone_obj.phonenumber,
+        "sip_trunk_id": trunk_id,
         "reason": None,
     }
 

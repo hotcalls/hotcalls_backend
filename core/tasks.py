@@ -18,7 +18,6 @@ Key improvements
 This file completely replaces your previous core/tasks.py.
 """
 import logging
-import os
 import traceback
 from datetime import timedelta
 
@@ -175,12 +174,10 @@ def trigger_call(self, call_task_id):
         workspace = call_task.workspace
         lead = call_task.lead
 
-        # Get SIP trunk ID from agent's phone number (dynamic routing)
-        sip_trunk_id = None
-        if agent.phone_number and agent.phone_number.sip_trunk:
-            sip_trunk_id = agent.phone_number.sip_trunk.livekit_trunk_id
-        if not sip_trunk_id:
-            sip_trunk_id = os.getenv("TRUNK_ID")  # Fallback
+        # Get SIP trunk ID from agent's phone number (required)
+        phone_obj = getattr(agent, "phone_number", None)
+        sip_trunk = getattr(phone_obj, "sip_trunk", None)
+        sip_trunk_id = getattr(sip_trunk, "livekit_trunk_id", None)
 
         agent_config = {
             "name": agent.name,
@@ -212,12 +209,9 @@ def trigger_call(self, call_task_id):
                 "call_task_id": str(call_task.id),
             }
 
-        from_number = (
-            agent.phone_number.phonenumber
-            if agent.phone_number
-            else getattr(workspace, "phone_number", None)
-            or os.getenv("DEFAULT_FROM_NUMBER")
-        )
+        # Require an agent phone number (no env fallback)
+        phone_obj = getattr(agent, "phone_number", None)
+        from_number = getattr(phone_obj, "phonenumber", None)
 
         # 🎯 QUOTA ENFORCEMENT: Skip quotas for test calls (lead is null)
         if lead is not None:
