@@ -309,6 +309,34 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
         workspace = serializer.save(creator=self.request.user, admin_user=self.request.user)
         workspace.users.add(self.request.user)
         workspace.save()
+        # Auto-assign default phone number from global pool
+        try:
+            from core.services.phone_assignment import assign_default_number_to_workspace
+            assign_default_number_to_workspace(workspace)
+        except Exception:
+            # Do not block workspace creation; number can be assigned later
+            pass
+
+    @extend_schema(
+        summary="📞 List workspace phone numbers",
+        description="List phone numbers mapped to this workspace and indicate which one is default.",
+        responses={200: OpenApiResponse(description="OK")},
+        tags=["Workspace Management"]
+    )
+    @action(detail=True, methods=['get'], url_path='phone-numbers')
+    def phone_numbers(self, request, pk=None):
+        from core.models import WorkspacePhoneNumber
+        workspace = self.get_object()
+        mappings = WorkspacePhoneNumber.objects.filter(workspace=workspace).select_related('phone_number')
+        data = [
+            {
+                'phone_number_id': str(m.phone_number.id),
+                'phonenumber': m.phone_number.phonenumber,
+                'is_default': m.is_default,
+            }
+            for m in mappings
+        ]
+        return Response({'results': data})
 
     @extend_schema(
         summary="✉️ Get/Set SMTP settings",

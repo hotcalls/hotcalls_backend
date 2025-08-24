@@ -1134,6 +1134,11 @@ class PhoneNumber(models.Model):
         unique=True,
         help_text="Phone number in E.164 format"
     )
+    # Marks numbers that belong to the global default pool (eligible for new workspaces)
+    is_global_default = models.BooleanField(
+        default=False,
+        help_text="If true, number is eligible for round-robin assignment to new workspaces"
+    )
     
     # TRUNK RELATIONSHIP - Each phone number has ONE SIP trunk
     sip_trunk = models.OneToOneField(
@@ -1153,6 +1158,37 @@ class PhoneNumber(models.Model):
     
     def __str__(self):
         return self.phonenumber
+
+
+class WorkspacePhoneNumber(models.Model):
+    """Mapping of workspace to phone numbers with a workspace-level default flag."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(
+        'Workspace',
+        on_delete=models.CASCADE,
+        related_name='workspace_phonenumbers',
+        help_text="Workspace that can use this phone number"
+    )
+    phone_number = models.ForeignKey(
+        PhoneNumber,
+        on_delete=models.CASCADE,
+        related_name='workspace_mappings',
+        help_text="Phone number available to this workspace"
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="If true, default phone number for this workspace"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['workspace', 'phone_number'], name='uq_workspace_phone_number')
+        ]
+
+    def __str__(self):
+        return f"{self.workspace.workspace_name} → {self.phone_number.phonenumber} ({'default' if self.is_default else 'pool'})"
 
 
 class Lead(models.Model):

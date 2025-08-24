@@ -64,6 +64,12 @@ class WorkspaceCreateSerializer(serializers.ModelSerializer):
         model = Workspace
         fields = ['workspace_name']
 
+    def create(self, validated_data):
+        """Create workspace and rely on view hook to attach default phone number.
+        Single responsibility: only persist Workspace here."""
+        workspace = Workspace.objects.create(**validated_data)
+        return workspace
+
 
 class WorkspaceUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating workspaces"""

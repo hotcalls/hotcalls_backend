@@ -8,7 +8,7 @@ from .models import (
     MicrosoftSubscription,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
-    LeadProcessingStats, CallTask
+    LeadProcessingStats, CallTask, WorkspacePhoneNumber
 )
 from django.utils import timezone
 
@@ -248,8 +248,8 @@ class AgentAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(PhoneNumber)
 class PhoneNumberAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('phonenumber', 'get_agents', 'is_active', 'created_at')
-    list_filter = ('is_active', 'created_at')
+    list_display = ('phonenumber', 'is_global_default', 'get_agents', 'is_active', 'created_at')
+    list_filter = ('is_global_default', 'is_active', 'created_at')
     search_fields = ('phonenumber',)
     ordering = ('-created_at',)
     
@@ -656,3 +656,10 @@ class CallTaskAdmin(ShowPkMixin, admin.ModelAdmin):
     readonly_fields = ('created_at', 'updated_at')
 
 # LiveKitAgent admin removed - no longer using token authentication
+
+@admin.register(WorkspacePhoneNumber)
+class WorkspacePhoneNumberAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('workspace', 'phone_number', 'is_default', 'created_at')
+    list_filter = ('workspace', 'is_default', 'created_at')
+    search_fields = ('workspace__workspace_name', 'phone_number__phonenumber')
+    ordering = ('-created_at',)

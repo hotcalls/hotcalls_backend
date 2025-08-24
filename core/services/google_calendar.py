@@ -389,6 +389,107 @@ class GoogleCalendarService:
             logger.error(f"Failed to create event in calendar {calendar_id}: {str(e)}")
             raise
 
+    # -----------------------------
+    # Reconciliation helpers
+    # -----------------------------
+    @staticmethod
+    def ensure_calendar_mapping(calendar: Calendar) -> bool:
+        """Ensure that a provider-mapped record exists for the given calendar.
+
+        For Google:
+        - If mapping exists, ensure it has a connection and return True
+        - If missing, try to attach mapping by syncing the workspace connection
+          and re-linking by exact name match
+        - Returns True if mapping now exists; False otherwise
+        """
+        try:
+            if calendar.provider != 'google':
+                return True
+
+            # Mapping already present
+            if hasattr(calendar, 'google_calendar') and calendar.google_calendar:
+                # Ensure connection attached if available in workspace
+                if not calendar.google_calendar.connection:
+                    from core.models import GoogleCalendarConnection
+                    conn = GoogleCalendarConnection.objects.filter(
+                        workspace=calendar.workspace, active=True
+                    ).first()
+                    if not conn:
+                        return False
+                    calendar.google_calendar.connection = conn
+                    calendar.google_calendar.save(update_fields=['connection', 'updated_at'])
+                return True
+
+            # No mapping yet: try to reconcile via workspace connection
+            from core.models import GoogleCalendarConnection, GoogleCalendar
+            conn = GoogleCalendarConnection.objects.filter(
+                workspace=calendar.workspace, active=True
+            ).first()
+            if not conn:
+                return False
+
+            # Sync to ensure latest list exists in DB
+            try:
+                GoogleCalendarService(conn).sync_calendars()
+            except Exception as e:
+                logger.warning(f"Sync during ensure_calendar_mapping failed: {e}")
+
+            # Find a GoogleCalendar created by sync with the same name in this workspace/connection
+            gc = (
+                GoogleCalendar.objects.filter(
+                    connection=conn,
+                    calendar__workspace=calendar.workspace,
+                    calendar__name=calendar.name
+                ).first()
+            )
+            if gc:
+                # Re-link mapping to the existing orphan calendar
+                old_calendar = gc.calendar
+                if old_calendar.id != calendar.id:
+                    gc.calendar = calendar
+                    gc.save(update_fields=['calendar', 'updated_at'])
+                return True
+
+            return False
+        except Exception as e:
+            logger.error(f"ensure_calendar_mapping error for calendar {getattr(calendar, 'id', 'unknown')}: {e}")
+            return False
+
+    @staticmethod
+    def reconcile_workspace_calendars(connection: 'GoogleCalendarConnection') -> int:
+        """Reconcile all Google calendars in a workspace to prevent orphans.
+
+        Steps:
+        - Run a full sync to populate GoogleCalendar entries
+        - For each generic Calendar(provider='google') without mapping, attempt to link
+        Returns the number of calendars successfully fixed.
+        """
+        try:
+            service = GoogleCalendarService(connection)
+            # Ensure we have an up-to-date set of calendars
+            try:
+                service.sync_calendars()
+            except Exception as e:
+                logger.warning(f"Initial sync failed during reconcile: {e}")
+
+            from core.models import Calendar
+            orphans = Calendar.objects.filter(
+                workspace=connection.workspace,
+                provider='google',
+                google_calendar__isnull=True
+            )
+
+            fixed = 0
+            for orphan in orphans:
+                if GoogleCalendarService.ensure_calendar_mapping(orphan):
+                    fixed += 1
+            if fixed:
+                logger.info(f"Reconciled {fixed} Google calendar mappings in workspace {connection.workspace_id}")
+            return fixed
+        except Exception as e:
+            logger.error(f"reconcile_workspace_calendars failed: {e}")
+            return 0
+
 
 class GoogleOAuthService:
     """Service for Google OAuth operations"""

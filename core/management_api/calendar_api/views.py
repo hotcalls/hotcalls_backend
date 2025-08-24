@@ -626,6 +626,11 @@ class CalendarViewSet(viewsets.ModelViewSet):
             # 5. Immediately sync calendar list
             service = GoogleCalendarService(connection)
             synced_calendars = service.sync_calendars()
+            try:
+                # Attempt to reconcile orphan calendars in this workspace so provider mappings exist
+                GoogleCalendarService.reconcile_workspace_calendars(connection)
+            except Exception as e:
+                logger.warning(f"Reconcile after Google OAuth callback failed: {e}")
             
             logger.info(f"{'Created' if created else 'Updated'} Google Calendar connection for {user_info['email']}")
             
@@ -720,6 +725,11 @@ class CalendarViewSet(viewsets.ModelViewSet):
             
             # Sync calendars
             synced_calendars = service.sync_calendars()
+            try:
+                # Attempt to reconcile orphan calendars in this workspace so provider mappings exist
+                GoogleCalendarService.reconcile_workspace_calendars(connection)
+            except Exception as e:
+                logger.warning(f"Reconcile after Google refresh failed: {e}")
             
             return Response({
                 'success': True,
@@ -1327,6 +1337,11 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 'calendar_health': calendar_health
             }
             
+            # Fail-closed: if unhealthy (no calendars succeeded), return zero slots
+            if calendar_health['status'] == 'unhealthy':
+                response_data['available_slots'] = []
+                response_data['total_slots_found'] = 0
+
             # Add warnings if some calendars failed
             if calendar_health['failed_calendars']:
                 response_data['warnings'] = [
@@ -1692,9 +1707,21 @@ class CalendarConfigurationViewSet(viewsets.ModelViewSet):
                 
                 # Ensure provider-specific data exists
                 if conflict_calendar.provider == 'google' and not hasattr(conflict_calendar, 'google_calendar'):
-                    logger.warning(f"Calendar {calendar_name} has no google_calendar data")
-                    failed_calendars.append(calendar_name)
-                    continue
+                    # Attempt one reconciliation to create/link mapping
+                    try:
+                        from core.models import GoogleCalendarConnection
+                        conn = GoogleCalendarConnection.objects.filter(workspace=conflict_calendar.workspace, active=True).first()
+                        if conn:
+                            GoogleCalendarService.reconcile_workspace_calendars(conn)
+                            # Reload the calendar to check mapping again
+                            conflict_calendar = Calendar.objects.select_related('google_calendar__connection', 'microsoft_calendar__connection').get(id=calendar_id)
+                    except Exception as e:
+                        logger.warning(f"Reconcile attempt failed for {calendar_name}: {e}")
+
+                    if not hasattr(conflict_calendar, 'google_calendar'):
+                        logger.warning(f"Calendar {calendar_name} has no google_calendar data after reconcile")
+                        failed_calendars.append(calendar_name)
+                        continue
                 if conflict_calendar.provider == 'outlook' and not hasattr(conflict_calendar, 'microsoft_calendar'):
                     logger.warning(f"Calendar {calendar_name} has no microsoft_calendar data")
                     failed_calendars.append(calendar_name)

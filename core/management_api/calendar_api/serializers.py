@@ -122,6 +122,86 @@ class CalendarConfigurationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
+    def validate(self, attrs):
+        """Ensure selected calendars are provider-mapped (google/microsoft). Attempt one reconcile for google."""
+        from core.models import Calendar
+        errors = {}
+
+        # Resolve calendar being validated (for update, it may be absent in attrs)
+        calendar = attrs.get('calendar') or getattr(self.instance, 'calendar', None)
+
+        def _ensure_mapping_or_error(cal: Calendar, role: str):
+            if cal.provider == 'google':
+                has_mapping = hasattr(cal, 'google_calendar') and cal.google_calendar and cal.google_calendar.connection
+                if not has_mapping:
+                    # Try one reconcile using any active connection in workspace
+                    try:
+                        from core.models import GoogleCalendarConnection
+                        from core.services.google_calendar import GoogleCalendarService
+                        conn = GoogleCalendarConnection.objects.filter(workspace=cal.workspace, active=True).first()
+                        if conn:
+                            GoogleCalendarService.reconcile_workspace_calendars(conn)
+                            # refresh cal
+                            cal = Calendar.objects.select_related('google_calendar__connection').get(id=cal.id)
+                            if hasattr(cal, 'google_calendar') and cal.google_calendar and cal.google_calendar.connection:
+                                return None
+                    except Exception:
+                        pass
+                    # Still no mapping: prepare a suggested list
+                    from core.models import Calendar as CalModel
+                    mapped = CalModel.objects.filter(
+                        workspace=cal.workspace,
+                        provider='google',
+                        google_calendar__isnull=False
+                    ).values_list('id', 'name')
+                    return {
+                        'message': f'{role} calendar is not synchronized with Google (missing provider mapping).',
+                        'calendar_id': str(cal.id),
+                        'suggested_calendar_ids': [str(cid) for cid, _ in mapped],
+                    }
+            elif cal.provider == 'outlook':
+                has_mapping = hasattr(cal, 'microsoft_calendar') and cal.microsoft_calendar and cal.microsoft_calendar.connection
+                if not has_mapping:
+                    from core.models import Calendar as CalModel
+                    mapped = CalModel.objects.filter(
+                        workspace=cal.workspace,
+                        provider='outlook',
+                        microsoft_calendar__isnull=False
+                    ).values_list('id', 'name')
+                    return {
+                        'message': f'{role} calendar is not synchronized with Microsoft 365 (missing provider mapping).',
+                        'calendar_id': str(cal.id),
+                        'suggested_calendar_ids': [str(cid) for cid, _ in mapped],
+                    }
+            return None
+
+        if calendar:
+            err = _ensure_mapping_or_error(calendar, role='Main')
+            if err:
+                errors['calendar'] = err
+
+        conflict_ids = attrs.get('conflict_check_calendars')
+        if conflict_ids is None and hasattr(self.instance, 'conflict_check_calendars'):
+            conflict_ids = self.instance.conflict_check_calendars
+
+        if conflict_ids:
+            bad_conflicts = []
+            for cid in conflict_ids:
+                try:
+                    c = Calendar.objects.get(id=cid)
+                except Calendar.DoesNotExist:
+                    bad_conflicts.append({'calendar_id': str(cid), 'message': 'Calendar not found'})
+                    continue
+                err = _ensure_mapping_or_error(c, role='Conflict')
+                if err:
+                    bad_conflicts.append(err)
+            if bad_conflicts:
+                errors['conflict_check_calendars'] = bad_conflicts
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
+
 
 class CalendarConfigurationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating calendar configurations"""
@@ -136,6 +216,12 @@ class CalendarConfigurationCreateSerializer(serializers.ModelSerializer):
             'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'workdays', 
             'conflict_check_calendars', 'conflict_calendars'
         ]
+
+    def validate(self, attrs):
+        # Reuse the same validation logic as the main serializer
+        # by constructing a temporary instance-less serializer and passing attrs
+        base = CalendarConfigurationSerializer(instance=None)
+        return base.validate(attrs)
     
     def validate_workdays(self, value):
         """Validate workdays format"""

@@ -164,6 +164,21 @@ class AgentCreateSerializer(serializers.ModelSerializer):
         
         return value
 
+    def create(self, validated_data):
+        """Create an agent and auto-assign workspace default phone if not provided."""
+        phone = validated_data.get('phone_number')
+        agent = Agent.objects.create(**validated_data)
+        if phone is None:
+            try:
+                from core.services.phone_assignment import get_workspace_default_number
+                default_phone = get_workspace_default_number(agent.workspace)
+                if default_phone is not None:
+                    agent.phone_number = default_phone
+                    agent.save(update_fields=['phone_number'])
+            except Exception:
+                pass
+        return agent
+
 
 class AgentUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating agents"""
