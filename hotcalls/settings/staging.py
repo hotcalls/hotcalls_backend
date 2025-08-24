@@ -40,44 +40,57 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ["*"]
 CORS_ALLOW_METHODS = ["*"]
 
-# Azure Blob Storage configuration (same as production)
+# Azure Blob Storage configuration (same as production) with optional backend-served static toggle
 AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
 AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY')
 AZURE_STATIC_CONTAINER = os.environ.get('AZURE_STATIC_CONTAINER', 'static')
 AZURE_MEDIA_CONTAINER = os.environ.get('AZURE_MEDIA_CONTAINER', 'media')
 AZURE_CUSTOM_DOMAIN = os.environ.get('AZURE_CUSTOM_DOMAIN')
 
-if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-    # Use Azure Blob Storage for static and media files
-    DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-    STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
-    
-    # Django 4.2+ STORAGES setting (for compatibility)
-    STORAGES = {
-        "default": {
-            "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
-        },
-        "staticfiles": {
-            "BACKEND": "hotcalls.storage_backends.AzureStaticStorage",
-        },
-    }
-    
-    if AZURE_CUSTOM_DOMAIN:
-        # Use custom domain (CDN)
-        STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
-        MEDIA_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_MEDIA_CONTAINER}/"
-    else:
-        # Use blob storage endpoint directly
-        STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
-        MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
-else:
-    # Fallback to local storage with whitenoise
+# When true, serve static via app (WhiteNoise) for safe admin over port-forward
+SERVE_STATIC_VIA_BACKEND = os.environ.get('SERVE_STATIC_VIA_BACKEND', 'False').lower() in ('true', '1', 'yes')
+
+if SERVE_STATIC_VIA_BACKEND:
+    # Local static from backend with WhiteNoise
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     STATIC_URL = '/static/'
     MEDIA_URL = '/media/'
-    
     STATIC_ROOT = BASE_DIR / 'staticfiles'
     MEDIA_ROOT = BASE_DIR / 'media'
+    # Ensure middleware present early for efficient static serving
+    if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
+        MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+else:
+    if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
+        # Use Azure Blob Storage for static and media files
+        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
+        STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
+        
+        # Django 4.2+ STORAGES setting (for compatibility)
+        STORAGES = {
+            "default": {
+                "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
+            },
+            "staticfiles": {
+                "BACKEND": "hotcalls.storage_backends.AzureStaticStorage",
+            },
+        }
+        
+        if AZURE_CUSTOM_DOMAIN:
+            # Use custom domain (CDN)
+            STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
+            MEDIA_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_MEDIA_CONTAINER}/"
+        else:
+            # Use blob storage endpoint directly
+            STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
+            MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
+    else:
+        # Fallback to local storage with whitenoise
+        STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        STATIC_URL = '/static/'
+        MEDIA_URL = '/media/'
+        STATIC_ROOT = BASE_DIR / 'staticfiles'
+        MEDIA_ROOT = BASE_DIR / 'media'
 
 # Database configuration - uses environment variables from K8s secrets
 # No need to override here - base.py already reads from os.environ

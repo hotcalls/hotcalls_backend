@@ -184,7 +184,7 @@ def trigger_call(self, call_task_id):
 
         agent_config = {
             "name": agent.name,
-            "voice_external_id": agent.voice.voice_external_id,
+            "voice_external_id": (agent.voice.voice_external_id if agent.voice else None),
             "language": agent.language,
             "prompt": agent.prompt,
             "greeting_outbound": agent.greeting_outbound,
@@ -195,24 +195,22 @@ def trigger_call(self, call_task_id):
             "workspace_name": workspace.workspace_name,
             "sip_trunk_id": sip_trunk_id,  # Pass dynamic trunk ID
         }
-        lead_data = {
-            "id": str(lead.id) if lead else str(call_task.id),
-            "name": lead.name if lead else "Test",
-            "surname": lead.surname if lead else "Call",
-            "email": lead.email if lead else "test@example.com",
-            "phone": lead.phone if lead else call_task.phone,
-            "company": lead.company if lead else "Test Company",
-            "address": lead.address if lead else "",
-            "city": lead.city if lead else "",
-            "state": lead.state if lead else "",
-            "zip_code": lead.zip_code if lead else "",
-            "country": lead.country if lead else "",
-            "notes": lead.notes if lead else "Test call",
-            "call_task_id": str(call_task.id),
-            "metadata": lead.metadata
-            if lead
-            else {"test_call": True, "call_task_id": str(call_task.id)},
-        }
+        if lead is not None:
+            lead_data = {
+                "id": str(lead.id),
+                "name": lead.name,
+                "surname": lead.surname,
+                "email": lead.email,
+                "phone": lead.phone,
+                "call_task_id": str(call_task.id),
+            }
+        else:
+            # Test call: only pass minimal, non-fallback data
+            lead_data = {
+                "id": str(call_task.id),
+                "phone": call_task.phone,
+                "call_task_id": str(call_task.id),
+            }
 
         from_number = (
             agent.phone_number.phonenumber

@@ -1553,6 +1553,8 @@ deploy_kubernetes() {
     fi
     export TIME_ZONE="${TIME_ZONE:-UTC}"
     export DB_SSLMODE="${DB_SSLMODE:-require}"
+    # Static serving toggle for safe port-forwarded admin
+    export SERVE_STATIC_VIA_BACKEND="${SERVE_STATIC_VIA_BACKEND:-False}"
     
     # Set Django settings module based on environment
     if [[ "$ENVIRONMENT" == "production" ]]; then
@@ -1956,6 +1958,62 @@ create_agent_ro_user() {
     if [[ -z "${AGENT_DB_USER:-}" || -z "${AGENT_DB_PASSWORD:-}" ]]; then
         log_info "AGENT_DB_USER/AGENT_DB_PASSWORD not set. Skipping agent RO user creation."
         return 0
+    fi
+
+    # Always run collectstatic independently when backend was redeployed or when explicitly requested
+    if [[ "${REDEPLOY_BACKEND:-true}" == "true" ]] || [[ "${RUN_COLLECTSTATIC:-true}" == "true" ]]; then
+        log_info "Running collectstatic job..."
+        cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: django-collectstatic-$(date +%s)
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: collectstatic
+    environment: ${ENVIRONMENT}
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
+        app.kubernetes.io/component: collectstatic
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      containers:
+      - name: collectstatic
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
+        command: ["python", "manage.py", "collectstatic", "--noinput"]
+        envFrom:
+        - configMapRef:
+            name: ${PROJECT_PREFIX}-config
+        - secretRef:
+            name: ${PROJECT_PREFIX}-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+EOF
+
+        JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=collectstatic \
+          --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+        if [[ -n "$JOB_NAME" ]]; then
+            log_info "Waiting for collectstatic job $JOB_NAME to complete..."
+            if kubectl wait --for=condition=complete job/$JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+                log_success "collectstatic completed successfully!"
+                log_info "Collectstatic logs:"
+                kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=50
+            else
+                log_error "collectstatic job failed or timed out!"
+                kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=100 || true
+            fi
+        fi
     fi
 
     # Exec into backend pod (has psql) to run SQL

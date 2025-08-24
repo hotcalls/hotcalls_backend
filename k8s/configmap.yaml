@@ -33,6 +33,8 @@ data:
   # Storage configuration
   AZURE_STATIC_CONTAINER: "static"
   AZURE_MEDIA_CONTAINER: "media"
+  # Serve static via backend (WhiteNoise) when port-forwarding admin
+  SERVE_STATIC_VIA_BACKEND: "${SERVE_STATIC_VIA_BACKEND}"
   
   # Security settings
   SECURE_SSL_REDIRECT: "${SECURE_SSL_REDIRECT}"

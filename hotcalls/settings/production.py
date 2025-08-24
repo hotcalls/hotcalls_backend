@@ -48,34 +48,46 @@ CORS_ALLOW_CREDENTIALS = True
 csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
 
-# Azure Blob Storage configuration
+# Azure Blob Storage configuration with optional backend-served static toggle
 AZURE_ACCOUNT_NAME = os.environ.get('AZURE_ACCOUNT_NAME')
 AZURE_STORAGE_KEY = os.environ.get('AZURE_STORAGE_KEY')
 AZURE_STATIC_CONTAINER = os.environ.get('AZURE_STATIC_CONTAINER', 'static')
 AZURE_MEDIA_CONTAINER = os.environ.get('AZURE_MEDIA_CONTAINER', 'media')
 AZURE_CUSTOM_DOMAIN = os.environ.get('AZURE_CUSTOM_DOMAIN')
 
-if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-    # Use Azure Blob Storage for static and media files
-    DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-    STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
-    
-    if AZURE_CUSTOM_DOMAIN:
-        # Use CDN endpoint if available
-        STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
-        MEDIA_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_MEDIA_CONTAINER}/"
-    else:
-        # Use blob storage endpoint directly
-        STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
-        MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
-else:
-    # Fallback to local storage with whitenoise
-    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+# When true, serve static via app (WhiteNoise) for safe admin over port-forward
+SERVE_STATIC_VIA_BACKEND = os.environ.get('SERVE_STATIC_VIA_BACKEND', 'False').lower() in ('true', '1', 'yes')
+
+if SERVE_STATIC_VIA_BACKEND:
+    # Local static from backend with WhiteNoise
+    if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
+        MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     STATIC_URL = '/static/'
     MEDIA_URL = '/media/'
-
-STATIC_ROOT = BASE_DIR / 'staticfiles'
+    STATIC_ROOT = BASE_DIR / 'staticfiles'
+else:
+    if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
+        # Use Azure Blob Storage for static and media files
+        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
+        STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
+        
+        if AZURE_CUSTOM_DOMAIN:
+            # Use CDN endpoint if available
+            STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
+            MEDIA_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_MEDIA_CONTAINER}/"
+        else:
+            # Use blob storage endpoint directly
+            STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
+            MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
+    else:
+        # Fallback to local storage with whitenoise
+        if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
+            MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+        STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        STATIC_URL = '/static/'
+        MEDIA_URL = '/media/'
+        STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Database configuration with SSL for production
 DATABASES['default']['OPTIONS'].update({
