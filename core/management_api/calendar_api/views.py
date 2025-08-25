@@ -149,7 +149,7 @@ class CalendarViewSet(viewsets.ModelViewSet):
             return Calendar.objects.filter(active=True).select_related(
                 'workspace'
             ).prefetch_related('google_calendar', 'outlook_calendar')
-        
+
         # Regular users: only calendars in their workspaces
         return Calendar.objects.filter(
             workspace__users=user,
@@ -171,10 +171,10 @@ class CalendarViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 # The CASCADE will delete GoogleCalendar or OutlookCalendar
                 response = super().destroy(request, *args, **kwargs)
-                
+
                 logger.info(f"Deleted {provider} calendar {calendar_id} for user {request.user.email}")
                 return response
-                
+            
         except Exception as e:
             logger.error(f"Failed to delete calendar {calendar_id}: {e}")
             return Response(
