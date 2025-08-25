@@ -1,18 +1,10 @@
+"""URL configuration for Calendar API"""
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import CalendarViewSet, CalendarConfigurationViewSet
+from .views import CalendarViewSet
 
-# Create separate routers to avoid URL conflicts
-calendar_router = DefaultRouter()
-calendar_router.register(r'', CalendarViewSet, basename='calendar')
+# Create router for calendar endpoints
+router = DefaultRouter()
+router.register(r'', CalendarViewSet, basename='calendar')
 
-config_router = DefaultRouter()
-config_router.register(r'', CalendarConfigurationViewSet, basename='calendar-configuration')
-
-
-urlpatterns = [
-    # Calendar configurations must come BEFORE the general calendar routes
-    path('configurations/', include(config_router.urls)),
-    # MCP Token management removed in unified LiveKit-only flow
-    path('', include(calendar_router.urls)),
-] 
+urlpatterns = router.urls

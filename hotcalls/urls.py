@@ -93,7 +93,12 @@ urlpatterns = [
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
     path('api/funnels/', include(('core.management_api.funnel_api.urls', 'funnel_api'), namespace='funnel_api')),
+    
+    # Calendar APIs - Restructured into three sections
     path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
+    path('api/google-calendar/', include(('core.management_api.google_calendar_api.urls', 'google_calendar_api'), namespace='google_calendar_api')),
+    path('api/outlook-calendar/', include(('core.management_api.outlook_calendar_api.urls', 'outlook_calendar_api'), namespace='outlook_calendar_api')),
+    
     path('api/communication/', include(('core.management_api.communication_api.urls', 'communication_api'), namespace='communication_api')),
 
     path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
@@ -113,8 +118,7 @@ urlpatterns = [
     # Meta Webhooks (for Meta to call)
     path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
     
-    # Microsoft Graph Webhooks
-    path('api/webhooks/microsoft', include(('core.management_api.microsoft_api.urls', 'microsoft_webhooks'), namespace='microsoft_webhooks')),
+    # Microsoft Graph Webhooks - REMOVED (now handled by outlook_calendar_api)
 
     # Jambonz Webhooks (for Jambonz to call)
     path('api/integrations/jambonz/', include(('core.management_api.jambonz_api.urls', 'jambonz_webhooks'), namespace='jambonz_webhooks')),

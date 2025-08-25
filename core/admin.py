@@ -1,11 +1,10 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from datetime import timezone as dt_timezone
-from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar, CalendarConfiguration
+from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar
 from .models import (
-    GoogleCalendarConnection, GoogleCalendar,
-    MicrosoftCalendarConnection, MicrosoftCalendar,
-    MicrosoftSubscription,
+    GoogleCalendar,
+    OutlookCalendar,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
     LeadProcessingStats, CallTask, WorkspacePhoneNumber
@@ -152,11 +151,7 @@ class PlanFeatureInline(admin.TabularInline):
     extra = 1
 
 
-class GoogleCalendarInline(admin.TabularInline):
-    model = GoogleCalendar
-    extra = 0
-    fields = ('external_id', 'primary', 'time_zone')
-    readonly_fields = ('external_id', 'primary', 'time_zone', 'created_at', 'updated_at')
+# GoogleCalendarInline removed - GoogleCalendar is now managed separately
 
 
 class CalendarInline(admin.TabularInline):
@@ -166,10 +161,7 @@ class CalendarInline(admin.TabularInline):
     readonly_fields = ('created_at', 'updated_at')
 
 
-class CalendarConfigurationInline(admin.TabularInline):
-    model = CalendarConfiguration
-    extra = 0
-    fields = ('duration', 'prep_time', 'days_buffer', 'from_time', 'to_time')
+# CalendarConfigurationInline removed - CalendarConfiguration no longer exists
 
 
 class WorkspaceSubscriptionInline(admin.TabularInline):
@@ -222,8 +214,8 @@ class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(Agent)
 class AgentAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_number', 'calendar_configuration', 'created_at')
-    list_filter = ('status', 'voice', 'language', 'phone_number', 'calendar_configuration', 'created_at')
+    list_display = ('agent_id', 'workspace', 'name', 'status', 'voice', 'language', 'get_phone_number', 'created_at')
+    list_filter = ('status', 'voice', 'language', 'phone_number', 'created_at')
     search_fields = ('name', 'workspace__workspace_name', 'voice__voice_external_id', 'phone_number__phonenumber')
     ordering = ('-created_at',)
     
@@ -293,17 +285,20 @@ class CallLogAdmin(ShowPkMixin, admin.ModelAdmin):
     readonly_fields = ('timestamp', 'updated_at')
 
 
-@admin.register(GoogleCalendarConnection)
-class GoogleCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('workspace', 'account_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
-    list_filter = ('active', 'workspace', 'last_sync', 'created_at')
-    search_fields = ('workspace__workspace_name', 'account_email')
+# GoogleCalendarConnection admin removed - merged into GoogleCalendar
+
+
+@admin.register(GoogleCalendar)
+class GoogleCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('get_calendar_name', 'account_email', 'external_id', 'time_zone', 'access_role', 'last_sync', 'created_at')
+    list_filter = ('access_role', 'last_sync', 'created_at')
+    search_fields = ('external_id', 'account_email', 'calendar__name', 'calendar__workspace__workspace_name')
     ordering = ('-created_at',)
     readonly_fields = ('access_token', 'refresh_token', 'token_expires_at', 'scopes', 'sync_errors', 'created_at', 'updated_at')
     
     fieldsets = (
-        ('Connection Info', {
-            'fields': ('workspace', 'user', 'account_email', 'active')
+        ('Calendar Info', {
+            'fields': ('calendar', 'user', 'account_email', 'external_id', 'time_zone', 'access_role')
         }),
         ('OAuth Tokens (Read Only)', {
             'fields': ('access_token', 'refresh_token', 'token_expires_at', 'scopes'),
@@ -319,50 +314,26 @@ class GoogleCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
         }),
     )
     
-    def get_calendars_count(self, obj):
-        return obj.calendars.count()
-    get_calendars_count.short_description = 'Calendars'
-
-
-@admin.register(GoogleCalendar)
-class GoogleCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('get_calendar_name', 'external_id', 'primary', 'time_zone', 'created_at')
-    list_filter = ('primary', 'time_zone', 'created_at')
-    search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
-    ordering = ('-created_at',)
-    readonly_fields = ('external_id', 'created_at', 'updated_at')
-    
-    fieldsets = (
-        ('Calendar Info', {
-            'fields': ('calendar', 'external_id', 'primary', 'time_zone')
-        }),
-        ('OAuth Tokens', {
-            'fields': ('refresh_token', 'access_token', 'token_expires_at', 'scopes'),
-            'classes': ('collapse',)
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
     def get_calendar_name(self, obj):
         return obj.calendar.name
     get_calendar_name.short_description = 'Calendar Name'
     get_calendar_name.admin_order_field = 'calendar__name'
 
 
-@admin.register(MicrosoftCalendarConnection)
-class MicrosoftCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('workspace', 'primary_email', 'active', 'get_calendars_count', 'last_sync', 'created_at')
-    list_filter = ('active', 'workspace', 'last_sync', 'created_at')
-    search_fields = ('workspace__workspace_name', 'primary_email')
+# MicrosoftCalendarConnection admin removed - merged into OutlookCalendar
+
+
+@admin.register(OutlookCalendar)
+class OutlookCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('get_calendar_name', 'primary_email', 'external_id', 'can_edit', 'last_sync', 'created_at')
+    list_filter = ('can_edit', 'last_sync', 'created_at')
+    search_fields = ('external_id', 'primary_email', 'calendar__name', 'calendar__workspace__workspace_name')
     ordering = ('-created_at',)
     readonly_fields = ('access_token', 'refresh_token', 'token_expires_at', 'scopes_granted', 'sync_errors', 'created_at', 'updated_at')
     
     fieldsets = (
-        ('Connection Info', {
-            'fields': ('workspace', 'user', 'primary_email', 'display_name', 'tenant_id', 'ms_user_id', 'timezone_windows', 'active')
+        ('Calendar Info', {
+            'fields': ('calendar', 'user', 'primary_email', 'display_name', 'tenant_id', 'ms_user_id', 'timezone_windows', 'external_id', 'can_edit')
         }),
         ('OAuth Tokens (Read Only)', {
             'fields': ('access_token', 'refresh_token', 'token_expires_at', 'scopes_granted'),
@@ -378,52 +349,19 @@ class MicrosoftCalendarConnectionAdmin(ShowPkMixin, admin.ModelAdmin):
         }),
     )
     
-    def get_calendars_count(self, obj):
-        return obj.calendars.count()
-    get_calendars_count.short_description = 'Calendars'
-
-
-@admin.register(MicrosoftCalendar)
-class MicrosoftCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('get_calendar_name', 'external_id', 'primary', 'can_edit', 'created_at')
-    list_filter = ('primary', 'created_at')
-    search_fields = ('external_id', 'calendar__name', 'calendar__workspace__workspace_name')
-    ordering = ('-created_at',)
-    readonly_fields = ('external_id', 'created_at', 'updated_at')
-    
-    fieldsets = (
-        ('Calendar Info', {
-            'fields': ('calendar', 'connection', 'external_id', 'primary', 'can_edit')
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
     def get_calendar_name(self, obj):
         return obj.calendar.name
     get_calendar_name.short_description = 'Calendar Name'
     get_calendar_name.admin_order_field = 'calendar__name'
 
-@admin.register(MicrosoftSubscription)
-class MicrosoftSubscriptionAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('subscription_id', 'connection', 'resource', 'expiration_at', 'created_at')
-    list_filter = ('resource', 'expiration_at', 'created_at')
-    search_fields = ('subscription_id', 'connection__primary_email', 'resource')
-    ordering = ('-created_at',)
+# MicrosoftSubscriptionAdmin removed - MicrosoftSubscription no longer exists
 @admin.register(Calendar)
 class CalendarAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('name', 'workspace', 'provider', 'active', 'get_configs_count', 'get_connection_status', 'created_at')
+    list_display = ('name', 'workspace', 'provider', 'active', 'get_connection_status', 'created_at')
     list_filter = ('provider', 'active', 'workspace', 'created_at')
     search_fields = ('name', 'workspace__workspace_name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
-    inlines = [CalendarConfigurationInline, GoogleCalendarInline]
-    
-    def get_configs_count(self, obj):
-        return obj.configurations.count()
-    get_configs_count.short_description = 'Configurations'
     
     def get_connection_status(self, obj):
         if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
@@ -442,61 +380,26 @@ class CalendarAdmin(ShowPkMixin, admin.ModelAdmin):
                     return '⚠️ Token Expired'
             else:
                 return '⚠️ No Token'
-        elif obj.provider == 'outlook' and hasattr(obj, 'microsoft_calendar'):
-            ms_cal = obj.microsoft_calendar
-            if ms_cal.connection and ms_cal.connection.active:
-                return '✅ Connected'
-            return '⚠️ Disconnected'
+        elif obj.provider == 'outlook' and hasattr(obj, 'outlook_calendar'):
+            outlook_cal = obj.outlook_calendar
+            if outlook_cal.token_expires_at:
+                # Make timezone-aware comparison
+                token_expiry = outlook_cal.token_expires_at
+                if token_expiry.tzinfo is None:
+                    # Convert naive datetime to timezone-aware
+                    token_expiry = token_expiry.replace(tzinfo=dt_timezone.utc)
+                
+                if token_expiry > timezone.now():
+                    return '✅ Connected'
+                else:
+                    return '⚠️ Token Expired'
+            else:
+                return '⚠️ No Token'
         return '❓ Unknown'
     get_connection_status.short_description = 'Status'
 
 
-@admin.register(CalendarConfiguration)
-class CalendarConfigurationAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('get_workspace', 'get_calendar_name', 'get_provider', 'duration', 'prep_time', 'days_buffer', 'from_time', 'to_time', 'get_conflict_calendars_count')
-    list_filter = ('calendar__provider', 'calendar__workspace', 'duration', 'days_buffer', 'created_at')
-    search_fields = ('calendar__workspace__workspace_name', 'calendar__name')
-    ordering = ('-created_at',)
-    readonly_fields = ('created_at', 'updated_at')
-    
-    fieldsets = (
-        ('Calendar Info', {
-            'fields': ('calendar',)
-        }),
-        ('Scheduling Settings', {
-            'fields': ('duration', 'prep_time', 'days_buffer')
-        }),
-        ('Availability Window', {
-            'fields': ('from_time', 'to_time', 'workdays')
-        }),
-        ('Conflict Checking', {
-            'fields': ('conflict_check_calendars',),
-            'description': 'List of calendar IDs to check for scheduling conflicts'
-        }),
-        ('Timestamps', {
-            'fields': ('created_at', 'updated_at'),
-            'classes': ('collapse',)
-        }),
-    )
-    
-    def get_workspace(self, obj):
-        return obj.calendar.workspace.workspace_name
-    get_workspace.short_description = 'Workspace'
-    
-    def get_calendar_name(self, obj):
-        return obj.calendar.name
-    get_calendar_name.short_description = 'Calendar'
-    
-    def get_provider(self, obj):
-        return obj.calendar.provider.title()
-    get_provider.short_description = 'Provider'
-    
-    def get_conflict_calendars_count(self, obj):
-        """Show number of calendars configured for conflict checking"""
-        if obj.conflict_check_calendars:
-            return f"{len(obj.conflict_check_calendars)} calendars"
-        return "None"
-    get_conflict_calendars_count.short_description = 'Conflict Check'
+# CalendarConfiguration admin removed - CalendarConfiguration no longer exists
 
 
 @admin.register(WorkspaceSubscription)

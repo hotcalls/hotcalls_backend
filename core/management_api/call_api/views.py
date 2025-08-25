@@ -78,7 +78,7 @@ logger = logging.getLogger(__name__)
             ),
             401: OpenApiResponse(description="🚫 Authentication required - Please login to access call logs")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
     create=extend_schema(
         summary="➕ Create call log",
@@ -114,7 +114,7 @@ logger = logging.getLogger(__name__)
             401: OpenApiResponse(description="🚫 Authentication required"),
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required for call log creation")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
     retrieve=extend_schema(
         summary="🔍 Get call log details",
@@ -135,7 +135,7 @@ logger = logging.getLogger(__name__)
             401: OpenApiResponse(description="🚫 Authentication required"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
     update=extend_schema(
         summary="✏️ Update call log",
@@ -167,7 +167,7 @@ logger = logging.getLogger(__name__)
             403: OpenApiResponse(description="🚫 Permission denied - Staff access required"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
     partial_update=extend_schema(
         summary="✏️ Partially update call log",
@@ -184,7 +184,7 @@ logger = logging.getLogger(__name__)
             403: OpenApiResponse(description="🚫 Permission denied"),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
     destroy=extend_schema(
         summary="🗑️ Delete call log",
@@ -221,7 +221,7 @@ logger = logging.getLogger(__name__)
             ),
             404: OpenApiResponse(description="🚫 Call log not found")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     ),
 )
 class CallLogViewSet(viewsets.ModelViewSet):
@@ -500,7 +500,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def analytics(self, request):
@@ -578,7 +578,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def status_analytics(self, request):
@@ -623,7 +623,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def agent_performance(self, request):
@@ -819,7 +819,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def appointment_stats(self, request):
@@ -891,7 +891,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def daily_stats(self, request):
@@ -991,7 +991,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             ),
             401: OpenApiResponse(description="🚫 Authentication required")
         },
-        tags=["Agent Management"]
+        tags=["Call Management"]
     )
     @action(detail=False, methods=['get'], permission_classes=[CallLogAnalyticsPermission])
     def duration_distribution(self, request):

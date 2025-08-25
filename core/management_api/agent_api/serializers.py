@@ -45,7 +45,7 @@ class AgentSerializer(serializers.ModelSerializer):
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
     phone_number = PhoneNumberSerializer(read_only=True)
     phone_number_display = serializers.SerializerMethodField()
-    calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
+    # calendar_config_name removed - CalendarConfiguration no longer exists
     
     # NEW: Voice-related fields
     voice_provider = serializers.SerializerMethodField()
@@ -67,7 +67,7 @@ class AgentSerializer(serializers.ModelSerializer):
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
             'character', 'prompt', 'phone_number', 'phone_number_display',
-            'calendar_configuration', 'calendar_config_name', 'created_at', 'updated_at'
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
     
@@ -100,7 +100,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'voice', 
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
-            'character', 'prompt', 'phone_number', 'calendar_configuration'
+            'character', 'prompt', 'phone_number'
         ]
     
     def validate_workspace(self, value):
@@ -194,7 +194,7 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt', 'calendar_configuration'
+            'character', 'prompt'
         ]
     
     def validate_workdays(self, value):
@@ -301,8 +301,8 @@ class AgentConfigSerializer(serializers.ModelSerializer):
     """Serializer for agent configuration details"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
     phone_number = PhoneNumberSerializer(read_only=True)
-    calendar_config_id = serializers.CharField(source='calendar_configuration.id', read_only=True)
-    calendar_config_name = serializers.CharField(source='calendar_configuration.sub_calendar_id', read_only=True)
+    # calendar_config_id removed - CalendarConfiguration no longer exists
+    # calendar_config_name removed - CalendarConfiguration no longer exists
     
     # NEW: Voice-related fields
     voice_provider = serializers.SerializerMethodField()
@@ -323,8 +323,8 @@ class AgentConfigSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS  
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'phone_number', 'calendar_configuration',
-            'calendar_config_id', 'calendar_config_name', 'created_at', 'updated_at'
+            'character', 'phone_number',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'workspace', 'created_at', 'updated_at']
     
