@@ -3,18 +3,19 @@ import logging
 import secrets
 from django.utils import timezone
 from django.shortcuts import redirect
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 
-from core.models import Calendar, GoogleCalendar, Workspace
+from core.models import Calendar, GoogleCalendar, GoogleSubAccount, Workspace
 from core.services.google_calendar import GoogleCalendarService
 from .serializers import (
     GoogleCalendarSerializer,
     GoogleAuthUrlResponseSerializer,
     GoogleOAuthCallbackSerializer,
+    GoogleSubAccountSerializer,
 )
 from .permissions import GoogleCalendarPermission
 
@@ -169,6 +170,72 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                     'access_role': 'owner',
                 }
             )
+            
+            # Create self sub-account if it doesn't exist
+            GoogleSubAccount.objects.get_or_create(
+                google_calendar=google_calendar,
+                act_as_email=google_calendar.account_email,
+                defaults={
+                    'act_as_user_id': user_info.get('id', ''),
+                    'relationship': 'self',
+                    'active': True
+                }
+            )
+            
+            # Discover and create sub-accounts for shared/delegated calendars
+            try:
+                # Get calendar list from Google
+                from googleapiclient.discovery import build
+                from google.oauth2.credentials import Credentials
+                
+                creds = Credentials(
+                    token=tokens['access_token'],
+                    refresh_token=tokens['refresh_token'],
+                    token_uri='https://oauth2.googleapis.com/token',
+                    client_id=service.client_id,
+                    client_secret=service.client_secret,
+                    scopes=tokens.get('scope', '').split()
+                )
+                
+                calendar_service = build('calendar', 'v3', credentials=creds)
+                calendar_list = calendar_service.calendarList().list().execute()
+                
+                for cal_entry in calendar_list.get('items', []):
+                    # Skip if this is the primary calendar (already handled as 'self')
+                    if cal_entry.get('primary'):
+                        continue
+                    
+                    # Determine relationship type
+                    access_role = cal_entry.get('accessRole', 'reader')
+                    cal_id = cal_entry.get('id', '')
+                    summary = cal_entry.get('summary', '')
+                    
+                    # Determine relationship based on calendar ID and access role
+                    if '@group.calendar.google.com' in cal_id:
+                        relationship = 'shared'
+                    elif '@resource.calendar.google.com' in cal_id:
+                        relationship = 'resource'
+                    elif access_role in ['owner', 'writer']:
+                        relationship = 'delegate'
+                    else:
+                        relationship = 'shared'
+                    
+                    # Create sub-account for this calendar
+                    GoogleSubAccount.objects.get_or_create(
+                        google_calendar=google_calendar,
+                        act_as_email=cal_id,
+                        defaults={
+                            'act_as_user_id': '',  # Will be populated if needed
+                            'relationship': relationship,
+                            'active': True
+                        }
+                    )
+                    
+                    logger.info(f"Created {relationship} sub-account for calendar: {summary} ({cal_id})")
+                    
+            except Exception as e:
+                logger.warning(f"Could not discover shared calendars: {str(e)}")
+                # Continue anyway - at least we have the self account
             
             # Sync calendars from Google
             synced_calendars = service.sync_calendars(google_calendar)
@@ -366,3 +433,101 @@ class GoogleCalendarViewSet(viewsets.ReadOnlyModelViewSet):
         calendar.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="📋 List Google Sub-Accounts",
+        description="List all sub-accounts (shared/delegated calendars) for Google Calendar connections",
+        tags=["Google Calendar"]
+    ),
+    create=extend_schema(
+        summary="➕ Create Google Sub-Account",
+        description="Add a new sub-account (shared/delegated calendar) to a Google Calendar connection",
+        tags=["Google Calendar"]
+    ),
+    retrieve=extend_schema(
+        summary="🔍 Get Google Sub-Account",
+        description="Retrieve details of a specific Google sub-account",
+        tags=["Google Calendar"]
+    ),
+    update=extend_schema(
+        summary="✏️ Update Google Sub-Account",
+        description="Update a Google sub-account configuration",
+        tags=["Google Calendar"]
+    ),
+    partial_update=extend_schema(
+        summary="📝 Partially Update Google Sub-Account",
+        description="Partially update a Google sub-account configuration",
+        tags=["Google Calendar"]
+    ),
+    destroy=extend_schema(
+        summary="🗑️ Delete Google Sub-Account",
+        description="Remove a Google sub-account (shared/delegated calendar)",
+        tags=["Google Calendar"]
+    )
+)
+class GoogleSubAccountViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing Google sub-accounts (shared/delegated calendars).
+    
+    Sub-accounts represent different Google identities that the main account can act as:
+    - **self**: The main account itself
+    - **shared**: Shared calendar from another user
+    - **delegate**: Delegated access to another user's calendar
+    - **domain_impersonation**: Domain-wide delegation (service account)
+    - **resource**: Resource calendar (room, equipment)
+    """
+    serializer_class = GoogleSubAccountSerializer
+    permission_classes = [IsAuthenticated, GoogleCalendarPermission]
+    
+    def get_queryset(self):
+        """Filter sub-accounts by user's workspaces"""
+        return GoogleSubAccount.objects.filter(
+            google_calendar__calendar__workspace__users=self.request.user
+        ).select_related(
+            'google_calendar',
+            'google_calendar__calendar',
+            'google_calendar__calendar__workspace'
+        ).order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        """Validate that user has access to the Google calendar"""
+        google_calendar = serializer.validated_data.get('google_calendar')
+        
+        # Check user has access to this Google calendar
+        if not google_calendar.calendar.workspace.users.filter(id=self.request.user.id).exists():
+            raise serializers.ValidationError("You don't have access to this Google calendar")
+        
+        # Check for duplicate sub-accounts
+        existing = GoogleSubAccount.objects.filter(
+            google_calendar=google_calendar,
+            act_as_email=serializer.validated_data.get('act_as_email')
+        ).first()
+        
+        if existing:
+            raise serializers.ValidationError(
+                f"Sub-account for {serializer.validated_data.get('act_as_email')} already exists"
+            )
+        
+        serializer.save()
+    
+    @action(detail=False, methods=['get'], url_path='by-calendar/(?P<google_calendar_id>[^/.]+)')
+    def by_calendar(self, request, google_calendar_id=None):
+        """Get all sub-accounts for a specific Google calendar"""
+        sub_accounts = self.get_queryset().filter(google_calendar_id=google_calendar_id)
+        serializer = self.get_serializer(sub_accounts, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], url_path='toggle-active')
+    def toggle_active(self, request, pk=None):
+        """Toggle the active status of a sub-account"""
+        sub_account = self.get_object()
+        sub_account.active = not sub_account.active
+        sub_account.save()
+        
+        return Response({
+            'success': True,
+            'active': sub_account.active,
+            'message': f"Sub-account {'activated' if sub_account.active else 'deactivated'}"
+        })

@@ -1457,6 +1457,97 @@ class OutlookCalendar(models.Model):
 # CalendarConfiguration removed - no longer needed
 
 
+class GoogleSubAccount(models.Model):
+    """
+    A target Google identity you act as (e.g., delegated user, shared/resource calendar owner,
+    or domain-wide delegation subject).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    google_calendar = models.ForeignKey(
+        'GoogleCalendar', 
+        on_delete=models.CASCADE, 
+        related_name='sub_accounts',
+        help_text="The main Google account that owns the OAuth tokens"
+    )
+    act_as_email = models.EmailField(help_text="Target user/resource email you operate on behalf of")
+    act_as_user_id = models.CharField(
+        max_length=128, 
+        blank=True, 
+        default='', 
+        help_text="Google user id if known"
+    )
+    relationship = models.CharField(
+        max_length=32,
+        choices=[
+            ('self', 'Self / same user'),
+            ('shared', 'Shared calendar'),
+            ('delegate', 'Delegated access'),
+            ('domain_impersonation', 'Domain-wide delegation (service account)'),
+            ('resource', 'Resource calendar'),
+        ],
+        default='self'
+    )
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('google_calendar', 'act_as_email')]
+        indexes = [
+            models.Index(fields=['act_as_email']),
+            models.Index(fields=['google_calendar', 'active']),
+        ]
+
+    def __str__(self):
+        return f"{self.act_as_email} via {self.google_calendar.account_email}"
+
+
+class OutlookSubAccount(models.Model):
+    """
+    A target Microsoft mailbox you act as (UPN/email). Works for shared/delegated mailboxes
+    or app-only impersonation (/users/{upn}/calendars).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    outlook_calendar = models.ForeignKey(
+        'OutlookCalendar', 
+        on_delete=models.CASCADE, 
+        related_name='sub_accounts',
+        help_text="The main Outlook account that owns the OAuth tokens"
+    )
+    act_as_upn = models.EmailField(help_text="Target mailbox (UPN/email)")
+    mailbox_object_id = models.CharField(
+        max_length=128, 
+        blank=True, 
+        default='',
+        help_text="AAD user object id if known"
+    )
+    relationship = models.CharField(
+        max_length=32,
+        choices=[
+            ('self', 'Self / same user'),
+            ('shared', 'Shared mailbox/calendar'),
+            ('delegate', 'Delegated access'),
+            ('app_only', 'Application-permission impersonation'),
+            ('resource', 'Room/equipment'),
+        ],
+        default='self'
+    )
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [('outlook_calendar', 'act_as_upn')]
+        indexes = [
+            models.Index(fields=['act_as_upn']),
+            models.Index(fields=['outlook_calendar', 'active']),
+        ]
+
+    def __str__(self):
+        return f"{self.act_as_upn} via {self.outlook_calendar.primary_email}"
+
+
+
 class MetaIntegration(models.Model):
     """Meta (Facebook/Instagram) integration for workspaces"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

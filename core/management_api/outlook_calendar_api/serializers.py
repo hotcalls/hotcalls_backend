@@ -1,6 +1,6 @@
 """Serializers for Outlook Calendar API"""
 from rest_framework import serializers
-from core.models import OutlookCalendar, Calendar
+from core.models import OutlookCalendar, Calendar, OutlookSubAccount
 
 
 class OutlookCalendarSerializer(serializers.ModelSerializer):
@@ -44,3 +44,33 @@ class OutlookOAuthCallbackSerializer(serializers.Serializer):
     message = serializers.CharField()
     calendar = OutlookCalendarSerializer(required=False)
     calendars = OutlookCalendarSerializer(many=True, required=False)
+
+
+class OutlookSubAccountSerializer(serializers.ModelSerializer):
+    """Serializer for OutlookSubAccount model"""
+    main_account_email = serializers.CharField(source='outlook_calendar.primary_email', read_only=True)
+    calendar_id = serializers.UUIDField(source='outlook_calendar.calendar.id', read_only=True)
+    calendar_name = serializers.CharField(source='outlook_calendar.calendar.name', read_only=True)
+    workspace_id = serializers.UUIDField(source='outlook_calendar.calendar.workspace.id', read_only=True)
+    
+    class Meta:
+        model = OutlookSubAccount
+        fields = [
+            'id', 'outlook_calendar', 'act_as_upn', 'mailbox_object_id', 'relationship',
+            'active', 'main_account_email', 'calendar_id', 'calendar_name',
+            'workspace_id', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_act_as_upn(self, value):
+        """Validate UPN/email format"""
+        if not value or '@' not in value:
+            raise serializers.ValidationError("Invalid UPN/email format")
+        return value.lower()
+    
+    def validate_relationship(self, value):
+        """Validate relationship type"""
+        valid_relationships = ['self', 'shared', 'delegate', 'app_only', 'resource']
+        if value not in valid_relationships:
+            raise serializers.ValidationError(f"Relationship must be one of: {', '.join(valid_relationships)}")
+        return value

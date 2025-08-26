@@ -3,8 +3,8 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from datetime import timezone as dt_timezone
 from .models import User, Voice, Plan, Feature, PlanFeature, Workspace, Agent, PhoneNumber, Lead, Blacklist, CallLog, Calendar
 from .models import (
-    GoogleCalendar,
-    OutlookCalendar,
+    GoogleCalendar, GoogleSubAccount,
+    OutlookCalendar, OutlookSubAccount,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
     LeadProcessingStats, CallTask, WorkspacePhoneNumber
@@ -353,6 +353,55 @@ class OutlookCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
         return obj.calendar.name
     get_calendar_name.short_description = 'Calendar Name'
     get_calendar_name.admin_order_field = 'calendar__name'
+
+
+@admin.register(GoogleSubAccount)
+class GoogleSubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('act_as_email', 'get_main_account', 'relationship', 'active', 'created_at')
+    list_filter = ('relationship', 'active', 'created_at')
+    search_fields = ('act_as_email', 'google_calendar__account_email', 'google_calendar__calendar__name')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Sub-Account Info', {
+            'fields': ('google_calendar', 'act_as_email', 'act_as_user_id', 'relationship', 'active')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_main_account(self, obj):
+        return obj.google_calendar.account_email
+    get_main_account.short_description = 'Main Account'
+    get_main_account.admin_order_field = 'google_calendar__account_email'
+
+
+@admin.register(OutlookSubAccount)
+class OutlookSubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('act_as_upn', 'get_main_account', 'relationship', 'active', 'created_at')
+    list_filter = ('relationship', 'active', 'created_at')
+    search_fields = ('act_as_upn', 'outlook_calendar__primary_email', 'outlook_calendar__calendar__name')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+    
+    fieldsets = (
+        ('Sub-Account Info', {
+            'fields': ('outlook_calendar', 'act_as_upn', 'mailbox_object_id', 'relationship', 'active')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    def get_main_account(self, obj):
+        return obj.outlook_calendar.primary_email
+    get_main_account.short_description = 'Main Account'
+    get_main_account.admin_order_field = 'outlook_calendar__primary_email'
+
 
 # MicrosoftSubscriptionAdmin removed - MicrosoftSubscription no longer exists
 @admin.register(Calendar)

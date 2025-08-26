@@ -1,6 +1,6 @@
 """Serializers for Google Calendar API"""
 from rest_framework import serializers
-from core.models import GoogleCalendar, Calendar
+from core.models import GoogleCalendar, Calendar, GoogleSubAccount
 
 
 class GoogleCalendarSerializer(serializers.ModelSerializer):
@@ -43,3 +43,33 @@ class GoogleOAuthCallbackSerializer(serializers.Serializer):
     message = serializers.CharField()
     calendar = GoogleCalendarSerializer(required=False)
     calendars = GoogleCalendarSerializer(many=True, required=False)
+
+
+class GoogleSubAccountSerializer(serializers.ModelSerializer):
+    """Serializer for GoogleSubAccount model"""
+    main_account_email = serializers.CharField(source='google_calendar.account_email', read_only=True)
+    calendar_id = serializers.UUIDField(source='google_calendar.calendar.id', read_only=True)
+    calendar_name = serializers.CharField(source='google_calendar.calendar.name', read_only=True)
+    workspace_id = serializers.UUIDField(source='google_calendar.calendar.workspace.id', read_only=True)
+    
+    class Meta:
+        model = GoogleSubAccount
+        fields = [
+            'id', 'google_calendar', 'act_as_email', 'act_as_user_id', 'relationship',
+            'active', 'main_account_email', 'calendar_id', 'calendar_name', 
+            'workspace_id', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_act_as_email(self, value):
+        """Validate email format"""
+        if not value or '@' not in value:
+            raise serializers.ValidationError("Invalid email format")
+        return value.lower()
+    
+    def validate_relationship(self, value):
+        """Validate relationship type"""
+        valid_relationships = ['self', 'shared', 'delegate', 'domain_impersonation', 'resource']
+        if value not in valid_relationships:
+            raise serializers.ValidationError(f"Relationship must be one of: {', '.join(valid_relationships)}")
+        return value
