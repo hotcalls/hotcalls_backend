@@ -107,34 +107,81 @@ class OutlookCalendarService:
         """Initialize service without specific calendar"""
         pass
     
-    def sync_calendars(self, outlook_calendar: OutlookCalendar) -> List[OutlookCalendar]:
-        """Sync calendars from Microsoft Graph - returns list of synced calendars"""
+    def sync_calendars(self, outlook_calendar: OutlookCalendar) -> List[Dict]:
+        """
+        Sync calendars from Microsoft Graph using sub-accounts.
+        Returns list of synced calendar data for each active sub-account.
+        """
+        from core.models import OutlookSubAccount
+        
+        synced_calendars = []
+        errors = {}
+        
         try:
-            # For now, just update the primary calendar's external_id if needed
-            graph = MicrosoftGraphService(outlook_calendar)
+            headers = {'Authorization': f'Bearer {outlook_calendar.access_token}'}
             
-            # Get primary calendar id
-            primary_id = None
-            try:
-                headers = graph._auth_headers()
-                resp = requests.get('https://graph.microsoft.com/v1.0/me/calendar', 
-                                   headers=headers, timeout=30)
-                if resp.ok:
-                    primary_id = resp.json().get('id')
-                    # Update the external_id if we got it
-                    if primary_id:
-                        outlook_calendar.external_id = primary_id
-                        outlook_calendar.last_sync = timezone.now()
-                        outlook_calendar.sync_errors = {}
-                        outlook_calendar.save()
-            except Exception as e:
-                logger.error(f"Failed to get primary calendar: {str(e)}")
+            # Iterate through active sub-accounts
+            for sub_account in outlook_calendar.sub_accounts.filter(active=True):
+                try:
+                    # Determine the API endpoint based on relationship
+                    if sub_account.relationship == 'self':
+                        # Use 'me' endpoint for self
+                        calendar_endpoint = 'https://graph.microsoft.com/v1.0/me/calendar'
+                        calendars_endpoint = 'https://graph.microsoft.com/v1.0/me/calendars'
+                    else:
+                        # Use users/{upn} endpoint for delegated/shared
+                        upn = sub_account.act_as_upn
+                        calendar_endpoint = f'https://graph.microsoft.com/v1.0/users/{upn}/calendar'
+                        calendars_endpoint = f'https://graph.microsoft.com/v1.0/users/{upn}/calendars'
+                    
+                    # Get primary calendar for this sub-account
+                    resp = requests.get(calendar_endpoint, headers=headers, timeout=30)
+                    
+                    if resp.ok:
+                        calendar_data = resp.json()
+                        
+                        synced_data = {
+                            'sub_account_id': str(sub_account.id),
+                            'calendar_id': calendar_data.get('id'),
+                            'act_as_upn': sub_account.act_as_upn,
+                            'relationship': sub_account.relationship,
+                            'name': calendar_data.get('name', ''),
+                            'color': calendar_data.get('color', ''),
+                            'can_edit': calendar_data.get('canEdit', False),
+                            'can_share': calendar_data.get('canShare', False),
+                            'can_view_private_items': calendar_data.get('canViewPrivateItems', False),
+                            'owner': calendar_data.get('owner', {}).get('address', ''),
+                            'is_default_calendar': calendar_data.get('isDefaultCalendar', False),
+                        }
+                        
+                        # Update external_id for self calendar
+                        if sub_account.relationship == 'self' and calendar_data.get('id'):
+                            outlook_calendar.external_id = calendar_data.get('id')
+                        
+                        synced_calendars.append(synced_data)
+                        logger.info(f"Synced calendar for sub-account: {sub_account.act_as_upn}")
+                        
+                    else:
+                        error_msg = f"Failed to get calendar for {sub_account.act_as_upn}: {resp.status_code}"
+                        errors[sub_account.act_as_upn] = error_msg
+                        logger.error(error_msg)
+                        
+                except Exception as e:
+                    error_msg = f"Failed to sync {sub_account.act_as_upn}: {str(e)}"
+                    errors[sub_account.act_as_upn] = error_msg
+                    logger.error(error_msg)
             
-            return [outlook_calendar]
+            # Update sync status
+            outlook_calendar.last_sync = timezone.now()
+            outlook_calendar.sync_errors = errors if errors else {}
+            outlook_calendar.save()
             
         except Exception as e:
             logger.error(f"Failed to sync Outlook calendars: {str(e)}")
-            raise
+            outlook_calendar.sync_errors = {'error': str(e), 'timestamp': timezone.now().isoformat()}
+            outlook_calendar.save()
+            
+        return synced_calendars
     
     def revoke_tokens(self, outlook_calendar: OutlookCalendar):
         """Revoke tokens with Microsoft (best effort)"""

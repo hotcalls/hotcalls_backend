@@ -384,19 +384,17 @@ class GoogleCalendarViewSet(viewsets.ReadOnlyModelViewSet):
                 calendar__workspace__users=request.user
             )
             
-            # Sync calendars
+            # Sync calendars (now returns sub-account sync data)
             service = GoogleCalendarService()
-            synced_calendars = service.sync_calendars(google_calendar)
+            synced_sub_accounts = service.sync_calendars(google_calendar)
             
-            # Update last sync time
-            google_calendar.last_sync = timezone.now()
-            google_calendar.sync_errors = {}
-            google_calendar.save()
+            # The service already updates last_sync and sync_errors
             
             return Response({
                 'success': True,
-                'message': f'Synced {len(synced_calendars)} calendars',
-                'calendars': GoogleCalendarSerializer(synced_calendars, many=True).data
+                'message': f'Synced {len(synced_sub_accounts)} sub-account calendars',
+                'synced_data': synced_sub_accounts,  # Return raw sync data
+                'google_calendar': GoogleCalendarSerializer(google_calendar).data
             })
             
         except GoogleCalendar.DoesNotExist:

@@ -44,51 +44,68 @@ app.conf.beat_schedule = {
         }
     },
     
-    # ===== OAUTH TOKEN MANAGEMENT - ALL AT MIDNIGHT =====
+    # ===== OAUTH TOKEN MANAGEMENT - WEEKLY ON SUNDAYS =====
     
     # Refresh Meta OAuth tokens 30 days before expiry
-    'refresh-meta-tokens-midnight': {
+    'refresh-meta-tokens-weekly': {
         'task': 'core.tasks.refresh_meta_tokens',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'schedule': crontab(hour=2, minute=0, day_of_week=0),  # Weekly on Sunday at 2:00 AM
         'options': {
             'queue': 'celery'
         }
     },
     
     # Refresh Google OAuth tokens 30 days before expiry
-    'refresh-google-tokens-midnight': {
+    'refresh-google-tokens-weekly': {
         'task': 'core.tasks.refresh_google_calendar_connections',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'schedule': crontab(hour=2, minute=15, day_of_week=0),  # Weekly on Sunday at 2:15 AM
         'options': {
             'queue': 'celery'
         }
     },
-    # Refresh Microsoft OAuth tokens 30 days before expiry (exactly like Google)
-    'refresh-microsoft-tokens-midnight': {
+    # Refresh Outlook OAuth tokens 30 days before expiry
+    'refresh-outlook-tokens-weekly': {
         'task': 'core.tasks.refresh_microsoft_calendar_connections',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'schedule': crontab(hour=2, minute=30, day_of_week=0),  # Weekly on Sunday at 2:30 AM
         'options': {
             'queue': 'celery'
         }
     },
     
-    # Clean up invalid Meta integrations
-    'cleanup-invalid-meta-midnight': {
-        'task': 'core.tasks.cleanup_invalid_meta_integrations',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+    # Discover new sub-accounts (shared/delegated calendars) - DAILY for good UX
+    'refresh-calendar-subaccounts-daily': {
+        'task': 'core.tasks.refresh_calendar_subaccounts',
+        'schedule': crontab(hour=3, minute=0),  # Daily at 3:00 AM
         'options': {
             'queue': 'celery'
         }
     },
     
-    # Clean up invalid Google connections
-    'cleanup-invalid-google-midnight': {
+    # Clean up invalid calendars - WEEKLY
+    'cleanup-google-calendars-weekly': {
         'task': 'core.tasks.cleanup_invalid_google_connections',
-        'schedule': crontab(hour=0, minute=0),  # Daily at midnight (00:00)
+        'schedule': crontab(hour=4, minute=0, day_of_week=0),  # Weekly on Sunday at 4:00 AM
         'options': {
             'queue': 'celery'
         }
     },
+    'cleanup-outlook-calendars-weekly': {
+        'task': 'core.tasks.cleanup_invalid_outlook_connections',
+        'schedule': crontab(hour=4, minute=15, day_of_week=0),  # Weekly on Sunday at 4:15 AM
+        'options': {
+            'queue': 'celery'
+        }
+    },
+    
+    # Clean up invalid Meta integrations - WEEKLY
+    'cleanup-invalid-meta-weekly': {
+        'task': 'core.tasks.cleanup_invalid_meta_integrations',
+        'schedule': crontab(hour=4, minute=30, day_of_week=0),  # Weekly on Sunday at 4:30 AM
+        'options': {
+            'queue': 'celery'
+        }
+    },
+
     
     # Sync Meta lead forms daily to keep them up to date
     'daily-meta-sync': {
@@ -108,12 +125,5 @@ app.conf.beat_schedule = {
             'expires': 120,  # Task expires after 2 minutes (2x schedule interval)
         }
     },
-    # Renew Microsoft Graph subscriptions hourly (mirrors behavior requirement)
-    'renew-microsoft-subscriptions-hourly': {
-        'task': 'core.tasks.renew_microsoft_subscriptions',
-        'schedule': crontab(minute=0),  # every hour at :00
-        'options': {
-            'queue': 'celery'
-        }
-    },
+
 } 

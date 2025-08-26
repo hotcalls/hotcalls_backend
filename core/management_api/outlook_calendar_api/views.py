@@ -368,19 +368,17 @@ class OutlookCalendarViewSet(viewsets.ModelViewSet):
                 calendar__workspace__users=request.user
             )
             
-            # Sync calendars
+            # Sync calendars (now returns sub-account sync data)
             service = OutlookCalendarService()
-            synced_calendars = service.sync_calendars(outlook_calendar)
+            synced_sub_accounts = service.sync_calendars(outlook_calendar)
             
-            # Update last sync time
-            outlook_calendar.last_sync = timezone.now()
-            outlook_calendar.sync_errors = {}
-            outlook_calendar.save()
+            # The service already updates last_sync and sync_errors
             
             return Response({
                 'success': True,
-                'message': f'Synced {len(synced_calendars)} calendars',
-                'calendars': OutlookCalendarSerializer(synced_calendars, many=True).data
+                'message': f'Synced {len(synced_sub_accounts)} sub-account calendars',
+                'synced_data': synced_sub_accounts,  # Return raw sync data
+                'outlook_calendar': OutlookCalendarSerializer(outlook_calendar).data
             })
             
         except OutlookCalendar.DoesNotExist:

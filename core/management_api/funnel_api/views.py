@@ -257,11 +257,11 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
         return Response(output_serializer.data)
     
     @extend_schema(
-        summary="Get Funnel Statistics",
-        description="Get statistics for a specific funnel",
+        summary="Get Funnel Variables",
+        description="Get available variables for a specific funnel (core + custom fields from recent leads)",
         responses={
             200: OpenApiResponse(
-                description="Funnel statistics"
+                description="List of available variables with their labels and types"
             )
         }
     )

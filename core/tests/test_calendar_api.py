@@ -4,10 +4,9 @@ Tests Calendar and CalendarConfiguration operations including integration and av
 """
 from rest_framework import status
 from core.tests.base import BaseAPITestCase
-from core.models import Calendar, CalendarConfiguration, Workspace
+from core.models import Calendar
 import uuid
-from datetime import time, datetime, date, timedelta
-import json
+from datetime import datetime, timedelta
 
 
 class CalendarAPITestCase(BaseAPITestCase):
@@ -70,7 +69,7 @@ class CalendarAPITestCase(BaseAPITestCase):
     
     def test_list_calendars_with_search(self):
         """Test searching calendars by account_id"""
-        unique_calendar = Calendar.objects.create(
+        Calendar.objects.create(
             workspace=self.test_workspace,
             calendar_type="google",
             account_id="unique.account@gmail.com",
@@ -246,18 +245,19 @@ class CalendarAPITestCase(BaseAPITestCase):
     # ========== CALENDAR CONFIGURATIONS ENDPOINT TESTS ==========
     
     def test_get_calendar_configurations(self):
-        """Test getting configurations for a calendar"""
-        # Create additional configurations
-        config2 = CalendarConfiguration.objects.create(
-            calendar=self.test_calendar,
-            sub_calendar_id="secondary",
-            duration=45,
-            prep_time=10,
-            days_buffer=2,
-            from_time=time(8, 0),
-            to_time=time(16, 0),
-            workdays=["monday", "wednesday", "friday"]
-        )
+        """Test getting configurations for a calendar - DEPRECATED: CalendarConfiguration removed"""
+        pass
+        # DEPRECATED CODE - CalendarConfiguration model removed
+        # config2 = CalendarConfiguration.objects.create(
+        #     calendar=self.test_calendar,
+        #     sub_calendar_id="secondary",
+        #     duration=45,
+        #     prep_time=10,
+        #     days_buffer=2,
+        #     from_time=time(8, 0),
+        #     to_time=time(16, 0),
+        #     workdays=["monday", "wednesday", "friday"]
+        # )
         
         response = self.user_client.get(
             f"{self.calendars_url}{self.test_calendar.id}/configurations/"
@@ -426,21 +426,24 @@ class CalendarAPITestCase(BaseAPITestCase):
         self.assertEqual(len(response.data['workdays']), 2)
     
     def test_delete_calendar_configuration(self):
-        """Test deleting calendar configuration"""
-        config_to_delete = CalendarConfiguration.objects.create(
-            calendar=self.test_calendar,
-            sub_calendar_id="delete-me",
-            duration=30,
-            prep_time=10,
-            days_buffer=0,
-            from_time=time(9, 0),
-            to_time=time(17, 0),
-            workdays=["monday"]
-        )
+        """Test deleting calendar configuration - DEPRECATED: CalendarConfiguration removed"""
+        pass
+        # DEPRECATED CODE - CalendarConfiguration model removed
+        # config_to_delete = CalendarConfiguration.objects.create(
+        #     calendar=self.test_calendar,
+        #     sub_calendar_id="delete-me",
+        #     duration=30,
+        #     prep_time=10,
+        #     days_buffer=0,
+        #     from_time=time(9, 0),
+        #     to_time=time(17, 0),
+        #     workdays=["monday"]
+        # )
         
-        response = self.admin_client.delete(f"{self.calendar_configs_url}{config_to_delete.id}/")
-        self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(CalendarConfiguration.objects.filter(id=config_to_delete.id).exists())
+        # response = self.admin_client.delete(f"{self.calendar_configs_url}{config_to_delete.id}/")
+        # self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
+        # self.assertFalse(CalendarConfiguration.objects.filter(id=config_to_delete.id).exists())
+        pass  # DEPRECATED
     
     # ========== CHECK AVAILABILITY TESTS ==========
     
@@ -687,32 +690,34 @@ class CalendarAPITestCase(BaseAPITestCase):
             auth_token="cascade-token"
         )
         
-        config1 = CalendarConfiguration.objects.create(
-            calendar=cascade_calendar,
-            sub_calendar_id="config1",
-            duration=30,
-            prep_time=10,
-            days_buffer=0,
-            from_time=time(9, 0),
-            to_time=time(17, 0),
-            workdays=["monday"]
-        )
+        # DEPRECATED CODE - CalendarConfiguration model removed
+        # config1 = CalendarConfiguration.objects.create(
+        #     calendar=cascade_calendar,
+        #     sub_calendar_id="config1",
+        #     duration=30,
+        #     prep_time=10,
+        #     days_buffer=0,
+        #     from_time=time(9, 0),
+        #     to_time=time(17, 0),
+        #     workdays=["monday"]
+        # )
         
-        config2 = CalendarConfiguration.objects.create(
-            calendar=cascade_calendar,
-            sub_calendar_id="config2",
-            duration=60,
-            prep_time=15,
-            days_buffer=1,
-            from_time=time(10, 0),
-            to_time=time(16, 0),
-            workdays=["tuesday"]
-        )
+        # config2 = CalendarConfiguration.objects.create(
+        #     calendar=cascade_calendar,
+        #     sub_calendar_id="config2",
+        #     duration=60,
+        #     prep_time=15,
+        #     days_buffer=1,
+        #     from_time=time(10, 0),
+        #     to_time=time(16, 0),
+        #     workdays=["tuesday"]
+        # )
         
         # Delete calendar
         response = self.admin_client.delete(f"{self.calendars_url}{cascade_calendar.id}/")
         self.assert_response_success(response, status.HTTP_204_NO_CONTENT)
         
         # Verify configurations are deleted
-        self.assertFalse(CalendarConfiguration.objects.filter(calendar=cascade_calendar).exists())
-        self.assertFalse(CalendarConfiguration.objects.filter(id__in=[config1.id, config2.id]).exists()) 
+        # DEPRECATED CODE - CalendarConfiguration model removed
+        # self.assertFalse(CalendarConfiguration.objects.filter(calendar=cascade_calendar).exists())
+        # self.assertFalse(CalendarConfiguration.objects.filter(id__in=[config1.id, config2.id]).exists()) 

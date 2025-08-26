@@ -621,12 +621,11 @@ def update_calltask_from_calllog(self, call_log_id, calltask_id: str):
 def refresh_google_calendar_connections(self):
     """
     Refresh Google Calendar OAuth tokens 30 days before expiry.
-    Uses GoogleCalendarConnection model for proper OAuth management.
+    Uses GoogleCalendar model which now holds OAuth credentials.
 
     Runs daily at midnight.
     """
-    from core.models import GoogleCalendarConnection
-    # from core.services.google_calendar import GoogleOAuthService  # unused import removed
+    from core.models import GoogleCalendar
     from django.utils import timezone
     from datetime import timedelta
     from google.oauth2.credentials import Credentials
@@ -638,16 +637,16 @@ def refresh_google_calendar_connections(self):
     now = timezone.now()
     refresh_threshold = now + timedelta(days=30)  # Refresh 30 days before expiry
 
-    # Query connections that need refresh
-    connections_to_refresh = GoogleCalendarConnection.objects.filter(
+    # Query calendars that need refresh
+    calendars_to_refresh = GoogleCalendar.objects.filter(
         token_expires_at__lt=refresh_threshold,
         token_expires_at__gt=now,  # Not already expired
-        active=True,
+        calendar__active=True,  # Calendar is active
         refresh_token__isnull=False,
     ).exclude(refresh_token="")
 
     results = {
-        "total_checked": connections_to_refresh.count(),
+        "total_checked": calendars_to_refresh.count(),
         "refreshed_successfully": 0,
         "failed_refresh": 0,
         "needs_reauth": [],
@@ -655,42 +654,42 @@ def refresh_google_calendar_connections(self):
     }
 
     logger.info(
-        f"🔄 Starting Google OAuth token refresh for {results['total_checked']} connections"
+        f"🔄 Starting Google OAuth token refresh for {results['total_checked']} calendars"
     )
 
-    for connection in connections_to_refresh:
+    for google_cal in calendars_to_refresh:
         try:
             # Create credentials object
             credentials = Credentials(
-                token=connection.access_token,
-                refresh_token=connection.refresh_token,
+                token=google_cal.access_token,
+                refresh_token=google_cal.refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=settings.GOOGLE_CLIENT_ID,
                 client_secret=settings.GOOGLE_CLIENT_SECRET,
-                scopes=connection.scopes,
+                scopes=google_cal.scopes,
             )
 
             # Refresh the token
             request = Request()
             credentials.refresh(request)
 
-            # Update connection with new tokens
-            connection.access_token = credentials.token
-            connection.token_expires_at = (
+            # Update calendar with new tokens
+            google_cal.access_token = credentials.token
+            google_cal.token_expires_at = (
                 timezone.make_aware(credentials.expiry) if credentials.expiry else None
             )
-            connection.save(
+            google_cal.save(
                 update_fields=["access_token", "token_expires_at", "updated_at"]
             )
 
             results["refreshed_successfully"] += 1
-            logger.info(f"✅ Refreshed token for {connection.account_email}")
+            logger.info(f"✅ Refreshed token for {google_cal.account_email}")
 
         except Exception as e:
             error_msg = str(e)
             results["failed_refresh"] += 1
             results["errors"].append(
-                {"connection": connection.account_email, "error": error_msg}
+                {"calendar": google_cal.account_email, "error": error_msg}
             )
 
             # Check if re-auth is needed
@@ -698,17 +697,17 @@ def refresh_google_calendar_connections(self):
                 keyword in error_msg.lower()
                 for keyword in ["invalid_grant", "refresh_token", "authorization"]
             ):
-                results["needs_reauth"].append(connection.account_email)
+                results["needs_reauth"].append(google_cal.account_email)
                 logger.error(
-                    f"🚨 Re-authorization needed for {connection.account_email}: {error_msg}"
+                    f"🚨 Re-authorization needed for {google_cal.account_email}: {error_msg}"
                 )
 
-                # Mark connection as inactive
-                connection.active = False
-                connection.save(update_fields=["active", "updated_at"])
+                # Mark calendar as inactive
+                google_cal.calendar.active = False
+                google_cal.calendar.save(update_fields=["active", "updated_at"])
             else:
                 logger.error(
-                    f"❌ Unexpected error refreshing {connection.account_email}: {error_msg}"
+                    f"❌ Unexpected error refreshing {google_cal.account_email}: {error_msg}"
                 )
 
     logger.info(f"""
@@ -722,65 +721,173 @@ def refresh_google_calendar_connections(self):
 @shared_task(bind=True, max_retries=3)
 def refresh_microsoft_calendar_connections(self):
     """
-    Refresh Microsoft Calendar OAuth tokens 30 days before expiry.
-    Uses MicrosoftCalendarConnection model; mirrors Google refresh behavior.
+    Refresh Outlook Calendar OAuth tokens 30 days before expiry.
+    Uses OutlookCalendar model which now holds OAuth credentials.
     """
-    from core.models import MicrosoftCalendarConnection
-    from core.services.microsoft_calendar import MicrosoftOAuthService
+    from core.models import OutlookCalendar
+    from core.services.outlook_calendar import OutlookCalendarService
     now = timezone.now()
     refresh_threshold = now + timedelta(days=30)
-    connections = MicrosoftCalendarConnection.objects.filter(
+    calendars = OutlookCalendar.objects.filter(
         token_expires_at__lt=refresh_threshold,
         token_expires_at__gt=now,
-        active=True,
+        calendar__active=True,
         refresh_token__isnull=False
     ).exclude(refresh_token='')
     results = {
-        'total_checked': connections.count(),
+        'total_checked': calendars.count(),
         'refreshed_successfully': 0,
         'failed_refresh': 0,
         'needs_reauth': [],
         'errors': []
     }
-    for connection in connections:
+    for outlook_cal in calendars:
         try:
-            token = MicrosoftOAuthService.refresh_tokens(connection.refresh_token)
-            connection.access_token = token.get('access_token')
-            connection.refresh_token = token.get('refresh_token') or connection.refresh_token
-            connection.token_expires_at = timezone.now() + timedelta(seconds=int(token.get('expires_in', 3600)))
-            connection.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'updated_at'])
+            service = OutlookCalendarService()
+            token = service.refresh_tokens(outlook_cal.refresh_token)
+            outlook_cal.access_token = token.get('access_token')
+            outlook_cal.refresh_token = token.get('refresh_token') or outlook_cal.refresh_token
+            outlook_cal.token_expires_at = timezone.now() + timedelta(seconds=int(token.get('expires_in', 3600)))
+            outlook_cal.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'updated_at'])
             results['refreshed_successfully'] += 1
         except Exception as e:
             error_msg = str(e)
             results['failed_refresh'] += 1
-            results['errors'].append({'connection': connection.primary_email, 'error': error_msg})
+            results['errors'].append({'calendar': outlook_cal.primary_email, 'error': error_msg})
             if any(k in error_msg.lower() for k in ['invalid_grant', 'refresh_token', 'authorization']):
-                results['needs_reauth'].append(connection.primary_email)
-                connection.active = False
-                connection.save(update_fields=['active', 'updated_at'])
+                results['needs_reauth'].append(outlook_cal.primary_email)
+                outlook_cal.calendar.active = False
+                outlook_cal.calendar.save(update_fields=['active', 'updated_at'])
     return results
 
 
+# MicrosoftSubscription renewal task removed - MicrosoftSubscription model no longer exists
+
+
 @shared_task(bind=True, max_retries=3)
-def renew_microsoft_subscriptions(self):
+def refresh_calendar_subaccounts(self):
     """
-    Renew Microsoft subscriptions 24–48h before expiration.
-    Mirrors Google-like maintenance behavior for Graph subscriptions.
+    Periodically refresh sub-accounts for all active calendars.
+    Discovers new shared/delegated calendars that were added after initial OAuth.
+    
+    Runs daily at 2 AM.
     """
-    from core.models import MicrosoftSubscription
-    from core.services.microsoft_calendar import MicrosoftCalendarService
-    now = timezone.now()
-    renew_threshold = now + timedelta(hours=48)
-    subs = MicrosoftSubscription.objects.select_related('connection').filter(expiration_at__lt=renew_threshold)
-    results = {'total_checked': subs.count(), 'renewed': 0, 'failed': 0, 'errors': []}
-    for sub in subs:
+    from core.models import GoogleCalendar, GoogleSubAccount, OutlookCalendar, OutlookSubAccount
+    from googleapiclient.discovery import build
+    from google.oauth2.credentials import Credentials
+    import requests
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    results = {
+        'google': {'checked': 0, 'new_subaccounts': 0, 'errors': []},
+        'outlook': {'checked': 0, 'new_subaccounts': 0, 'errors': []}
+    }
+    
+    # Refresh Google sub-accounts
+    for google_cal in GoogleCalendar.objects.filter(calendar__active=True):
         try:
-            ms = MicrosoftCalendarService(sub.connection)
-            ms.renew_subscription(sub.subscription_id)
-            results['renewed'] += 1
+            results['google']['checked'] += 1
+            
+            # Build Google service
+            creds = Credentials(
+                token=google_cal.access_token,
+                refresh_token=google_cal.refresh_token,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=settings.GOOGLE_CLIENT_ID,
+                client_secret=settings.GOOGLE_CLIENT_SECRET,
+                scopes=google_cal.scopes
+            )
+            
+            service = build('calendar', 'v3', credentials=creds)
+            calendar_list = service.calendarList().list().execute()
+            
+            for cal_entry in calendar_list.get('items', []):
+                # Skip primary calendar (already exists as 'self')
+                if cal_entry.get('primary'):
+                    continue
+                
+                cal_id = cal_entry.get('id', '')
+                access_role = cal_entry.get('accessRole', 'reader')
+                
+                # Determine relationship
+                if '@group.calendar.google.com' in cal_id:
+                    relationship = 'shared'
+                elif '@resource.calendar.google.com' in cal_id:
+                    relationship = 'resource'
+                elif access_role in ['owner', 'writer']:
+                    relationship = 'delegate'
+                else:
+                    relationship = 'shared'
+                
+                # Create sub-account if it doesn't exist
+                _, created = GoogleSubAccount.objects.get_or_create(
+                    google_calendar=google_cal,
+                    act_as_email=cal_id,
+                    defaults={
+                        'relationship': relationship,
+                        'active': True
+                    }
+                )
+                if created:
+                    results['google']['new_subaccounts'] += 1
+                    logger.info(f"Created new Google sub-account: {cal_id}")
+                    
         except Exception as e:
-            results['failed'] += 1
-            results['errors'].append({'subscription': sub.subscription_id, 'error': str(e)})
+            results['google']['errors'].append({
+                'calendar': google_cal.account_email,
+                'error': str(e)
+            })
+            logger.error(f"Error refreshing Google sub-accounts for {google_cal.account_email}: {e}")
+    
+    # Refresh Outlook sub-accounts
+    for outlook_cal in OutlookCalendar.objects.filter(calendar__active=True):
+        try:
+            results['outlook']['checked'] += 1
+            
+            headers = {'Authorization': f'Bearer {outlook_cal.access_token}'}
+            
+            # Get calendars the user has access to
+            calendars_url = 'https://graph.microsoft.com/v1.0/me/calendars'
+            response = requests.get(calendars_url, headers=headers)
+            
+            if response.status_code == 200:
+                calendars_data = response.json()
+                
+                for calendar in calendars_data.get('value', []):
+                    # Skip default calendar (already exists as 'self')
+                    if calendar.get('isDefaultCalendar'):
+                        continue
+                    
+                    owner_email = calendar.get('owner', {}).get('address')
+                    if owner_email and owner_email != outlook_cal.primary_email:
+                        # Create sub-account if it doesn't exist
+                        _, created = OutlookSubAccount.objects.get_or_create(
+                            outlook_calendar=outlook_cal,
+                            act_as_upn=owner_email,
+                            defaults={
+                                'relationship': 'delegate',
+                                'active': True
+                            }
+                        )
+                        if created:
+                            results['outlook']['new_subaccounts'] += 1
+                            logger.info(f"Created new Outlook sub-account: {owner_email}")
+                            
+        except Exception as e:
+            results['outlook']['errors'].append({
+                'calendar': outlook_cal.primary_email,
+                'error': str(e)
+            })
+            logger.error(f"Error refreshing Outlook sub-accounts for {outlook_cal.primary_email}: {e}")
+    
+    logger.info(f"""
+    📅 Sub-Account Refresh Summary:
+    Google: {results['google']['checked']} checked, {results['google']['new_subaccounts']} new
+    Outlook: {results['outlook']['checked']} checked, {results['outlook']['new_subaccounts']} new
+    """)
+    
     return results
 
 
@@ -886,11 +993,11 @@ def refresh_meta_tokens(self):
 def cleanup_invalid_google_connections(self):
     """
     Clean up invalid or expired Google Calendar connections.
-    Deletes connections that can no longer be refreshed.
+    Deletes calendars that can no longer be refreshed.
 
     Runs daily at midnight.
     """
-    from core.models import GoogleCalendarConnection, GoogleCalendar
+    from core.models import GoogleCalendar, Calendar
     from django.utils import timezone
     from django.db.models import Q
     import logging
@@ -899,44 +1006,39 @@ def cleanup_invalid_google_connections(self):
 
     now = timezone.now()
 
-    # Find invalid connections
-    invalid_connections = GoogleCalendarConnection.objects.filter(
+    # Find invalid Google calendars
+    invalid_calendars = GoogleCalendar.objects.filter(
         Q(token_expires_at__lt=now)  # Expired tokens
-        | Q(active=False)  # Marked as inactive
+        | Q(calendar__active=False)  # Calendar marked as inactive
         | Q(refresh_token__isnull=True)  # No refresh capability
         | Q(refresh_token="")  # Empty refresh token
     )
 
-    results = {"total_deleted": 0, "deleted_connections": [], "deleted_calendars": []}
+    results = {"total_deleted": 0, "deleted_google_calendars": [], "deleted_calendars": []}
 
     logger.info(
-        f"🧹 Starting cleanup of {invalid_connections.count()} invalid Google connections"
+        f"🧹 Starting cleanup of {invalid_calendars.count()} invalid Google calendars"
     )
 
-    for connection in invalid_connections:
+    for google_cal in invalid_calendars:
         try:
-            # Find and delete associated calendars
-            google_calendars = GoogleCalendar.objects.filter(connection=connection)
-            for gc in google_calendars:
-                calendar_name = gc.calendar.name if gc.calendar else "Unknown"
+            calendar_name = google_cal.calendar.name if google_cal.calendar else "Unknown"
+            account_email = google_cal.account_email
+            
+            # Count sub-accounts that will be deleted
+            sub_account_count = google_cal.sub_accounts.count()
 
-                # Delete the Calendar (this cascades to GoogleCalendar)
-                if gc.calendar:
-                    gc.calendar.delete()
-                    results["deleted_calendars"].append(calendar_name)
-                    logger.info(f"🗑️ Deleted calendar: {calendar_name}")
-
-            # Delete the connection
-            connection_email = connection.account_email
-            connection.delete()
-            results["deleted_connections"].append(connection_email)
-            results["total_deleted"] += 1
-
-            logger.info(f"🗑️ Deleted Google connection for {connection_email}")
+            # Delete the Calendar (this cascades to GoogleCalendar and ALL sub-accounts)
+            if google_cal.calendar:
+                google_cal.calendar.delete()
+                results["deleted_calendars"].append(calendar_name)
+                results["deleted_google_calendars"].append(account_email)
+                results["total_deleted"] += 1
+                logger.info(f"🗑️ Deleted calendar: {calendar_name} ({account_email}) and {sub_account_count} sub-accounts")
 
         except Exception as e:
             logger.error(
-                f"❌ Error deleting connection {connection.account_email}: {str(e)}"
+                f"❌ Error deleting Google calendar {google_cal.account_email}: {str(e)}"
             )
 
     logger.info(f"""
@@ -945,6 +1047,67 @@ def cleanup_invalid_google_connections(self):
     📅 Deleted calendars: {len(results["deleted_calendars"])}
     """)
 
+    return results
+
+
+@shared_task(bind=True)
+def cleanup_invalid_outlook_connections(self):
+    """
+    Clean up invalid or expired Outlook Calendar connections.
+    Deletes calendars that can no longer be refreshed.
+    
+    Runs daily at midnight.
+    """
+    from core.models import OutlookCalendar
+    from django.utils import timezone
+    from django.db.models import Q
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    now = timezone.now()
+    
+    # Find invalid Outlook calendars
+    invalid_calendars = OutlookCalendar.objects.filter(
+        Q(token_expires_at__lt=now)  # Expired tokens
+        | Q(calendar__active=False)  # Calendar marked as inactive
+        | Q(refresh_token__isnull=True)  # No refresh capability
+        | Q(refresh_token="")  # Empty refresh token
+    )
+    
+    results = {"total_deleted": 0, "deleted_outlook_calendars": [], "deleted_calendars": []}
+    
+    logger.info(
+        f"🧹 Starting cleanup of {invalid_calendars.count()} invalid Outlook calendars"
+    )
+    
+    for outlook_cal in invalid_calendars:
+        try:
+            calendar_name = outlook_cal.calendar.name if outlook_cal.calendar else "Unknown"
+            primary_email = outlook_cal.primary_email
+            
+            # Count sub-accounts that will be deleted
+            sub_account_count = outlook_cal.sub_accounts.count()
+            
+            # Delete the Calendar (this cascades to OutlookCalendar and ALL sub-accounts)
+            if outlook_cal.calendar:
+                outlook_cal.calendar.delete()
+                results["deleted_calendars"].append(calendar_name)
+                results["deleted_outlook_calendars"].append(primary_email)
+                results["total_deleted"] += 1
+                logger.info(f"🗑️ Deleted calendar: {calendar_name} ({primary_email}) and {sub_account_count} sub-accounts")
+                
+        except Exception as e:
+            logger.error(
+                f"❌ Error deleting Outlook calendar {outlook_cal.primary_email}: {str(e)}"
+            )
+    
+    logger.info(f"""
+    🧹 Outlook Cleanup Summary:
+    🗑️ Deleted calendars: {results["total_deleted"]}
+    📅 Deleted calendar records: {len(results["deleted_calendars"])}
+    """)
+    
     return results
 
 

@@ -145,17 +145,78 @@ class GoogleCalendarService:
         credentials = self.get_credentials()
         return build('calendar', 'v3', credentials=credentials)
     
-    def sync_calendars(self, google_calendar: GoogleCalendar) -> List[GoogleCalendar]:
-        """Sync calendars from Google - for now just return the existing calendar"""
-        # In a full implementation, this would:
-        # 1. Fetch calendar list from Google
-        # 2. Update calendar metadata
-        # 3. Create additional calendars if needed
-        # For now, just update sync time
-        google_calendar.last_sync = timezone.now()
-        google_calendar.sync_errors = {}
-        google_calendar.save()
-        return [google_calendar]
+    def sync_calendars(self, google_calendar: GoogleCalendar) -> List[Dict]:
+        """
+        Sync calendars from Google using sub-accounts.
+        Returns list of synced calendar data for each active sub-account.
+        """
+        from core.models import GoogleSubAccount
+        
+        synced_calendars = []
+        errors = {}
+        
+        try:
+            # Get credentials for the main account
+            credentials = Credentials(
+                token=google_calendar.access_token,
+                refresh_token=google_calendar.refresh_token,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=self.client_id,
+                client_secret=self.client_secret,
+                scopes=google_calendar.scopes
+            )
+            
+            service = build('calendar', 'v3', credentials=credentials)
+            
+            # Iterate through active sub-accounts
+            for sub_account in google_calendar.sub_accounts.filter(active=True):
+                try:
+                    # For 'self' relationship, use primary calendar
+                    if sub_account.relationship == 'self':
+                        calendar_id = 'primary'
+                    else:
+                        calendar_id = sub_account.act_as_email
+                    
+                    # Get calendar details
+                    calendar = service.calendars().get(calendarId=calendar_id).execute()
+                    
+                    # Get calendar settings (for more details)
+                    calendar_list_entry = service.calendarList().get(calendarId=calendar_id).execute()
+                    
+                    synced_data = {
+                        'sub_account_id': str(sub_account.id),
+                        'calendar_id': calendar_id,
+                        'act_as_email': sub_account.act_as_email,
+                        'relationship': sub_account.relationship,
+                        'summary': calendar.get('summary', ''),
+                        'description': calendar.get('description', ''),
+                        'time_zone': calendar.get('timeZone', 'UTC'),
+                        'access_role': calendar_list_entry.get('accessRole', 'reader'),
+                        'background_color': calendar_list_entry.get('backgroundColor', ''),
+                        'foreground_color': calendar_list_entry.get('foregroundColor', ''),
+                        'selected': calendar_list_entry.get('selected', False),
+                        'primary': calendar_list_entry.get('primary', False),
+                    }
+                    
+                    synced_calendars.append(synced_data)
+                    logger.info(f"Synced calendar for sub-account: {sub_account.act_as_email}")
+                    
+                except Exception as e:
+                    error_msg = f"Failed to sync {sub_account.act_as_email}: {str(e)}"
+                    errors[sub_account.act_as_email] = error_msg
+                    logger.error(error_msg)
+            
+            # Update sync status
+            google_calendar.last_sync = timezone.now()
+            google_calendar.sync_errors = errors if errors else {}
+            google_calendar.save()
+            
+        except Exception as e:
+            logger.error(f"Failed to sync Google calendars: {str(e)}")
+            google_calendar.sync_errors = {'error': str(e), 'timestamp': timezone.now().isoformat()}
+            google_calendar.save()
+            
+        return synced_calendars
     
     def revoke_tokens(self, google_calendar: GoogleCalendar):
         """Revoke Google OAuth tokens"""

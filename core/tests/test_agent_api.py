@@ -4,7 +4,7 @@ Tests Agent and PhoneNumber operations including phone assignment and configurat
 """
 from rest_framework import status
 from core.tests.base import BaseAPITestCase
-from core.models import Agent, PhoneNumber, Workspace, CalendarConfiguration, Voice
+from core.models import Agent, PhoneNumber, Workspace, Voice
 import uuid
 from datetime import time
 import json
