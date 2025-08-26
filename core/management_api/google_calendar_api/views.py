@@ -1,6 +1,7 @@
 """Google Calendar API views for OAuth and calendar management"""
 import logging
 import secrets
+from django.conf import settings
 from django.utils import timezone
 from django.shortcuts import redirect
 from rest_framework import viewsets, status, serializers
@@ -15,7 +16,7 @@ from .serializers import (
     GoogleCalendarSerializer,
     GoogleAuthUrlResponseSerializer,
     GoogleOAuthCallbackSerializer,
-    GoogleSubAccountSerializer,
+    # GoogleSubAccountSerializer,  # REMOVED - sub-accounts managed automatically
 )
 from .permissions import GoogleCalendarPermission
 
@@ -198,47 +199,74 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                 )
                 
                 calendar_service = build('calendar', 'v3', credentials=creds)
-                calendar_list = calendar_service.calendarList().list().execute()
                 
-                for cal_entry in calendar_list.get('items', []):
-                    # Skip if this is the primary calendar (already handled as 'self')
-                    if cal_entry.get('primary'):
-                        continue
+                # Fetch ALL calendars with pagination
+                calendars_fetched = 0
+                page_token = None
+                
+                while True:
+                    # Request calendar list with pagination
+                    request_params = {
+                        'showDeleted': False,
+                        'showHidden': False,
+                        'minAccessRole': 'reader'  # Get all calendars where user has at least read access
+                    }
+                    if page_token:
+                        request_params['pageToken'] = page_token
                     
-                    # Determine relationship type
-                    access_role = cal_entry.get('accessRole', 'reader')
-                    cal_id = cal_entry.get('id', '')
-                    summary = cal_entry.get('summary', '')
+                    calendar_list = calendar_service.calendarList().list(**request_params).execute()
                     
-                    # Determine relationship based on calendar ID and access role
-                    if '@group.calendar.google.com' in cal_id:
-                        relationship = 'shared'
-                    elif '@resource.calendar.google.com' in cal_id:
-                        relationship = 'resource'
-                    elif access_role in ['owner', 'writer']:
-                        relationship = 'delegate'
-                    else:
-                        relationship = 'shared'
+                    for cal_entry in calendar_list.get('items', []):
+                        # Skip if this is the primary calendar (already handled as 'self')
+                        if cal_entry.get('primary'):
+                            logger.info(f"Skipping primary calendar: {cal_entry.get('summary', '')}")
+                            continue
+                        
+                        # Determine relationship type
+                        access_role = cal_entry.get('accessRole', 'reader')
+                        cal_id = cal_entry.get('id', '')
+                        summary = cal_entry.get('summary', '')
+                        
+                        # Determine relationship based on calendar ID and access role
+                        if '@group.calendar.google.com' in cal_id:
+                            relationship = 'shared'
+                        elif '@resource.calendar.google.com' in cal_id:
+                            relationship = 'resource'
+                        elif access_role in ['owner', 'writer']:
+                            relationship = 'delegate'
+                        else:
+                            relationship = 'shared'
+                        
+                        # Create sub-account for this calendar
+                        sub_account, created = GoogleSubAccount.objects.get_or_create(
+                            google_calendar=google_calendar,
+                            act_as_email=cal_id,
+                            defaults={
+                                'act_as_user_id': '',  # Will be populated if needed
+                                'relationship': relationship,
+                                'active': True
+                            }
+                        )
+                        
+                        calendars_fetched += 1
+                        if created:
+                            logger.info(f"Created {relationship} sub-account for calendar: {summary} ({cal_id})")
+                        else:
+                            logger.info(f"Sub-account already exists for calendar: {summary} ({cal_id})")
                     
-                    # Create sub-account for this calendar
-                    GoogleSubAccount.objects.get_or_create(
-                        google_calendar=google_calendar,
-                        act_as_email=cal_id,
-                        defaults={
-                            'act_as_user_id': '',  # Will be populated if needed
-                            'relationship': relationship,
-                            'active': True
-                        }
-                    )
-                    
-                    logger.info(f"Created {relationship} sub-account for calendar: {summary} ({cal_id})")
+                    # Check if there are more pages
+                    page_token = calendar_list.get('nextPageToken')
+                    if not page_token:
+                        break
+                
+                logger.info(f"Total calendars fetched from Google: {calendars_fetched}")
                     
             except Exception as e:
-                logger.warning(f"Could not discover shared calendars: {str(e)}")
+                logger.error(f"Error discovering shared calendars: {str(e)}", exc_info=True)
                 # Continue anyway - at least we have the self account
             
             # Sync calendars from Google
-            synced_calendars = service.sync_calendars(google_calendar)
+            service.sync_calendars(google_calendar)
             
             # Clean up session state
             del request.session[session_key]
@@ -412,6 +440,118 @@ class GoogleCalendarViewSet(viewsets.ReadOnlyModelViewSet):
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['post'], url_path='refresh-calendars')
+    def refresh_calendars(self, request):
+        """Refresh/fetch all calendars from Google (including creating new sub-accounts)"""
+        google_calendar_id = request.data.get('google_calendar_id')
+        
+        if not google_calendar_id:
+            return Response({'error': 'google_calendar_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Get the Google calendar
+            google_calendar = GoogleCalendar.objects.get(
+                id=google_calendar_id,
+                calendar__workspace__users=request.user
+            )
+            
+            # Build credentials
+            from google.oauth2.credentials import Credentials
+            from googleapiclient.discovery import build
+            
+            creds = Credentials(
+                token=google_calendar.access_token,
+                refresh_token=google_calendar.refresh_token,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                scopes=google_calendar.scopes
+            )
+            
+            calendar_service = build('calendar', 'v3', credentials=creds)
+            
+            # Fetch ALL calendars with pagination
+            calendars_fetched = 0
+            calendars_created = 0
+            page_token = None
+            
+            while True:
+                # Request calendar list with pagination
+                request_params = {
+                    'showDeleted': False,
+                    'showHidden': False,
+                    'minAccessRole': 'reader'  # Get all calendars where user has at least read access
+                }
+                if page_token:
+                    request_params['pageToken'] = page_token
+                
+                calendar_list = calendar_service.calendarList().list(**request_params).execute()
+                
+                for cal_entry in calendar_list.get('items', []):
+                    # Skip if this is the primary calendar (already handled as 'self')
+                    if cal_entry.get('primary'):
+                        continue
+                    
+                    # Determine relationship type
+                    access_role = cal_entry.get('accessRole', 'reader')
+                    cal_id = cal_entry.get('id', '')
+                    summary = cal_entry.get('summary', '')
+                    
+                    # Determine relationship based on calendar ID and access role
+                    if '@group.calendar.google.com' in cal_id:
+                        relationship = 'shared'
+                    elif '@resource.calendar.google.com' in cal_id:
+                        relationship = 'resource'
+                    elif access_role in ['owner', 'writer']:
+                        relationship = 'delegate'
+                    else:
+                        relationship = 'shared'
+                    
+                    # Create sub-account for this calendar
+                    sub_account, created = GoogleSubAccount.objects.get_or_create(
+                        google_calendar=google_calendar,
+                        act_as_email=cal_id,
+                        defaults={
+                            'act_as_user_id': '',  # Will be populated if needed
+                            'relationship': relationship,
+                            'active': True
+                        }
+                    )
+                    
+                    calendars_fetched += 1
+                    if created:
+                        calendars_created += 1
+                        logger.info(f"Created {relationship} sub-account for calendar: {summary} ({cal_id})")
+                
+                # Check if there are more pages
+                page_token = calendar_list.get('nextPageToken')
+                if not page_token:
+                    break
+            
+            logger.info(f"Refreshed calendars: {calendars_fetched} total, {calendars_created} new")
+            
+            # Now sync the calendars
+            service = GoogleCalendarService()
+            synced_sub_accounts = service.sync_calendars(google_calendar)
+            
+            return Response({
+                'success': True,
+                'message': f'Fetched {calendars_fetched} calendars ({calendars_created} new), synced {len(synced_sub_accounts)}',
+                'calendars_fetched': calendars_fetched,
+                'calendars_created': calendars_created,
+                'synced_count': len(synced_sub_accounts),
+                'google_calendar': GoogleCalendarSerializer(google_calendar).data
+            })
+            
+        except GoogleCalendar.DoesNotExist:
+            return Response({'error': 'Google calendar not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Calendar refresh failed: {str(e)}", exc_info=True)
+            return Response({
+                'error': 'Refresh failed',
+                'details': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @extend_schema(
         summary="🗑️ Delete Google Calendar",
         description="Delete a specific Google calendar connection",
@@ -433,99 +573,6 @@ class GoogleCalendarViewSet(viewsets.ReadOnlyModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-@extend_schema_view(
-    list=extend_schema(
-        summary="📋 List Google Sub-Accounts",
-        description="List all sub-accounts (shared/delegated calendars) for Google Calendar connections",
-        tags=["Google Calendar"]
-    ),
-    create=extend_schema(
-        summary="➕ Create Google Sub-Account",
-        description="Add a new sub-account (shared/delegated calendar) to a Google Calendar connection",
-        tags=["Google Calendar"]
-    ),
-    retrieve=extend_schema(
-        summary="🔍 Get Google Sub-Account",
-        description="Retrieve details of a specific Google sub-account",
-        tags=["Google Calendar"]
-    ),
-    update=extend_schema(
-        summary="✏️ Update Google Sub-Account",
-        description="Update a Google sub-account configuration",
-        tags=["Google Calendar"]
-    ),
-    partial_update=extend_schema(
-        summary="📝 Partially Update Google Sub-Account",
-        description="Partially update a Google sub-account configuration",
-        tags=["Google Calendar"]
-    ),
-    destroy=extend_schema(
-        summary="🗑️ Delete Google Sub-Account",
-        description="Remove a Google sub-account (shared/delegated calendar)",
-        tags=["Google Calendar"]
-    )
-)
-class GoogleSubAccountViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet for managing Google sub-accounts (shared/delegated calendars).
-    
-    Sub-accounts represent different Google identities that the main account can act as:
-    - **self**: The main account itself
-    - **shared**: Shared calendar from another user
-    - **delegate**: Delegated access to another user's calendar
-    - **domain_impersonation**: Domain-wide delegation (service account)
-    - **resource**: Resource calendar (room, equipment)
-    """
-    serializer_class = GoogleSubAccountSerializer
-    permission_classes = [IsAuthenticated, GoogleCalendarPermission]
-    
-    def get_queryset(self):
-        """Filter sub-accounts by user's workspaces"""
-        return GoogleSubAccount.objects.filter(
-            google_calendar__calendar__workspace__users=self.request.user
-        ).select_related(
-            'google_calendar',
-            'google_calendar__calendar',
-            'google_calendar__calendar__workspace'
-        ).order_by('-created_at')
-    
-    def perform_create(self, serializer):
-        """Validate that user has access to the Google calendar"""
-        google_calendar = serializer.validated_data.get('google_calendar')
-        
-        # Check user has access to this Google calendar
-        if not google_calendar.calendar.workspace.users.filter(id=self.request.user.id).exists():
-            raise serializers.ValidationError("You don't have access to this Google calendar")
-        
-        # Check for duplicate sub-accounts
-        existing = GoogleSubAccount.objects.filter(
-            google_calendar=google_calendar,
-            act_as_email=serializer.validated_data.get('act_as_email')
-        ).first()
-        
-        if existing:
-            raise serializers.ValidationError(
-                f"Sub-account for {serializer.validated_data.get('act_as_email')} already exists"
-            )
-        
-        serializer.save()
-    
-    @action(detail=False, methods=['get'], url_path='by-calendar/(?P<google_calendar_id>[^/.]+)')
-    def by_calendar(self, request, google_calendar_id=None):
-        """Get all sub-accounts for a specific Google calendar"""
-        sub_accounts = self.get_queryset().filter(google_calendar_id=google_calendar_id)
-        serializer = self.get_serializer(sub_accounts, many=True)
-        return Response(serializer.data)
-    
-    @action(detail=True, methods=['post'], url_path='toggle-active')
-    def toggle_active(self, request, pk=None):
-        """Toggle the active status of a sub-account"""
-        sub_account = self.get_object()
-        sub_account.active = not sub_account.active
-        sub_account.save()
-        
-        return Response({
-            'success': True,
-            'active': sub_account.active,
-            'message': f"Sub-account {'activated' if sub_account.active else 'deactivated'}"
-        })
+# REMOVED: GoogleSubAccountViewSet
+# Sub-accounts are now managed automatically during OAuth callback
+# They are created when fetching calendars from Google and should not be manually managed via API

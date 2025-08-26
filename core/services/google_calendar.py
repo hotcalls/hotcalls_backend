@@ -65,10 +65,22 @@ class GoogleOAuthService:
         flow.fetch_token(code=code)
         credentials = flow.credentials
         
+        # Calculate expires_in with proper timezone handling
+        if credentials.expiry:
+            # Ensure expiry is timezone-aware
+            if credentials.expiry.tzinfo is None:
+                # If naive, assume UTC
+                expiry_aware = credentials.expiry.replace(tzinfo=dt_timezone.utc)
+            else:
+                expiry_aware = credentials.expiry
+            expires_in = (expiry_aware - datetime.now(dt_timezone.utc)).total_seconds()
+        else:
+            expires_in = 3600
+            
         return {
             'access_token': credentials.token,
             'refresh_token': credentials.refresh_token,
-            'expires_in': (credentials.expiry - datetime.now(dt_timezone.utc)).total_seconds() if credentials.expiry else 3600,
+            'expires_in': expires_in,
             'scope': ' '.join(credentials.scopes) if credentials.scopes else ''
         }
 
