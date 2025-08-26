@@ -13,7 +13,8 @@ gunicorn
 whitenoise
 Pillow
 boto3
-django-storages
+django-storages[azure]>=1.14.0
+azure-storage-blob>=12.19.0
 django-health-check
 faker
 django-redis

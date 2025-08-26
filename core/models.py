@@ -1194,8 +1194,6 @@ class Lead(models.Model):
         max_length=50,
         help_text="Lead's phone number"
     )
-    
-    # Integration fields
     workspace = models.ForeignKey(
         Workspace,
         on_delete=models.CASCADE,
