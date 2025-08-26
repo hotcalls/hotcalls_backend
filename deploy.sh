@@ -1802,13 +1802,6 @@ spec:
             name: ${PROJECT_PREFIX}-backend-internal
             port:
               number: 8000
-      - path: /admin
-        pathType: Prefix
-        backend:
-          service:
-            name: ${PROJECT_PREFIX}-backend-internal
-            port:
-              number: 8000
       - path: /health
         pathType: Prefix
         backend:
