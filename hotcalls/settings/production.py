@@ -25,6 +25,18 @@ ALLOWED_HOSTS = ["*"]
 
 # Security settings (strict for production)
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"
+
+# CRITICAL: Trust proxy headers to detect HTTPS correctly
+# This prevents redirect loops when behind load balancer/ingress
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+# Exclude health check from SSL redirect (for Kubernetes probes)
+# Note: Admin should NOT be exempted in production for security
+SECURE_REDIRECT_EXEMPT = [
+    r'^health/$', 
+    r'^health$',
+]
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "True").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "True").lower() == "true"
 SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").lower() == "true"

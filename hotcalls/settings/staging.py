@@ -23,7 +23,29 @@ DEBUG = False  # Set to False for more production-like behavior
 ALLOWED_HOSTS = ["*"]
 
 # Security settings for staging (can be less strict than production)
+# Only redirect to HTTPS for non-local addresses
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "False").lower() == "true"
+
+# CRITICAL: Trust proxy headers to detect HTTPS correctly
+# This prevents redirect loops when behind load balancer/ingress
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+
+# Disable SSL redirect for localhost/port-forwarding
+if SECURE_SSL_REDIRECT:
+    import socket
+    hostname = socket.gethostname()
+    # Disable for local development and port-forwarding
+    if 'localhost' in hostname or '127.0.0.1' in hostname:
+        SECURE_SSL_REDIRECT = False
+# Exclude health check and admin from SSL redirect (for Kubernetes probes and port-forwarding)
+SECURE_REDIRECT_EXEMPT = [
+    r'^health/$', 
+    r'^health$',
+    r'^admin/',  # Admin panel for port-forwarding
+    r'^static/',  # Static files for admin
+]
 SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
 CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
 SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").lower() == "true"
@@ -52,7 +74,8 @@ SERVE_STATIC_VIA_BACKEND = os.environ.get('SERVE_STATIC_VIA_BACKEND', 'False').l
 
 if SERVE_STATIC_VIA_BACKEND:
     # Local static from backend with WhiteNoise for Django Admin
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    # Use CompressedStaticFilesStorage (no manifest needed) for read-only filesystem
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
     STATIC_URL = '/static/'
     STATIC_ROOT = BASE_DIR / 'staticfiles'
     # Ensure middleware present early for efficient static serving
@@ -68,7 +91,7 @@ if SERVE_STATIC_VIA_BACKEND:
                 "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
             },
             "staticfiles": {
-                "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+                "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
             },
         }
         if AZURE_CUSTOM_DOMAIN:

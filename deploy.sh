@@ -993,6 +993,7 @@ build_and_push_images() {
             log_info "Building WITHOUT cache (--no-cache flag enabled)..."
             docker buildx build --platform linux/amd64 \
                 --no-cache \
+                --build-arg DJANGO_SETTINGS_MODULE="hotcalls.settings.${ENVIRONMENT}" \
                 -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
         else
             # Optimize for new projects - skip cache lookup on first build to avoid timeouts
@@ -1001,11 +1002,13 @@ build_and_push_images() {
                 docker buildx build --platform linux/amd64 \
                     --cache-from=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache" \
                     --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                    --build-arg DJANGO_SETTINGS_MODULE="hotcalls.settings.${ENVIRONMENT}" \
                     -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
             else
                 log_info "First build - no cache available, building fresh..."
                 docker buildx build --platform linux/amd64 \
                     --cache-to=type=registry,ref="${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:cache,mode=max" \
+                    --build-arg DJANGO_SETTINGS_MODULE="hotcalls.settings.${ENVIRONMENT}" \
                     -t "${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}" . --push
             fi
         fi

@@ -50,8 +50,10 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 # Switch to the non-root user
 USER django
 
-# Collect static files
-RUN ALLOWED_HOSTS=localhost DJANGO_SETTINGS_MODULE=hotcalls.settings.production python manage.py collectstatic --noinput
+# Collect static files - using build arg to determine environment
+ARG DJANGO_SETTINGS_MODULE=hotcalls.settings.production
+ENV DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE}
+RUN ALLOWED_HOSTS=localhost python manage.py collectstatic --noinput
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
