@@ -528,10 +528,7 @@ CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '
 # Site URL for absolute URL generation (used by multiple services)
 SITE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
 
-# Google Calendar OAuth Configuration
-GOOGLE_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
-GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
-# Also expose with OAUTH prefix for backward compatibility
+# Google Calendar OAuth Configuration - UNIFIED NAMING
 GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
 GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = f"{SITE_URL}/api/calendars/google_callback/"

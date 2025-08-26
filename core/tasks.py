@@ -664,8 +664,8 @@ def refresh_google_calendar_connections(self):
                 token=google_cal.access_token,
                 refresh_token=google_cal.refresh_token,
                 token_uri="https://oauth2.googleapis.com/token",
-                client_id=settings.GOOGLE_CLIENT_ID,
-                client_secret=settings.GOOGLE_CLIENT_SECRET,
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
                 scopes=google_cal.scopes,
             )
 
@@ -795,8 +795,8 @@ def refresh_calendar_subaccounts(self):
                 token=google_cal.access_token,
                 refresh_token=google_cal.refresh_token,
                 token_uri='https://oauth2.googleapis.com/token',
-                client_id=settings.GOOGLE_CLIENT_ID,
-                client_secret=settings.GOOGLE_CLIENT_SECRET,
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
                 scopes=google_cal.scopes
             )
             
