@@ -11,11 +11,16 @@ class EmailBackend(BaseBackend):
     and enforces email verification.
     """
     
-    def authenticate(self, request, email=None, password=None, **kwargs):
+    def authenticate(self, request, email=None, username=None, password=None, **kwargs):
         """
         Authenticate user using email and password.
         Only allows login if email is verified.
+        
+        Accepts both 'email' and 'username' parameters to support Django admin.
         """
+        # Support both email and username parameters (username might contain email)
+        email = email or username
+        
         if email is None or password is None:
             return None
         
