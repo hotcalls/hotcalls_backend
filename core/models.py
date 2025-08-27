@@ -1335,6 +1335,36 @@ class Calendar(models.Model):
             models.Index(fields=['workspace', 'provider', 'active']),
         ]
     
+    def delete(self, *args, **kwargs):
+        """Properly disconnect and clean up provider-specific resources before deletion"""
+        
+        # Handle Google Calendar cleanup
+        if self.provider == 'google' and hasattr(self, 'google_calendar'):
+            try:
+                from core.services.google_calendar import GoogleCalendarService
+                service = GoogleCalendarService()
+                service.revoke_tokens(self.google_calendar)
+            except Exception as e:
+                # Log but don't fail - we still want to delete
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to revoke Google tokens for calendar {self.id}: {e}")
+        
+        # Handle Outlook Calendar cleanup
+        elif self.provider == 'outlook' and hasattr(self, 'outlook_calendar'):
+            try:
+                from core.services.outlook_calendar import OutlookCalendarService
+                service = OutlookCalendarService()
+                service.revoke_tokens(self.outlook_calendar)
+            except Exception as e:
+                # Log but don't fail - we still want to delete
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to revoke Outlook tokens for calendar {self.id}: {e}")
+        
+        # Now delete the Calendar (will cascade to provider models and sub-accounts)
+        super().delete(*args, **kwargs)
+    
     def __str__(self):
         return f"{self.workspace.workspace_name} - {self.name} ({self.provider})"
 
@@ -1474,6 +1504,12 @@ class GoogleSubAccount(models.Model):
         default='', 
         help_text="Google user id if known"
     )
+    calendar_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Human-readable calendar name (e.g. 'Focus Time' instead of cryptic ID)"
+    )
     relationship = models.CharField(
         max_length=32,
         choices=[
@@ -1497,7 +1533,14 @@ class GoogleSubAccount(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.act_as_email} via {self.google_calendar.account_email}"
+        # Show calendar name if available, otherwise show truncated email/ID
+        if hasattr(self, 'calendar_name') and self.calendar_name:
+            return f"{self.calendar_name} ({self.relationship})"
+        # For calendar IDs, just show the first part before @
+        email_part = self.act_as_email.split('@')[0]
+        if len(email_part) > 30:
+            email_part = email_part[:30] + "..."
+        return f"{email_part} ({self.relationship})"
 
 
 class OutlookSubAccount(models.Model):

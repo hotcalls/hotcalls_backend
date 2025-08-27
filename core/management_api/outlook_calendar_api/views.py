@@ -408,10 +408,8 @@ class OutlookCalendarViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         """Delete Outlook calendar"""
         instance = self.get_object()
-        
-        # Delete the associated Calendar as well
+        # IMPORTANT: Delete the generic Calendar first so it can revoke tokens
         calendar = instance.calendar
-        instance.delete()
         calendar.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -192,7 +192,7 @@ class PlanAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(Workspace)
 class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('workspace_name', 'get_current_plan', 'get_calendars_count', 'get_google_connections_count', 'created_at', 'updated_at')
+    list_display = ('workspace_name', 'get_current_plan', 'get_calendars_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
@@ -207,9 +207,7 @@ class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
         return obj.calendars.count()
     get_calendars_count.short_description = 'Calendars'
     
-    def get_google_connections_count(self, obj):
-        return obj.google_calendar_connections.filter(active=True).count()
-    get_google_connections_count.short_description = 'Google Connections'
+    
 
 
 @admin.register(Agent)
@@ -224,11 +222,11 @@ class AgentAdmin(ShowPkMixin, admin.ModelAdmin):
     get_phone_number.short_description = 'Phone Number'
     
     def formfield_for_foreignkey(self, db_field, request, **kwargs):
-        if db_field.name == "calendar_configuration":
-            # Only show calendar configurations from the agent's workspace
+        if db_field.name == "calendar":
+            # Only show calendars from the agent's workspace
             if hasattr(request, '_obj_'):
-                kwargs["queryset"] = CalendarConfiguration.objects.filter(
-                    calendar__workspace=request._obj_.workspace
+                kwargs["queryset"] = Calendar.objects.filter(
+                    workspace=request._obj_.workspace
                 )
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
     
@@ -357,15 +355,15 @@ class OutlookCalendarAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(GoogleSubAccount)
 class GoogleSubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('act_as_email', 'get_main_account', 'relationship', 'active', 'created_at')
+    list_display = ('calendar_name', 'act_as_email', 'get_main_account', 'relationship', 'active', 'created_at')
     list_filter = ('relationship', 'active', 'created_at')
-    search_fields = ('act_as_email', 'google_calendar__account_email', 'google_calendar__calendar__name')
+    search_fields = ('calendar_name', 'act_as_email', 'google_calendar__account_email', 'google_calendar__calendar__name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
     
     fieldsets = (
         ('Sub-Account Info', {
-            'fields': ('google_calendar', 'act_as_email', 'act_as_user_id', 'relationship', 'active')
+            'fields': ('google_calendar', 'calendar_name', 'act_as_email', 'act_as_user_id', 'relationship', 'active')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

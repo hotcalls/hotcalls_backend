@@ -4,7 +4,7 @@ import secrets
 from django.conf import settings
 from django.utils import timezone
 from django.shortcuts import redirect
-from rest_framework import viewsets, status, serializers
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -193,8 +193,8 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                     token=tokens['access_token'],
                     refresh_token=tokens['refresh_token'],
                     token_uri='https://oauth2.googleapis.com/token',
-                    client_id=service.client_id,
-                    client_secret=service.client_secret,
+                    client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                    client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
                     scopes=tokens.get('scope', '').split()
                 )
                 
@@ -244,9 +244,15 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                             defaults={
                                 'act_as_user_id': '',  # Will be populated if needed
                                 'relationship': relationship,
-                                'active': True
+                                'active': True,
+                                'calendar_name': summary  # Store the human-readable name!
                             }
                         )
+                        
+                        # Update calendar name if it changed
+                        if not created and sub_account.calendar_name != summary:
+                            sub_account.calendar_name = summary
+                            sub_account.save(update_fields=['calendar_name'])
                         
                         calendars_fetched += 1
                         if created:
@@ -284,70 +290,7 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                 'details': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
-    @extend_schema(
-        summary="🔗 Disconnect Google Calendar",
-        description="""
-        Disconnect Google Calendar and revoke OAuth tokens.
-        
-        **Process:**
-        1. Revokes tokens with Google
-        2. Deletes GoogleCalendar entry
-        3. Deletes associated Calendar entry
-        """,
-        request={'type': 'object', 'properties': {'calendar_id': {'type': 'string'}}},
-        responses={
-            200: OpenApiResponse(description="✅ Calendar disconnected successfully"),
-            404: OpenApiResponse(description="❌ Calendar not found"),
-            500: OpenApiResponse(description="💥 Error disconnecting calendar")
-        },
-        tags=["Google Calendar"]
-    )
-    @action(detail=False, methods=['post'], url_path='disconnect')
-    def disconnect(self, request):
-        """Disconnect Google Calendar"""
-        calendar_id = request.data.get('calendar_id')
-        
-        if not calendar_id:
-            return Response({'error': 'calendar_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        try:
-            # Get the calendar
-            calendar = Calendar.objects.get(
-                id=calendar_id,
-                workspace__users=request.user,
-                provider='google'
-            )
-            
-            # Get GoogleCalendar
-            google_calendar = GoogleCalendar.objects.get(calendar=calendar)
-            
-            # Revoke tokens with Google
-            service = GoogleCalendarService()
-            service.revoke_tokens(google_calendar)
-            
-            # Delete GoogleCalendar and Calendar
-            google_calendar.delete()
-            calendar.delete()
-            
-            logger.info(f"Disconnected Google Calendar {calendar_id} for user {request.user.email}")
-            
-            return Response({
-                'success': True,
-                'message': 'Google Calendar disconnected successfully'
-            })
-            
-        except Calendar.DoesNotExist:
-            return Response({'error': 'Calendar not found'}, status=status.HTTP_404_NOT_FOUND)
-        except GoogleCalendar.DoesNotExist:
-            # Calendar exists but no GoogleCalendar - just delete the calendar
-            calendar.delete()
-            return Response({'success': True, 'message': 'Calendar removed'})
-        except Exception as e:
-            logger.error(f"Error disconnecting Google Calendar: {str(e)}")
-            return Response({
-                'error': 'Failed to disconnect calendar',
-                'details': str(e)
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 
 
 @extend_schema_view(
@@ -564,10 +507,8 @@ class GoogleCalendarViewSet(viewsets.ReadOnlyModelViewSet):
     def destroy(self, request, *args, **kwargs):
         """Delete Google calendar"""
         instance = self.get_object()
-        
-        # Delete the associated Calendar as well
+        # IMPORTANT: Delete the generic Calendar first so it can revoke tokens
         calendar = instance.calendar
-        instance.delete()
         calendar.delete()
         
         return Response(status=status.HTTP_204_NO_CONTENT)
