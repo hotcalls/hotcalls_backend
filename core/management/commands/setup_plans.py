@@ -315,6 +315,16 @@ class Command(BaseCommand):
                         workspace_name=f"{superuser.first_name} {superuser.last_name} Admin Workspace".strip() or f"Admin Workspace ({superuser.email})"
                     )
                     workspace.users.add(superuser)
+                    # Auto-assign a default phone number from the global pool (idempotent)
+                    try:
+                        from core.services.phone_assignment import assign_default_number_to_workspace, WorkspacePhoneAssignmentError
+                        assign_default_number_to_workspace(workspace)
+                    except WorkspacePhoneAssignmentError:
+                        # No eligible global default numbers available; non-blocking
+                        pass
+                    except Exception:
+                        # Do not fail the management command on unexpected assignment issues
+                        pass
                     self.stdout.write(f'  📁 Created workspace for {superuser.email}')
                 else:
                     workspace = superuser.mapping_user_workspaces.first()

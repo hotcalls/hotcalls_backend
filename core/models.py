@@ -182,6 +182,17 @@ class CustomUserManager(BaseUserManager):
             )
             workspace.users.add(user)
             
+            # Auto-assign a default phone number from the global pool (idempotent)
+            try:
+                from core.services.phone_assignment import assign_default_number_to_workspace, WorkspacePhoneAssignmentError
+                assign_default_number_to_workspace(workspace)
+            except WorkspacePhoneAssignmentError:
+                # No eligible global default numbers available; non-blocking
+                pass
+            except Exception:
+                # Do not break superuser setup on unexpected assignment issues
+                pass
+            
             # Get or create Enterprise plan
             enterprise_plan, created = Plan.objects.get_or_create(
                 plan_name='Enterprise',

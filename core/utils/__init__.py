@@ -55,6 +55,17 @@ def create_user_workspace(user):
         # Link user to workspace
         workspace.users.add(user)
         
+        # Auto-assign a default phone number from the global pool (idempotent)
+        try:
+            from core.services.phone_assignment import assign_default_number_to_workspace, WorkspacePhoneAssignmentError
+            assign_default_number_to_workspace(workspace)
+        except WorkspacePhoneAssignmentError:
+            # No eligible global default numbers available; non-blocking
+            pass
+        except Exception:
+            # Do not break registration flow on unexpected assignment issues
+            pass
+        
         logger.info(f"Successfully created workspace '{workspace_name}' for user {user.email}")
         return workspace
         
