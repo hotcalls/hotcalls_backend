@@ -534,11 +534,11 @@ class MetaIntegrationService:
             try:
                 from core.utils.calltask_utils import create_call_task_safely
                 target_ref = f"lead:{lead.id}"
+                # Respect agent working hours by letting the helper compute next_call
                 call_task = create_call_task_safely(
                     agent=agent,
                     workspace=integration.workspace,
                     target_ref=target_ref,
-                    next_call=timezone.now(),  # Schedule for immediate execution
                 )
                 
                 logger.info(
@@ -556,7 +556,16 @@ class MetaIntegrationService:
                 self._update_lead_stats(integration.workspace, 'processed')
                 
             except Exception as e:
-                # CallTask creation failed - log but don't fail lead creation
+                # CallTask creation failed - persist error on lead for visibility and log it
+                try:
+                    meta = lead.meta_data or {}
+                    meta["call_task_error"] = str(e)
+                    lead.meta_data = meta
+                    lead.save(update_fields=["meta_data", "updated_at"])
+                except Exception:
+                    # Ensure we still log even if saving meta_data fails
+                    pass
+
                 logger.error(
                     "Failed to create CallTask for lead",
                     extra={
