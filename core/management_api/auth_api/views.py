@@ -394,6 +394,16 @@ def verify_email(request, token):
                 )
                 workspace.users.add(user)
                 workspace.save()
+                # Auto-assign a default phone number from the global pool to this workspace
+                try:
+                    from core.services.phone_assignment import assign_default_number_to_workspace, WorkspacePhoneAssignmentError
+                    assign_default_number_to_workspace(workspace)
+                except WorkspacePhoneAssignmentError:
+                    # No eligible global default numbers available; non-blocking
+                    pass
+                except Exception:
+                    # Do not block verification success on unexpected assignment issues
+                    pass
             
             # If there is a pending (and still valid) invitation for this email, immediately
             # send the user into the login-first flow that returns to accept the invite.
