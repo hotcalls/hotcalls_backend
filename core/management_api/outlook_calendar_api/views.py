@@ -3,6 +3,7 @@ import logging
 import secrets
 import hashlib
 import base64
+from datetime import timedelta
 from django.utils import timezone
 from django.shortcuts import redirect
 from rest_framework import viewsets, status, serializers
@@ -89,9 +90,23 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             state_bytes = state_json.encode('utf-8')
             state = base64.urlsafe_b64encode(state_bytes).decode('utf-8')
             
+            # PKCE: generate code_verifier and code_challenge (S256)
+            code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode('utf-8').rstrip('=')
+            code_challenge = base64.urlsafe_b64encode(
+                hashlib.sha256(code_verifier.encode('utf-8')).digest()
+            ).decode('utf-8').rstrip('=')
+
+            # Store verifier in session keyed by state for the callback
+            session_key = f'outlook_oauth_state_{state}'
+            request.session[session_key] = {
+                'user_id': state_data['user_id'],
+                'workspace_id': state_data['workspace_id'],
+                'code_verifier': code_verifier,
+            }
+            request.session.modified = True
+
             # Generate authorization URL
-            service = OutlookCalendarService()
-            auth_url = service.get_authorization_url(state)
+            auth_url = OutlookCalendarService.build_authorize_url(state, code_challenge)
             
             return Response({
                 'authorization_url': auth_url,
@@ -152,18 +167,40 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             if not user_id or not workspace_id:
                 return redirect("/calendar?error=invalid_state")
             
+            # Validate state exists in session and retrieve code_verifier
+            session_key = f'outlook_oauth_state_{state}'
+            session_state = request.session.get(session_key)
+            if not session_state:
+                return redirect("/calendar?error=invalid_or_expired_state")
+            code_verifier = session_state.get('code_verifier')
+            if not code_verifier:
+                return redirect("/calendar?error=missing_code_verifier")
+
+            # One-time use: remove session entry
+            try:
+                del request.session[session_key]
+                request.session.modified = True
+            except Exception:
+                pass
+
             # Get workspace
             workspace = Workspace.objects.get(id=workspace_id)
             
             # Exchange code for tokens
-            service = OutlookCalendarService()
-            tokens = service.exchange_code_for_tokens(code)
+            tokens = OutlookCalendarService.exchange_code_for_tokens(code, code_verifier)
             
-            if not tokens:
+            if not tokens or not isinstance(tokens, dict):
                 return redirect("/calendar?error=token_exchange_failed")
+
+            access_token = tokens.get('access_token')
+            refresh_token = tokens.get('refresh_token')
+            expires_in = int(tokens.get('expires_in', 3600))
+            if not access_token or not refresh_token:
+                # Most likely missing offline_access or admin consent
+                return redirect("/calendar?error=missing_tokens&hint=consent_offline_access")
             
             # Get user info from tokens
-            user_info = service.get_user_info(tokens['access_token'])
+            user_info = OutlookCalendarService.get_user_info(access_token)
             
             # Create or update OutlookCalendar
             calendar_name = f"{user_info.get('displayName', 'Outlook')} Calendar"
@@ -186,10 +223,10 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
                     'ms_user_id': user_info.get('id', ''),
                     'display_name': user_info.get('displayName', ''),
                     'timezone_windows': user_info.get('mailboxSettings', {}).get('timeZone', ''),
-                    'refresh_token': tokens['refresh_token'],
-                    'access_token': tokens['access_token'],
-                    'token_expires_at': timezone.now() + timezone.timedelta(seconds=tokens.get('expires_in', 3600)),
-                    'scopes_granted': tokens.get('scope', '').split(' '),
+                    'refresh_token': refresh_token,
+                    'access_token': access_token,
+                    'token_expires_at': timezone.now() + timedelta(seconds=expires_in),
+                    'scopes_granted': tokens.get('scope', '').split(' ') if tokens.get('scope') else [],
                     'external_id': user_info.get('id', ''),
                     'can_edit': True
                 }
@@ -212,7 +249,7 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
                 import requests
                 
                 # Get shared mailboxes the user has access to
-                headers = {'Authorization': f'Bearer {tokens["access_token"]}'}
+                headers = {'Authorization': f'Bearer {access_token}'}
                 
                 # Try to get shared mailboxes (requires specific permissions)
                 shared_mailboxes_url = 'https://graph.microsoft.com/v1.0/me/mailboxSettings/sharedMailboxes'

@@ -60,6 +60,9 @@ data:
   GOOGLE_OAUTH_CLIENT_ID: "${GOOGLE_OAUTH_CLIENT_ID}"
   GOOGLE_OAUTH_CLIENT_SECRET: "${GOOGLE_OAUTH_CLIENT_SECRET}"
   
+  # Microsoft OAuth Configuration (non-sensitive)
+  MS_AUTH_TENANT: "${MS_AUTH_TENANT}"
+  
   # Meta (Facebook/Instagram) Integration Configuration
   META_APP_ID: "${META_APP_ID}"
   META_APP_SECRET: "${META_APP_SECRET}"

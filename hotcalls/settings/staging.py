@@ -74,8 +74,6 @@ SERVE_STATIC_VIA_BACKEND = os.environ.get('SERVE_STATIC_VIA_BACKEND', 'False').l
 
 if SERVE_STATIC_VIA_BACKEND:
     # Local static from backend with WhiteNoise for Django Admin
-    # Use CompressedStaticFilesStorage (no manifest needed) for read-only filesystem
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
     STATIC_URL = '/static/'
     STATIC_ROOT = BASE_DIR / 'staticfiles'
     # Ensure middleware present early for efficient static serving
@@ -84,8 +82,7 @@ if SERVE_STATIC_VIA_BACKEND:
     
     # IMPORTANT: Still use Azure for MEDIA files (uploads)!
     if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-        # Django 4.2+ STORAGES setting for media only
+        # Django 5+: configure storages exclusively via STORAGES
         STORAGES = {
             "default": {
                 "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
@@ -104,11 +101,7 @@ if SERVE_STATIC_VIA_BACKEND:
         MEDIA_ROOT = BASE_DIR / 'media'
 else:
     if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-        # Use Azure Blob Storage for static and media files
-        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-        STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
-        
-        # Django 4.2+ STORAGES setting (for compatibility)
+        # Use Azure Blob Storage for static and media files (Django 5 STORAGES-only)
         STORAGES = {
             "default": {
                 "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
@@ -127,8 +120,12 @@ else:
             STATIC_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_STATIC_CONTAINER}/"
             MEDIA_URL = f"https://{AZURE_ACCOUNT_NAME}.blob.core.windows.net/{AZURE_MEDIA_CONTAINER}/"
     else:
-        # Fallback to local storage with whitenoise
-        STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        # Fallback to local storage with WhiteNoise
+        STORAGES = {
+            "staticfiles": {
+                "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+            },
+        }
         STATIC_URL = '/static/'
         MEDIA_URL = '/media/'
         STATIC_ROOT = BASE_DIR / 'staticfiles'

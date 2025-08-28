@@ -74,14 +74,12 @@ if SERVE_STATIC_VIA_BACKEND:
     # Local static from backend with WhiteNoise for Django Admin
     if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
         MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     STATIC_URL = '/static/'
     STATIC_ROOT = BASE_DIR / 'staticfiles'
     
     # IMPORTANT: Still use Azure for MEDIA files (uploads)!
     if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-        # Django 4.2+ STORAGES setting for media only
+        # Django 5+: configure storages exclusively via STORAGES
         STORAGES = {
             "default": {
                 "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
@@ -99,10 +97,16 @@ if SERVE_STATIC_VIA_BACKEND:
         MEDIA_URL = '/media/'
 else:
     if AZURE_ACCOUNT_NAME and AZURE_STORAGE_KEY:
-        # Use Azure Blob Storage for static and media files
-        DEFAULT_FILE_STORAGE = 'hotcalls.storage_backends.AzureMediaStorage'
-        STATICFILES_STORAGE = 'hotcalls.storage_backends.AzureStaticStorage'
-        
+        # Use Azure Blob Storage for static and media files (Django 5 STORAGES-only)
+        STORAGES = {
+            "default": {
+                "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
+            },
+            "staticfiles": {
+                "BACKEND": "hotcalls.storage_backends.AzureStaticStorage",
+            },
+        }
+
         if AZURE_CUSTOM_DOMAIN:
             # Use CDN endpoint if available
             STATIC_URL = f"https://{AZURE_CUSTOM_DOMAIN}/{AZURE_STATIC_CONTAINER}/"
@@ -115,7 +119,11 @@ else:
         # Fallback to local storage with whitenoise
         if 'whitenoise.middleware.WhiteNoiseMiddleware' not in MIDDLEWARE:
             MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
-        STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+        STORAGES = {
+            "staticfiles": {
+                "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+            },
+        }
         STATIC_URL = '/static/'
         MEDIA_URL = '/media/'
         STATIC_ROOT = BASE_DIR / 'staticfiles'

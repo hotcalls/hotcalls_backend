@@ -544,7 +544,7 @@ GOOGLE_SCOPES = [
 MS_CLIENT_ID = os.getenv('MS_CLIENT_ID', '')
 MS_CLIENT_SECRET = os.getenv('MS_CLIENT_SECRET', '')
 MS_AUTH_TENANT = os.getenv('MS_AUTH_TENANT', 'organizations')  # restrict to work/school accounts
-MS_REDIRECT_URI = f"{SITE_URL}/api/calendars/microsoft_callback/"
+MS_REDIRECT_URI = f"{SITE_URL}/api/outlook-calendar/auth/callback/"
 MS_SCOPES = [
     'openid',
     'profile',
