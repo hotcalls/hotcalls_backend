@@ -2,14 +2,14 @@
 Outlook Calendar service for OAuth and Calendar operations (Microsoft Graph API).
 """
 import logging
-from datetime import timedelta, timezone as dt_timezone
+from datetime import timedelta
 from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
 from django.utils import timezone
-from core.models import Calendar, OutlookCalendar  # type: ignore
+from core.models import OutlookCalendar  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -107,18 +107,95 @@ class OutlookCalendarService:
         """Initialize service without specific calendar"""
         pass
     
-    def sync_calendars(self, outlook_calendar: OutlookCalendar) -> List[Dict]:
+    def discover_and_update_sub_accounts(self, outlook_calendar: OutlookCalendar) -> List[str]:
         """
-        Sync calendars from Microsoft Graph using sub-accounts.
-        Returns list of synced calendar data for each active sub-account.
+        Discover additional sub-accounts (delegated/shared calendars) the user has access to
+        and create missing OutlookSubAccount entries.
+
+        Returns list of newly created act_as_upn emails.
         """
         from core.models import OutlookSubAccount
-        
+
+        created_upns: List[str] = []
+        try:
+            headers = {'Authorization': f'Bearer {outlook_calendar.access_token}'}
+
+            discovered_upns = set()
+
+            # 1) Primary list of calendars for the user
+            try:
+                resp = requests.get(
+                    'https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,owner,isDefaultCalendar',
+                    headers=headers,
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for cal in data.get('value', []):
+                        if cal.get('isDefaultCalendar'):
+                            continue
+                        owner_email = (cal.get('owner') or {}).get('address')
+                        if owner_email and owner_email.lower() != (outlook_calendar.primary_email or '').lower():
+                            discovered_upns.add(owner_email)
+            except Exception as e:
+                logger.debug(f"Failed to list /me/calendars for discovery: {e}")
+
+            # 2) Also scan calendarGroups to catch calendars not surfaced at top-level
+            try:
+                resp = requests.get(
+                    'https://graph.microsoft.com/v1.0/me/calendarGroups?$expand=calendars($select=id,name,owner,isDefaultCalendar)',
+                    headers=headers,
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for grp in data.get('value', []):
+                        for cal in (grp.get('calendars') or []):
+                            if cal.get('isDefaultCalendar'):
+                                continue
+                            owner_email = (cal.get('owner') or {}).get('address')
+                            if owner_email and owner_email.lower() != (outlook_calendar.primary_email or '').lower():
+                                discovered_upns.add(owner_email)
+            except Exception as e:
+                logger.debug(f"Failed to list /me/calendarGroups for discovery: {e}")
+
+            # Create missing sub-accounts
+            for upn in discovered_upns:
+                exists = OutlookSubAccount.objects.filter(
+                    outlook_calendar=outlook_calendar,
+                    act_as_upn=upn
+                ).exists()
+                if not exists:
+                    OutlookSubAccount.objects.create(
+                        outlook_calendar=outlook_calendar,
+                        act_as_upn=upn,
+                        mailbox_object_id='',
+                        relationship='delegate',
+                        active=True,
+                    )
+                    created_upns.append(upn)
+                    logger.info(f"Discovered and created delegate sub-account for {upn}")
+
+        except Exception as e:
+            logger.warning(f"Sub-account discovery failed: {e}")
+
+        return created_upns
+
+    def sync_calendars(self, outlook_calendar: OutlookCalendar) -> List[Dict]:
+        """
+        Discover sub-accounts and sync calendars from Microsoft Graph.
+        Returns list of synced calendar data for each active sub-account.
+        """
         synced_calendars = []
         errors = {}
         
         try:
             headers = {'Authorization': f'Bearer {outlook_calendar.access_token}'}
+            # Ensure we have up-to-date sub-accounts before syncing
+            try:
+                self.discover_and_update_sub_accounts(outlook_calendar)
+            except Exception as e:
+                logger.debug(f"Sub-account discovery during sync failed: {e}")
             
             # Iterate through active sub-accounts
             for sub_account in outlook_calendar.sub_accounts.filter(active=True):
@@ -127,12 +204,10 @@ class OutlookCalendarService:
                     if sub_account.relationship == 'self':
                         # Use 'me' endpoint for self
                         calendar_endpoint = 'https://graph.microsoft.com/v1.0/me/calendar'
-                        calendars_endpoint = 'https://graph.microsoft.com/v1.0/me/calendars'
                     else:
                         # Use users/{upn} endpoint for delegated/shared
                         upn = sub_account.act_as_upn
                         calendar_endpoint = f'https://graph.microsoft.com/v1.0/users/{upn}/calendar'
-                        calendars_endpoint = f'https://graph.microsoft.com/v1.0/users/{upn}/calendars'
                     
                     # Get primary calendar for this sub-account
                     resp = requests.get(calendar_endpoint, headers=headers, timeout=30)

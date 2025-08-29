@@ -206,7 +206,7 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             calendar_name = f"{user_info.get('displayName', 'Outlook')} Calendar"
             
             # Create generic Calendar first
-            calendar, created = Calendar.objects.get_or_create(
+            calendar_obj, created = Calendar.objects.get_or_create(
                 workspace=workspace,
                 name=calendar_name,
                 provider='outlook',
@@ -215,7 +215,7 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             
             # Create or update OutlookCalendar
             outlook_calendar, created = OutlookCalendar.objects.update_or_create(
-                calendar=calendar,
+                calendar=calendar_obj,
                 defaults={
                     'user_id': user_id,
                     'primary_email': user_info.get('mail') or user_info.get('userPrincipalName'),
@@ -246,82 +246,17 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             
             # Discover and create sub-accounts for shared/delegated mailboxes
             try:
-                import requests
-                
-                # Get shared mailboxes the user has access to
-                headers = {'Authorization': f'Bearer {access_token}'}
-                
-                # Try to get shared mailboxes (requires specific permissions)
-                shared_mailboxes_url = 'https://graph.microsoft.com/v1.0/me/mailboxSettings/sharedMailboxes'
-                try:
-                    shared_response = requests.get(shared_mailboxes_url, headers=headers)
-                    if shared_response.status_code == 200:
-                        shared_data = shared_response.json()
-                        for mailbox in shared_data.get('value', []):
-                            OutlookSubAccount.objects.get_or_create(
-                                outlook_calendar=outlook_calendar,
-                                act_as_upn=mailbox.get('emailAddress', ''),
-                                defaults={
-                                    'mailbox_object_id': mailbox.get('id', ''),
-                                    'relationship': 'shared',
-                                    'active': True
-                                }
-                            )
-                            logger.info(f"Created shared sub-account for mailbox: {mailbox.get('emailAddress')}")
-                except Exception as e:
-                    logger.debug(f"Could not get shared mailboxes (may need additional permissions): {e}")
-                
-                # Get calendars the user has access to
-                calendars_url = 'https://graph.microsoft.com/v1.0/me/calendars'
-                calendars_response = requests.get(calendars_url, headers=headers)
-                
-                if calendars_response.status_code == 200:
-                    calendars_data = calendars_response.json()
-                    for calendar in calendars_data.get('value', []):
-                        # Skip the default calendar (already handled as 'self')
-                        if calendar.get('isDefaultCalendar'):
-                            continue
-                        
-                        owner_email = calendar.get('owner', {}).get('address')
-                        if owner_email and owner_email != outlook_calendar.primary_email:
-                            # This is a delegated calendar
-                            OutlookSubAccount.objects.get_or_create(
-                                outlook_calendar=outlook_calendar,
-                                act_as_upn=owner_email,
-                                defaults={
-                                    'mailbox_object_id': '',
-                                    'relationship': 'delegate',
-                                    'active': True
-                                }
-                            )
-                            logger.info(f"Created delegate sub-account for calendar: {calendar.get('name')} ({owner_email})")
-                
-                # Try to get room/resource calendars (if user has permissions)
-                rooms_url = 'https://graph.microsoft.com/v1.0/places/microsoft.graph.room'
-                try:
-                    rooms_response = requests.get(rooms_url, headers=headers)
-                    if rooms_response.status_code == 200:
-                        rooms_data = rooms_response.json()
-                        for room in rooms_data.get('value', []):
-                            OutlookSubAccount.objects.get_or_create(
-                                outlook_calendar=outlook_calendar,
-                                act_as_upn=room.get('emailAddress', ''),
-                                defaults={
-                                    'mailbox_object_id': room.get('id', ''),
-                                    'relationship': 'resource',
-                                    'active': True
-                                }
-                            )
-                            logger.info(f"Created resource sub-account for room: {room.get('displayName')}")
-                except Exception as e:
-                    logger.debug(f"Could not get room resources (may need additional permissions): {e}")
+                # Use the service discovery so logic is centralized
+                created = OutlookCalendarService().discover_and_update_sub_accounts(outlook_calendar)
+                for upn in created:
+                    logger.info(f"Created sub-account via discovery: {upn}")
                     
             except Exception as e:
                 logger.warning(f"Could not discover shared/delegated calendars: {str(e)}")
                 # Continue anyway - at least we have the self account
             
             # Redirect to frontend with success
-            return redirect(f"/calendar?outlook_connected=true&calendar_id={calendar.id}")
+            return redirect(f"/calendar?outlook_connected=true&calendar_id={calendar_obj.id}")
             
         except Exception as e:
             logger.error(f"Outlook OAuth callback error: {str(e)}")

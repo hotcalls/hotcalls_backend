@@ -552,6 +552,8 @@ MS_SCOPES = [
     'offline_access',
     'User.Read',
     'Calendars.ReadWrite',
+    'Calendars.Read.Shared',
+    'Calendars.ReadWrite.Shared',
     'MailboxSettings.Read',
     'OnlineMeetings.Read',
     # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
