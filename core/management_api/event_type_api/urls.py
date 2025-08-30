@@ -8,6 +8,8 @@ router.register(r'(?P<workspace_id>[^/.]+)/event-types', EventTypeViewSet, basen
 
 urlpatterns = [
     path('', include(router.urls)),
+    # Additional subaccounts listing route (function on same viewset)
+    path('<uuid:workspace_id>/sub-accounts/', EventTypeViewSet.as_view({'get': 'list_subaccounts'}), name='workspace-subaccounts'),
 ]
 
 

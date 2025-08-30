@@ -155,3 +155,9 @@ class EventTypeSerializer(serializers.ModelSerializer):
         ]
 
 
+class SubAccountListItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    provider = serializers.ChoiceField(choices=[('google', 'google'), ('outlook', 'outlook')])
+    label = serializers.CharField()
+
+

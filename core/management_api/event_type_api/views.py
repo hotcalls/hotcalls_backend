@@ -9,6 +9,7 @@ from core.management_api.payment_api.permissions import IsWorkspaceMember
 from .serializers import (
     EventTypeSerializer,
     EventTypeCreateUpdateSerializer,
+    SubAccountListItemSerializer,
 )
 
 
@@ -53,5 +54,44 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         event_type = serializer.save()
         return Response(EventTypeSerializer(event_type).data)
+
+    @extend_schema(
+        summary="List workspace sub-accounts",
+        responses={200: SubAccountListItemSerializer(many=True)},
+        tags=["Event Types"]
+    )
+    def list_subaccounts(self, request, *args, **kwargs):
+        workspace = self.get_workspace()
+        # All sub-accounts whose owner is a member of this workspace
+        member_ids = workspace.users.values_list('id', flat=True)
+        subs = SubAccount.objects.filter(owner_id__in=member_ids).order_by('provider', 'id')
+
+        # Build human-friendly label using provider-specific hints
+        items = []
+        for s in subs:
+            label = s.sub_account_id
+            # Optional enrichment best-effort: fetch provider-specific records
+            try:
+                if s.provider == 'google':
+                    from core.models import GoogleSubAccount
+                    g = GoogleSubAccount.objects.filter(id=s.sub_account_id).first()
+                    if g:
+                        label = g.calendar_name or g.act_as_email
+                elif s.provider == 'outlook':
+                    from core.models import OutlookSubAccount
+                    o = OutlookSubAccount.objects.filter(id=s.sub_account_id).first()
+                    if o:
+                        label = o.calendar_name or o.act_as_upn
+            except Exception:
+                # Fallback to sub_account_id on any error
+                pass
+
+            items.append({
+                'id': s.id,
+                'provider': s.provider,
+                'label': label or s.sub_account_id,
+            })
+
+        return Response(SubAccountListItemSerializer(items, many=True).data)
 
 
