@@ -7,6 +7,8 @@ from typing import Dict, List, Optional
 from urllib.parse import urlencode
 
 import requests
+from django.db import transaction
+from django.db.utils import IntegrityError
 from django.conf import settings
 from django.utils import timezone
 from core.models import OutlookCalendar  # type: ignore
@@ -114,15 +116,13 @@ class OutlookCalendarService:
 
         Returns list of newly created act_as_upn emails.
         """
-        from core.models import OutlookSubAccount
-
         created_upns: List[str] = []
         try:
             headers = {'Authorization': f'Bearer {outlook_calendar.access_token}'}
 
             discovered_upns = set()
 
-            # 1) Primary list of calendars for the user
+            # 1) Primary list of calendars for the user (self + secondary + shared visible under /me)
             try:
                 resp = requests.get(
                     'https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,owner,isDefaultCalendar',
@@ -133,10 +133,30 @@ class OutlookCalendarService:
                     data = resp.json()
                     for cal in data.get('value', []):
                         if cal.get('isDefaultCalendar'):
-                            continue
-                        owner_email = (cal.get('owner') or {}).get('address')
-                        if owner_email and owner_email.lower() != (outlook_calendar.primary_email or '').lower():
+                            # still record the default calendar for self
+                            owner_email = (cal.get('owner') or {}).get('address') or outlook_calendar.primary_email
                             discovered_upns.add(owner_email)
+                            # upsert self default calendar row
+                            self._upsert_sub_account(
+                                outlook_calendar,
+                                act_as_upn=owner_email,
+                                calendar_id=cal.get('id',''),
+                                calendar_name=cal.get('name',''),
+                                relationship='self',
+                                is_default= True
+                            )
+                            continue
+                        owner_email = (cal.get('owner') or {}).get('address') or outlook_calendar.primary_email
+                        discovered_upns.add(owner_email)
+                        # upsert self secondary or shared (visible under /me)
+                        self._upsert_sub_account(
+                            outlook_calendar,
+                            act_as_upn=owner_email,
+                            calendar_id=cal.get('id',''),
+                            calendar_name=cal.get('name',''),
+                            relationship='self' if owner_email.lower()==(outlook_calendar.primary_email or '').lower() else 'delegate',
+                            is_default=False
+                        )
             except Exception as e:
                 logger.debug(f"Failed to list /me/calendars for discovery: {e}")
 
@@ -152,34 +172,100 @@ class OutlookCalendarService:
                     for grp in data.get('value', []):
                         for cal in (grp.get('calendars') or []):
                             if cal.get('isDefaultCalendar'):
-                                continue
-                            owner_email = (cal.get('owner') or {}).get('address')
-                            if owner_email and owner_email.lower() != (outlook_calendar.primary_email or '').lower():
+                                owner_email = (cal.get('owner') or {}).get('address') or outlook_calendar.primary_email
                                 discovered_upns.add(owner_email)
+                                self._upsert_sub_account(
+                                    outlook_calendar,
+                                    act_as_upn=owner_email,
+                                    calendar_id=cal.get('id',''),
+                                    calendar_name=cal.get('name',''),
+                                    relationship='self' if owner_email.lower()==(outlook_calendar.primary_email or '').lower() else 'delegate',
+                                    is_default=True
+                                )
+                                continue
+                            owner_email = (cal.get('owner') or {}).get('address') or outlook_calendar.primary_email
+                            discovered_upns.add(owner_email)
+                            self._upsert_sub_account(
+                                outlook_calendar,
+                                act_as_upn=owner_email,
+                                calendar_id=cal.get('id',''),
+                                calendar_name=cal.get('name',''),
+                                relationship='self' if owner_email.lower()==(outlook_calendar.primary_email or '').lower() else 'delegate',
+                                is_default=False
+                            )
             except Exception as e:
                 logger.debug(f"Failed to list /me/calendarGroups for discovery: {e}")
 
-            # Create missing sub-accounts
-            for upn in discovered_upns:
-                exists = OutlookSubAccount.objects.filter(
-                    outlook_calendar=outlook_calendar,
-                    act_as_upn=upn
-                ).exists()
-                if not exists:
-                    OutlookSubAccount.objects.create(
-                        outlook_calendar=outlook_calendar,
-                        act_as_upn=upn,
-                        mailbox_object_id='',
-                        relationship='delegate',
-                        active=True,
-                    )
-                    created_upns.append(upn)
-                    logger.info(f"Discovered and created delegate sub-account for {upn}")
+            # Return created UPNs for logging
+            created_upns = list(discovered_upns)
 
         except Exception as e:
             logger.warning(f"Sub-account discovery failed: {e}")
 
         return created_upns
+
+    def _upsert_sub_account(
+        self,
+        outlook_calendar: OutlookCalendar,
+        act_as_upn: str,
+        calendar_id: str,
+        calendar_name: str,
+        relationship: str,
+        is_default: bool,
+    ) -> None:
+        from core.models import OutlookSubAccount
+        if not calendar_id:
+            return
+        try:
+            # First, merge any legacy placeholder row that was created without calendar_id
+            with transaction.atomic():
+                placeholder = (
+                    OutlookSubAccount.objects.select_for_update()
+                    .filter(
+                        outlook_calendar=outlook_calendar,
+                        act_as_upn=act_as_upn.lower(),
+                        calendar_id='',
+                    )
+                    .first()
+                )
+                if placeholder:
+                    placeholder.calendar_id = calendar_id
+                    placeholder.calendar_name = calendar_name or ''
+                    placeholder.relationship = relationship
+                    placeholder.is_default_calendar = is_default
+                    placeholder.active = True
+                    try:
+                        placeholder.save(update_fields=[
+                            'calendar_id',
+                            'calendar_name',
+                            'relationship',
+                            'is_default_calendar',
+                            'active',
+                            'updated_at',
+                        ])
+                        return
+                    except IntegrityError:
+                        # If another row with this calendar_id was created concurrently,
+                        # drop the placeholder and fall through to update_or_create below
+                        try:
+                            placeholder.delete()
+                        except Exception:
+                            pass
+
+            # Normal idempotent upsert keyed by the unique triplet
+            OutlookSubAccount.objects.update_or_create(
+                outlook_calendar=outlook_calendar,
+                act_as_upn=act_as_upn.lower(),
+                calendar_id=calendar_id,
+                defaults={
+                    'calendar_name': calendar_name or '',
+                    'relationship': relationship,
+                    'is_default_calendar': is_default,
+                    'active': True,
+                }
+            )
+        except Exception as e:
+            logger.debug(f"Upsert sub-account failed for {act_as_upn}/{calendar_id}: {e}")
 
     def sync_calendars(self, outlook_calendar: OutlookCalendar) -> List[Dict]:
         """

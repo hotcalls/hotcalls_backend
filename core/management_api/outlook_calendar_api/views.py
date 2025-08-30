@@ -232,19 +232,7 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
                 }
             )
             
-            # Create self sub-account if it doesn't exist
-            from core.models import OutlookSubAccount
-            OutlookSubAccount.objects.get_or_create(
-                outlook_calendar=outlook_calendar,
-                act_as_upn=outlook_calendar.primary_email,
-                defaults={
-                    'mailbox_object_id': outlook_calendar.ms_user_id,
-                    'relationship': 'self',
-                    'active': True
-                }
-            )
-            
-            # Discover and create sub-accounts for shared/delegated mailboxes
+            # Discover and upsert sub-accounts (self + shared/delegated) with real calendar_ids
             try:
                 # Use the service discovery so logic is centralized
                 created = OutlookCalendarService().discover_and_update_sub_accounts(outlook_calendar)

@@ -379,15 +379,15 @@ class GoogleSubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(OutlookSubAccount)
 class OutlookSubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('act_as_upn', 'get_main_account', 'relationship', 'active', 'created_at')
+    list_display = ('calendar_name', 'act_as_upn', 'get_main_account', 'relationship', 'active', 'created_at')
     list_filter = ('relationship', 'active', 'created_at')
-    search_fields = ('act_as_upn', 'outlook_calendar__primary_email', 'outlook_calendar__calendar__name')
+    search_fields = ('calendar_name', 'act_as_upn', 'outlook_calendar__primary_email', 'outlook_calendar__calendar__name')
     ordering = ('-created_at',)
     readonly_fields = ('created_at', 'updated_at')
     
     fieldsets = (
         ('Sub-Account Info', {
-            'fields': ('outlook_calendar', 'act_as_upn', 'mailbox_object_id', 'relationship', 'active')
+            'fields': ('outlook_calendar', 'calendar_name', 'act_as_upn', 'mailbox_object_id', 'relationship', 'active')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

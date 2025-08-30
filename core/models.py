@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 import uuid
 from django.utils import timezone
+from django.core.validators import MinValueValidator
 import os
 import datetime
 import secrets
@@ -106,6 +107,29 @@ INVITATION_STATUS_CHOICES = [
     ('accepted', 'Accepted'),
     ('expired', 'Expired'),
     ('cancelled', 'Cancelled'),
+]
+
+# Calendar provider and weekday choices for scheduling/event types
+CALENDAR_PROVIDER_CHOICES = [
+    ('google', 'Google'),
+    ('outlook', 'Outlook'),
+]
+
+# 0 = Monday ... 6 = Sunday
+WEEKDAY_CHOICES = [
+    (0, 'Monday'),
+    (1, 'Tuesday'),
+    (2, 'Wednesday'),
+    (3, 'Thursday'),
+    (4, 'Friday'),
+    (5, 'Saturday'),
+    (6, 'Sunday'),
+]
+
+# Mapping role for calendars linked to an EventType
+MAPPING_ROLE_CHOICES = [
+    ('target', 'Target Booking Calendar'),
+    ('conflict', 'Conflict Calendar'),
 ]
 
 class FeatureUnit(models.TextChoices):
@@ -1567,12 +1591,26 @@ class OutlookSubAccount(models.Model):
         help_text="The main Outlook account that owns the OAuth tokens"
     )
     act_as_upn = models.EmailField(help_text="Target mailbox (UPN/email)")
+    # NEW: Persist per-calendar identity similar to GoogleSubAccount
+    calendar_id = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Microsoft Graph calendar id for this sub-account"
+    )
+    calendar_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text="Human-readable calendar name"
+    )
     mailbox_object_id = models.CharField(
         max_length=128, 
         blank=True, 
         default='',
         help_text="AAD user object id if known"
     )
+    is_default_calendar = models.BooleanField(default=False)
     relationship = models.CharField(
         max_length=32,
         choices=[
@@ -1589,9 +1627,10 @@ class OutlookSubAccount(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('outlook_calendar', 'act_as_upn')]
+        unique_together = [('outlook_calendar', 'act_as_upn', 'calendar_id')]
         indexes = [
             models.Index(fields=['act_as_upn']),
+            models.Index(fields=['calendar_id']),
             models.Index(fields=['outlook_calendar', 'active']),
         ]
 
@@ -1599,6 +1638,188 @@ class OutlookSubAccount(models.Model):
         return f"{self.act_as_upn} via {self.outlook_calendar.primary_email}"
 
 
+
+# =============================
+# Scheduling: Event Types layer
+# =============================
+
+class SubAccount(models.Model):
+    """
+    Provider-agnostic router pointing to provider-specific sub-account (Google/Outlook).
+    Stores the provider and the provider-specific subaccount primary key as string.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    provider = models.CharField(
+        max_length=20,
+        choices=CALENDAR_PROVIDER_CHOICES,
+        help_text="Calendar provider for this sub-account",
+    )
+
+    # If provider='google'  -> stores GoogleSubAccount.id as string
+    # If provider='outlook' -> stores OutlookSubAccount.id as string
+    sub_account_id = models.CharField(
+        max_length=255,
+        help_text="Primary key of the provider-specific subaccount (stored as string)",
+    )
+
+    # User who connected/owns this integration
+    owner = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='calendar_subaccounts',
+        help_text="User who owns/connected this sub-account",
+    )
+
+    # Note: we intentionally do NOT persist target email/UPN or calendar_id here
+    # to keep this router minimal and provider-agnostic.
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner", "provider", "sub_account_id"],
+                name="uq_owner_provider_subaccount",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.get_provider_display()} — {self.sub_account_id}"
+
+
+class EventType(models.Model):
+    """
+    Scheduling event type (meeting template) with timing rules and calendar links.
+    No is_active flag by design.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    owner = models.ForeignKey(
+        'User',
+        on_delete=models.CASCADE,
+        related_name='event_types',
+        help_text="User who owns this event type",
+    )
+
+    name = models.CharField(max_length=255, help_text="Display name for the event type")
+
+    # Duration in minutes
+    duration = models.PositiveIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text="Duration in minutes",
+    )
+
+    # IANA timezone string (e.g., Europe/Berlin)
+    timezone = models.CharField(
+        max_length=64,
+        default='UTC',
+        help_text="IANA timezone name used to interpret working hours",
+    )
+
+    # Buffer BEFORE  the meeting, in HOURS
+    buffer_time = models.PositiveSmallIntegerField(
+        default=0,
+        validators=[MinValueValidator(0)],
+        help_text="Buffer time in HOURS to leave before each booking",
+    )
+
+    # Prep BEFORE the meeting, in MINUTES
+    prep_time = models.PositiveIntegerField(
+        default=0,
+        validators=[MinValueValidator(0)],
+        help_text="Preparation time in MINUTES to block before each booking",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    # M2M via explicit mapping
+    sub_accounts = models.ManyToManyField(
+        'SubAccount',
+        through='EventTypeSubAccountMapping',
+        related_name='event_types',
+    )
+
+    def __str__(self):
+        return f"{self.name} ({self.owner.email})"
+
+
+class EventTypeSubAccountMapping(models.Model):
+    """
+    Many-to-many mapping between EventType and SubAccount with a role flag.
+    role='target'   → destination for bookings; also used for conflicts
+    role='conflict' → only used for free/busy checks
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    event_type = models.ForeignKey(
+        'EventType',
+        on_delete=models.CASCADE,
+        related_name='calendar_mappings',
+    )
+    sub_account = models.ForeignKey(
+        'SubAccount',
+        on_delete=models.CASCADE,
+        related_name='event_type_mappings',
+    )
+
+    role = models.CharField(
+        max_length=16,
+        choices=MAPPING_ROLE_CHOICES,
+        help_text="Target = booking destination; Conflict = availability checks only",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'event_type_subaccount_mapping'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['event_type', 'sub_account'],
+                name='uq_eventtype_subaccount',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type_id} ↔ {self.sub_account_id} ({self.role})"
+
+
+class EventTypeWorkingHour(models.Model):
+    """
+    Per-day working hours for an EventType. Times interpreted in EventType.timezone.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    event_type = models.ForeignKey(
+        'EventType',
+        on_delete=models.CASCADE,
+        related_name='working_hours',
+    )
+    day_of_week = models.PositiveSmallIntegerField(
+        choices=WEEKDAY_CHOICES,
+        help_text='0=Monday … 6=Sunday',
+    )
+    start_time = models.TimeField(help_text="Local start time in the event type's timezone")
+    end_time = models.TimeField(help_text="Local end time (must be after start_time)")
+
+    class Meta:
+        db_table = 'event_type_working_hour'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['event_type', 'day_of_week'],
+                name='uq_eventtype_weekday',
+            ),
+            models.CheckConstraint(
+                check=models.Q(end_time__gt=models.F('start_time')),
+                name='chk_workinghour_start_before_end',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type_id} — {self.get_day_of_week_display()} {self.start_time}–{self.end_time}"
 
 class MetaIntegration(models.Model):
     """Meta (Facebook/Instagram) integration for workspaces"""

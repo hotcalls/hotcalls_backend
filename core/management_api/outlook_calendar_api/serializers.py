@@ -47,18 +47,16 @@ class OutlookOAuthCallbackSerializer(serializers.Serializer):
 
 
 class OutlookSubAccountSerializer(serializers.ModelSerializer):
-    """Serializer for OutlookSubAccount model"""
+    """Serializer for OutlookSubAccount model (now per-calendar)"""
     main_account_email = serializers.CharField(source='outlook_calendar.primary_email', read_only=True)
-    calendar_id = serializers.UUIDField(source='outlook_calendar.calendar.id', read_only=True)
-    calendar_name = serializers.CharField(source='outlook_calendar.calendar.name', read_only=True)
     workspace_id = serializers.UUIDField(source='outlook_calendar.calendar.workspace.id', read_only=True)
     
     class Meta:
         model = OutlookSubAccount
         fields = [
-            'id', 'outlook_calendar', 'act_as_upn', 'mailbox_object_id', 'relationship',
-            'active', 'main_account_email', 'calendar_id', 'calendar_name',
-            'workspace_id', 'created_at', 'updated_at'
+            'id', 'outlook_calendar', 'act_as_upn', 'calendar_id', 'calendar_name', 'is_default_calendar',
+            'mailbox_object_id', 'relationship', 'active', 'main_account_email', 'workspace_id',
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     

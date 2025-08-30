@@ -841,40 +841,13 @@ def refresh_calendar_subaccounts(self):
             })
             logger.error(f"Error refreshing Google sub-accounts for {google_cal.account_email}: {e}")
     
-    # Refresh Outlook sub-accounts
+    # Refresh Outlook sub-accounts via centralized discovery (avoids blank rows)
+    from core.services.outlook_calendar import OutlookCalendarService
     for outlook_cal in OutlookCalendar.objects.filter(calendar__active=True):
         try:
             results['outlook']['checked'] += 1
-            
-            headers = {'Authorization': f'Bearer {outlook_cal.access_token}'}
-            
-            # Get calendars the user has access to
-            calendars_url = 'https://graph.microsoft.com/v1.0/me/calendars'
-            response = requests.get(calendars_url, headers=headers)
-            
-            if response.status_code == 200:
-                calendars_data = response.json()
-                
-                for calendar in calendars_data.get('value', []):
-                    # Skip default calendar (already exists as 'self')
-                    if calendar.get('isDefaultCalendar'):
-                        continue
-                    
-                    owner_email = calendar.get('owner', {}).get('address')
-                    if owner_email and owner_email != outlook_cal.primary_email:
-                        # Create sub-account if it doesn't exist
-                        _, created = OutlookSubAccount.objects.get_or_create(
-                            outlook_calendar=outlook_cal,
-                            act_as_upn=owner_email,
-                            defaults={
-                                'relationship': 'delegate',
-                                'active': True
-                            }
-                        )
-                        if created:
-                            results['outlook']['new_subaccounts'] += 1
-                            logger.info(f"Created new Outlook sub-account: {owner_email}")
-                            
+            created_upns = OutlookCalendarService().discover_and_update_sub_accounts(outlook_cal)
+            results['outlook']['new_subaccounts'] += len(created_upns)
         except Exception as e:
             results['outlook']['errors'].append({
                 'calendar': outlook_cal.primary_email,
