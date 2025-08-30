@@ -221,3 +221,41 @@ The APIs use session-based authentication. You can:
 - **Input Validation**: Comprehensive serializer validation
 
 The API is now fully implemented with complete CRUD operations, advanced filtering, analytics, and comprehensive Swagger documentation!
+
+## Kubernetes
+
+See `k8s/` manifests for deployments and jobs.
+
+### Seed defaults after DB purge
+
+Run a single Job to seed admin user, plans, voice, SIP trunk, and global phone number:
+
+```
+envsubst < k8s/setup-seed-defaults-job.yaml | kubectl apply -f -
+```
+
+Environment overrides (optional via envsubst):
+
+```
+SEED_ADMIN_EMAIL=admin@hotcalls.de
+SEED_ADMIN_PASSWORD=admin
+SEED_VOICE_ID=z1EhmmPwF0ENGYE8dBE6
+SEED_VOICE_PROVIDER=elevenlabs
+SEED_VOICE_NAME=Lukas
+SEED_VOICE_GENDER=male
+SEED_VOICE_TONE="Professionell & Freundlich"
+SEED_LIVEKIT_TRUNK_ID=ST_F5KZ4yNHBegK
+SEED_DEFAULT_E164=+4972195279210
+SEED_SIP_PROVIDER_NAME=test-provider
+SEED_SIP_USERNAME=testuser
+SEED_SIP_PASSWORD=testpass
+SEED_SIP_HOST=sip.test.local
+SEED_SIP_PORT=5060
+SEED_FORCE_PLANS_FLAG=--force   # optional destructive reset of plans
+```
+
+The underlying command runs:
+
+```
+python manage.py seed_defaults [...flags]
+```

@@ -1934,6 +1934,32 @@ EOF
             # Show migration logs
             log_info "Migration logs:"
             kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=50
+
+            # When PURGE_DB=true, run seed defaults job right after migrations
+            if [[ "$PURGE_DB" == "true" ]]; then
+                log_info "Running seed-defaults job (PURGE_DB=true)..."
+                SEED_JOB_MANIFEST="k8s/setup-seed-defaults-job.yaml"
+                if [[ ! -f "$SEED_JOB_MANIFEST" && -f "setup-seed-defaults-job.yaml" ]]; then
+                    SEED_JOB_MANIFEST="setup-seed-defaults-job.yaml"
+                fi
+                if [[ ! -f "$SEED_JOB_MANIFEST" ]]; then
+                    log_error "Seed job manifest not found (looked for k8s/setup-seed-defaults-job.yaml and setup-seed-defaults-job.yaml)"
+                else
+                    envsubst < "$SEED_JOB_MANIFEST" | kubectl apply -f -
+                fi
+                SEED_JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=backend-task \
+                    --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}' 2>/dev/null || true)
+                if [[ -n "$SEED_JOB_NAME" ]]; then
+                    log_info "Waiting for seed job $SEED_JOB_NAME to complete..."
+                    if kubectl wait --for=condition=complete job/$SEED_JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+                        log_success "Seed defaults completed successfully!"
+                        kubectl logs job/$SEED_JOB_NAME -n "$NAMESPACE" --tail=100 || true
+                    else
+                        log_error "Seed defaults job failed or timed out!"
+                        kubectl logs job/$SEED_JOB_NAME -n "$NAMESPACE" --tail=200 || true
+                    fi
+                fi
+            fi
         else
             log_error "Migration job failed or timed out!"
             kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=100
