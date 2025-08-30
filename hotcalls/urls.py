@@ -93,6 +93,8 @@ urlpatterns = [
     path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
     path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
     path('api/funnels/', include(('core.management_api.funnel_api.urls', 'funnel_api'), namespace='funnel_api')),
+    # Event Types API (workspace-scoped)
+    path('api/event-types/', include(('core.management_api.event_type_api.urls', 'event_type_api'), namespace='event_type_api')),
     
     # Calendar APIs - Restructured into three sections
     path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),

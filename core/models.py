@@ -1696,11 +1696,20 @@ class EventType(models.Model):
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
-    owner = models.ForeignKey(
-        'User',
+    workspace = models.ForeignKey(
+        'Workspace',
         on_delete=models.CASCADE,
         related_name='event_types',
-        help_text="User who owns this event type",
+        help_text="Workspace that owns this event type",
+    )
+
+    created_by = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_event_types',
+        help_text="User who created this event type",
     )
 
     name = models.CharField(max_length=255, help_text="Display name for the event type")
@@ -1743,7 +1752,7 @@ class EventType(models.Model):
     )
 
     def __str__(self):
-        return f"{self.name} ({self.owner.email})"
+        return f"{self.name} ({self.workspace.workspace_name})"
 
 
 class EventTypeSubAccountMapping(models.Model):
