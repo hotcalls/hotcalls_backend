@@ -61,36 +61,83 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         tags=["Event Types"]
     )
     def list_subaccounts(self, request, *args, **kwargs):
-        workspace = self.get_workspace()
-        # All sub-accounts whose owner is a member of this workspace
-        member_ids = workspace.users.values_list('id', flat=True)
-        subs = SubAccount.objects.filter(owner_id__in=member_ids).order_by('provider', 'id')
+        """
+        Return workspace sub-accounts directly from provider models.
 
-        # Build human-friendly label using provider-specific hints
+        Optional query param: ?provider=google|outlook to filter.
+        """
+        workspace = self.get_workspace()
+        provider_filter = (request.query_params.get('provider') or '').lower().strip()
+
         items = []
-        for s in subs:
-            label = s.sub_account_id
-            # Optional enrichment best-effort: fetch provider-specific records
+
+        # GOOGLE
+        if provider_filter in ('', 'google'):
             try:
-                if s.provider == 'google':
-                    from core.models import GoogleSubAccount
-                    g = GoogleSubAccount.objects.filter(id=s.sub_account_id).first()
-                    if g:
-                        label = g.calendar_name or g.act_as_email
-                elif s.provider == 'outlook':
-                    from core.models import OutlookSubAccount
-                    o = OutlookSubAccount.objects.filter(id=s.sub_account_id).first()
-                    if o:
-                        label = o.calendar_name or o.act_as_upn
+                from core.models import GoogleSubAccount
+                gsubs = (
+                    GoogleSubAccount.objects
+                    .filter(google_calendar__calendar__workspace=workspace, active=True)
+                    .select_related('google_calendar', 'google_calendar__calendar')
+                    .order_by('calendar_name', 'act_as_email')
+                )
+                for g in gsubs:
+                    items.append({
+                        'id': g.id,
+                        'provider': 'google',
+                        'label': (g.calendar_name or g.act_as_email),
+                    })
             except Exception:
-                # Fallback to sub_account_id on any error
                 pass
 
-            items.append({
-                'id': s.id,
-                'provider': s.provider,
-                'label': label or s.sub_account_id,
-            })
+        # OUTLOOK
+        if provider_filter in ('', 'outlook'):
+            try:
+                from core.models import OutlookSubAccount
+                osubs = (
+                    OutlookSubAccount.objects
+                    .filter(outlook_calendar__calendar__workspace=workspace, active=True)
+                    .select_related('outlook_calendar', 'outlook_calendar__calendar')
+                    .order_by('calendar_name', 'act_as_upn')
+                )
+                for o in osubs:
+                    items.append({
+                        'id': o.id,
+                        'provider': 'outlook',
+                        'label': (o.calendar_name or o.act_as_upn),
+                    })
+            except Exception:
+                pass
+
+        # If router table SubAccount has entries, include those too (legacy compatibility)
+        try:
+            member_ids = workspace.users.values_list('id', flat=True)
+            subs = SubAccount.objects.filter(owner_id__in=member_ids).order_by('provider', 'id')
+            for s in subs:
+                # Avoid duplicates if provider-specific IDs already present
+                if any(str(it['id']) == str(s.sub_account_id) for it in items if it['provider'] == s.provider):
+                    continue
+                label = s.sub_account_id
+                try:
+                    if s.provider == 'google':
+                        from core.models import GoogleSubAccount
+                        g = GoogleSubAccount.objects.filter(id=s.sub_account_id).first()
+                        if g:
+                            label = g.calendar_name or g.act_as_email
+                    elif s.provider == 'outlook':
+                        from core.models import OutlookSubAccount
+                        o = OutlookSubAccount.objects.filter(id=s.sub_account_id).first()
+                        if o:
+                            label = o.calendar_name or o.act_as_upn
+                except Exception:
+                    pass
+                items.append({
+                    'id': s.sub_account_id,  # return provider-specific id for consistency
+                    'provider': s.provider,
+                    'label': label,
+                })
+        except Exception:
+            pass
 
         return Response(SubAccountListItemSerializer(items, many=True).data)
 

@@ -169,13 +169,14 @@ class GoogleCalendarService:
         
         try:
             # Get credentials for the main account
+            # Use configured OAuth client, not undefined instance attributes
             credentials = Credentials(
                 token=google_calendar.access_token,
                 refresh_token=google_calendar.refresh_token,
                 token_uri='https://oauth2.googleapis.com/token',
-                client_id=self.client_id,
-                client_secret=self.client_secret,
-                scopes=google_calendar.scopes
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                scopes=google_calendar.scopes or settings.GOOGLE_SCOPES
             )
             
             service = build('calendar', 'v3', credentials=credentials)

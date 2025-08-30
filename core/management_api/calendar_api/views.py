@@ -1,13 +1,16 @@
 """Generic Calendar API views - provider-agnostic CRUD operations"""
 import logging
 from rest_framework import viewsets, status, filters
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 from django.db import transaction
 
 from core.models import Calendar
-from .serializers import CalendarSerializer
+from core.services.google_calendar import GoogleCalendarService
+from core.services.outlook_calendar import OutlookCalendarService
+from .serializers import CalendarSerializer, CalendarSubAccountSerializer
 from .filters import CalendarFilter
 from .permissions import CalendarPermission
 
@@ -181,3 +184,70 @@ class CalendarViewSet(viewsets.ModelViewSet):
                 {'error': 'Failed to delete calendar', 'details': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @extend_schema(
+        summary="📒 List sub-accounts for a calendar",
+        description="Return provider-specific sub-accounts (Google/Outlook) for a given calendar in a unified shape.",
+        responses={200: OpenApiResponse(response=CalendarSubAccountSerializer(many=True), description="Sub-accounts")},
+        tags=["Calendar Management"],
+    )
+    @action(detail=True, methods=['get'], url_path='sub-accounts')
+    def sub_accounts(self, request, pk=None):
+        """List sub-accounts for this calendar in a provider-agnostic format."""
+        calendar = self.get_object()
+        items = []
+        try:
+            if calendar.provider == 'google' and hasattr(calendar, 'google_calendar'):
+                gc = calendar.google_calendar
+                for s in gc.sub_accounts.all():
+                    items.append({
+                        'id': s.id,
+                        'provider': 'google',
+                        'address': s.act_as_email,
+                        'calendar_name': getattr(s, 'calendar_name', ''),
+                        'relationship': s.relationship,
+                        'is_default': getattr(s, 'active', False) and (getattr(s, 'relationship', '') == 'self' or getattr(s, 'primary', False)),
+                    })
+            elif calendar.provider == 'outlook' and hasattr(calendar, 'outlook_calendar'):
+                oc = calendar.outlook_calendar
+                for s in oc.sub_accounts.all():
+                    items.append({
+                        'id': s.id,
+                        'provider': 'outlook',
+                        'address': s.act_as_upn,
+                        'calendar_name': getattr(s, 'calendar_name', ''),
+                        'relationship': s.relationship,
+                        'is_default': bool(getattr(s, 'is_default_calendar', False)),
+                    })
+        except Exception as e:
+            logger.error(f"Failed to list sub-accounts for calendar {calendar.id}: {e}")
+            items = []
+
+        serializer = CalendarSubAccountSerializer(items, many=True)
+        return Response(serializer.data)
+
+    @extend_schema(
+        summary="🔄 Sync a calendar",
+        description="Run a provider-specific sync for this calendar to refresh metadata and clear previous sync errors.",
+        request=None,
+        responses={200: OpenApiResponse(response=CalendarSerializer, description="Calendar after sync")},
+        tags=["Calendar Management"],
+    )
+    @action(detail=True, methods=['post'], url_path='sync')
+    def sync(self, request, pk=None):
+        calendar = self.get_object()
+        try:
+            if calendar.provider == 'google' and hasattr(calendar, 'google_calendar'):
+                service = GoogleCalendarService()
+                service.sync_calendars(calendar.google_calendar)
+            elif calendar.provider == 'outlook' and hasattr(calendar, 'outlook_calendar'):
+                service = OutlookCalendarService()
+                service.sync_calendars(calendar.outlook_calendar)
+            else:
+                return Response({'error': 'No provider connection attached to this calendar'}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Failed to sync calendar {calendar.id}: {e}")
+            # Provider services already record sync_errors; continue to return current state
+        # Refresh instance
+        calendar.refresh_from_db()
+        return Response(CalendarSerializer(calendar).data)

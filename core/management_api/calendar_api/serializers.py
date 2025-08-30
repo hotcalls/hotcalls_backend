@@ -8,13 +8,12 @@ class CalendarSerializer(serializers.ModelSerializer):
     """Serializer for Calendar model with provider details"""
     workspace_name = serializers.CharField(source='workspace.workspace_name', read_only=True)
     provider_details = serializers.SerializerMethodField()
-    connection_status = serializers.SerializerMethodField()
     
     class Meta:
         model = Calendar
         fields = [
             'id', 'workspace', 'workspace_name', 'name', 'provider', 
-            'active', 'provider_details', 'connection_status',
+            'active', 'provider_details',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -41,23 +40,14 @@ class CalendarSerializer(serializers.ModelSerializer):
             }
         return None
     
-    @extend_schema_field(serializers.CharField)
-    def get_connection_status(self, obj):
-        """Get connection status based on provider"""
-        if obj.provider == 'google' and hasattr(obj, 'google_calendar'):
-            google_cal = obj.google_calendar
-            if google_cal.sync_errors:
-                return 'error'
-            elif google_cal.last_sync:
-                return 'connected'
-            else:
-                return 'pending'
-        elif obj.provider == 'outlook' and hasattr(obj, 'outlook_calendar'):
-            outlook_cal = obj.outlook_calendar
-            if outlook_cal.sync_errors:
-                return 'error'
-            elif outlook_cal.last_sync:
-                return 'connected'
-            else:
-                return 'pending'
-        return 'disconnected'
+    # Removed misleading connection_status field
+
+
+class CalendarSubAccountSerializer(serializers.Serializer):
+    """Lightweight, provider-agnostic sub-account representation for a calendar"""
+    id = serializers.UUIDField()
+    provider = serializers.ChoiceField(choices=['google', 'outlook'])
+    address = serializers.CharField(help_text="Email/UPN or calendar identifier")
+    calendar_name = serializers.CharField(allow_blank=True, required=False)
+    relationship = serializers.CharField()
+    is_default = serializers.BooleanField()
