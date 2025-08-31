@@ -1049,122 +1049,142 @@ def refresh_meta_tokens(self):
 @shared_task(bind=True)
 def cleanup_invalid_google_connections(self):
     """
-    Clean up invalid or expired Google Calendar connections.
-    Deletes calendars that can no longer be refreshed.
+    Clean up Google Calendar connections that are truly invalid.
 
-    Runs daily at midnight.
+    We DO NOT delete just because the access token is expired (normal ~1h TTL).
+    We only delete when there is no refresh token, or a refresh attempt returns
+    a permanent error (e.g., invalid_grant/authorization revoked).
     """
     from core.models import GoogleCalendar
-    from django.utils import timezone
-    from django.db.models import Q
+    from django.conf import settings
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import Request
     import logging
 
     logger = logging.getLogger(__name__)
 
-    now = timezone.now()
+    calendars = GoogleCalendar.objects.select_related('calendar').all()
+    results = {
+        "checked": calendars.count(),
+        "refreshed": 0,
+        "deleted": 0,
+        "errors": 0,
+        "deleted_accounts": [],
+    }
 
-    # Find invalid Google calendars
-    invalid_calendars = GoogleCalendar.objects.filter(
-        Q(token_expires_at__lt=now)  # Expired tokens
-        | Q(calendar__active=False)  # Calendar marked as inactive
-        | Q(refresh_token__isnull=True)  # No refresh capability
-        | Q(refresh_token="")  # Empty refresh token
-    )
-
-    results = {"total_deleted": 0, "deleted_google_calendars": [], "deleted_calendars": []}
-
-    logger.info(
-        f"🧹 Starting cleanup of {invalid_calendars.count()} invalid Google calendars"
-    )
-
-    for google_cal in invalid_calendars:
+    for gc in calendars:
         try:
-            calendar_name = google_cal.calendar.name if google_cal.calendar else "Unknown"
-            account_email = google_cal.account_email
-            
-            # Count sub-accounts that will be deleted
-            sub_account_count = google_cal.sub_accounts.count()
+            # No refresh token → cannot keep this connection
+            if not (gc.refresh_token and gc.refresh_token.strip()):
+                name = gc.calendar.name if gc.calendar else "Unknown"
+                email = gc.account_email
+                if gc.calendar:
+                    gc.calendar.delete()
+                results["deleted"] += 1
+                results["deleted_accounts"].append(email)
+                logger.info(f"🗑️ Deleted Google calendar without refresh token: {name} ({email})")
+                continue
 
-            # Delete the Calendar (this cascades to GoogleCalendar and ALL sub-accounts)
-            if google_cal.calendar:
-                google_cal.calendar.delete()
-                results["deleted_calendars"].append(calendar_name)
-                results["deleted_google_calendars"].append(account_email)
-                results["total_deleted"] += 1
-                logger.info(f"🗑️ Deleted calendar: {calendar_name} ({account_email}) and {sub_account_count} sub-accounts")
-
-        except Exception as e:
-            logger.error(
-                f"❌ Error deleting Google calendar {google_cal.account_email}: {str(e)}"
+            # Try a non-intrusive refresh; if it fails with permanent error → delete
+            credentials = Credentials(
+                token=gc.access_token,
+                refresh_token=gc.refresh_token,
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
+                client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                scopes=gc.scopes or settings.GOOGLE_SCOPES,
             )
+            try:
+                credentials.refresh(Request())
+                # Update tokens if changed
+                gc.access_token = credentials.token
+                try:
+                    gc.token_expires_at = credentials.expiry  # may be naive
+                except Exception:
+                    pass
+                gc.save(update_fields=["access_token", "token_expires_at", "updated_at"])
+                results["refreshed"] += 1
+            except Exception as exc:
+                # Permanent invalidation keywords
+                msg = str(exc).lower()
+                if any(k in msg for k in ["invalid_grant", "unauthorized", "revoked", "invalid_request"]):
+                    name = gc.calendar.name if gc.calendar else "Unknown"
+                    email = gc.account_email
+                    if gc.calendar:
+                        gc.calendar.delete()
+                    results["deleted"] += 1
+                    results["deleted_accounts"].append(email)
+                    logger.info(f"🗑️ Deleted revoked Google calendar: {name} ({email}) → {exc}")
+                else:
+                    results["errors"] += 1
+                    logger.warning(f"⚠️ Could not refresh Google token for {gc.account_email}: {exc}")
 
-    logger.info(f"""
-    🧹 Google Cleanup Summary:
-    🗑️ Deleted connections: {results["total_deleted"]}
-    📅 Deleted calendars: {len(results["deleted_calendars"])}
-    """)
+        except Exception as exc:
+            results["errors"] += 1
+            logger.error(f"❌ cleanup_invalid_google_connections failed for {gc.account_email}: {exc}")
 
+    logger.info(f"🧹 Google cleanup summary: {results}")
     return results
 
 
 @shared_task(bind=True)
 def cleanup_invalid_outlook_connections(self):
     """
-    Clean up invalid or expired Outlook Calendar connections.
-    Deletes calendars that can no longer be refreshed.
-    
-    Runs daily at midnight.
+    Clean up Outlook connections only when truly invalid.
+
+    We do not delete merely because the access token is expired; we delete when
+    no refresh token exists or refresh fails with a permanent error.
     """
     from core.models import OutlookCalendar
-    from django.utils import timezone
-    from django.db.models import Q
+    from core.services.outlook_calendar import OutlookCalendarService
     import logging
-    
+
     logger = logging.getLogger(__name__)
-    
-    now = timezone.now()
-    
-    # Find invalid Outlook calendars
-    invalid_calendars = OutlookCalendar.objects.filter(
-        Q(token_expires_at__lt=now)  # Expired tokens
-        | Q(calendar__active=False)  # Calendar marked as inactive
-        | Q(refresh_token__isnull=True)  # No refresh capability
-        | Q(refresh_token="")  # Empty refresh token
-    )
-    
-    results = {"total_deleted": 0, "deleted_outlook_calendars": [], "deleted_calendars": []}
-    
-    logger.info(
-        f"🧹 Starting cleanup of {invalid_calendars.count()} invalid Outlook calendars"
-    )
-    
-    for outlook_cal in invalid_calendars:
+
+    calendars = OutlookCalendar.objects.select_related('calendar').all()
+    results = {"checked": calendars.count(), "refreshed": 0, "deleted": 0, "errors": 0, "deleted_accounts": []}
+
+    for oc in calendars:
         try:
-            calendar_name = outlook_cal.calendar.name if outlook_cal.calendar else "Unknown"
-            primary_email = outlook_cal.primary_email
-            
-            # Count sub-accounts that will be deleted
-            sub_account_count = outlook_cal.sub_accounts.count()
-            
-            # Delete the Calendar (this cascades to OutlookCalendar and ALL sub-accounts)
-            if outlook_cal.calendar:
-                outlook_cal.calendar.delete()
-                results["deleted_calendars"].append(calendar_name)
-                results["deleted_outlook_calendars"].append(primary_email)
-                results["total_deleted"] += 1
-                logger.info(f"🗑️ Deleted calendar: {calendar_name} ({primary_email}) and {sub_account_count} sub-accounts")
-                
-        except Exception as e:
-            logger.error(
-                f"❌ Error deleting Outlook calendar {outlook_cal.primary_email}: {str(e)}"
-            )
-    
-    logger.info(f"""
-    🧹 Outlook Cleanup Summary:
-    🗑️ Deleted calendars: {results["total_deleted"]}
-    📅 Deleted calendar records: {len(results["deleted_calendars"])}
-    """)
-    
+            if not (oc.refresh_token and oc.refresh_token.strip()):
+                name = oc.calendar.name if oc.calendar else "Unknown"
+                email = oc.primary_email
+                if oc.calendar:
+                    oc.calendar.delete()
+                results["deleted"] += 1
+                results["deleted_accounts"].append(email)
+                logger.info(f"🗑️ Deleted Outlook calendar without refresh token: {name} ({email})")
+                continue
+
+            try:
+                service = OutlookCalendarService()
+                token = service.refresh_tokens(oc.refresh_token)
+                oc.access_token = token.get('access_token')
+                if token.get('refresh_token'):
+                    oc.refresh_token = token.get('refresh_token')
+                from django.utils import timezone
+                oc.token_expires_at = timezone.now() + timedelta(seconds=int(token.get('expires_in', 3600)))
+                oc.save(update_fields=['access_token', 'refresh_token', 'token_expires_at', 'updated_at'])
+                results["refreshed"] += 1
+            except Exception as exc:
+                msg = str(exc).lower()
+                if any(k in msg for k in ["invalid_grant", "unauthorized", "refresh_token", "authorization"]):
+                    name = oc.calendar.name if oc.calendar else "Unknown"
+                    email = oc.primary_email
+                    if oc.calendar:
+                        oc.calendar.delete()
+                    results["deleted"] += 1
+                    results["deleted_accounts"].append(email)
+                    logger.info(f"🗑️ Deleted revoked Outlook calendar: {name} ({email}) → {exc}")
+                else:
+                    results["errors"] += 1
+                    logger.warning(f"⚠️ Could not refresh Outlook token for {oc.primary_email}: {exc}")
+
+        except Exception as exc:
+            results["errors"] += 1
+            logger.error(f"❌ cleanup_invalid_outlook_connections failed for {oc.primary_email}: {exc}")
+
+    logger.info(f"🧹 Outlook cleanup summary: {results}")
     return results
 
 
