@@ -3,6 +3,7 @@ from datetime import datetime
 from django.core.mail import EmailMessage, get_connection
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
@@ -18,9 +19,10 @@ class CommunicationViewSet(viewsets.ViewSet):
         summary="📄 Send agent document to lead",
         description="Send the configured agent PDF to the lead's email using the workspace SMTP settings.",
         tags=["Communication"],
-        responses={200: OpenApiResponse(description="✅ Document sent")}
+        responses={200: OpenApiResponse(description="✅ Document sent")},
+        auth=[]
     )
-    @action(detail=False, methods=['post'], url_path='send-document')
+    @action(detail=False, methods=['post'], url_path='send-document', permission_classes=[AllowAny])
     def send_document(self, request):
         agent_id = request.data.get('agent_id')
         lead_id = request.data.get('lead_id')
