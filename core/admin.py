@@ -7,7 +7,9 @@ from .models import (
     OutlookCalendar, OutlookSubAccount,
     WorkspaceSubscription, WorkspaceUsage, FeatureUsage, EndpointFeature, MetaIntegration, 
     WorkspaceInvitation, SIPTrunk, MetaLeadForm, LeadFunnel, WebhookLeadSource,
-    LeadProcessingStats, CallTask, WorkspacePhoneNumber
+    LeadProcessingStats, CallTask, WorkspacePhoneNumber,
+    # New scheduling/router models
+    SubAccount, EventType, EventTypeWorkingHour, EventTypeSubAccountMapping,
 )
 from django.utils import timezone
 
@@ -159,6 +161,62 @@ class CalendarInline(admin.TabularInline):
     extra = 0
     fields = ('name', 'provider', 'active')
     readonly_fields = ('created_at', 'updated_at')
+
+
+# =============================
+# Scheduling (Event Types) admin
+# =============================
+
+class EventTypeWorkingHourInline(admin.TabularInline):
+    model = EventTypeWorkingHour
+    extra = 0
+    fields = ('day_of_week', 'start_time', 'end_time')
+    ordering = ('day_of_week',)
+
+
+class EventTypeSubAccountMappingInline(admin.TabularInline):
+    model = EventTypeSubAccountMapping
+    extra = 0
+    fields = ('sub_account', 'role')
+    autocomplete_fields = ('sub_account',)
+
+
+@admin.register(SubAccount)
+class SubAccountAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('id', 'provider', 'sub_account_id', 'owner', 'created_at')
+    list_filter = ('provider', 'owner')
+    search_fields = ('sub_account_id', 'owner__email')
+    ordering = ('-created_at',)
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(EventType)
+class EventTypeAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('name', 'workspace', 'duration', 'timezone', 'created_at')
+    list_filter = ('workspace', 'timezone', 'duration')
+    search_fields = ('name', 'workspace__workspace_name')
+    ordering = ('-created_at',)
+    inlines = [EventTypeWorkingHourInline, EventTypeSubAccountMappingInline]
+
+
+@admin.register(EventTypeWorkingHour)
+class EventTypeWorkingHourAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('event_type', 'day_of_week', 'start_time', 'end_time')
+    list_filter = ('day_of_week',)
+    search_fields = ('event_type__name',)
+    ordering = ('event_type', 'day_of_week')
+
+
+@admin.register(EventTypeSubAccountMapping)
+class EventTypeSubAccountMappingAdmin(ShowPkMixin, admin.ModelAdmin):
+    list_display = ('event_type', 'sub_account', 'role', 'created_at')
+    list_filter = ('role',)
+    search_fields = (
+        'event_type__name',
+        'sub_account__sub_account_id',
+        'sub_account__owner__email',
+    )
+    ordering = ('-created_at',)
 
 
 # CalendarConfigurationInline removed - CalendarConfiguration no longer exists

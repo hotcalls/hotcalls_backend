@@ -74,7 +74,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         # GOOGLE
         if provider_filter in ('', 'google'):
             try:
-                from core.models import GoogleSubAccount
+                from core.models import GoogleSubAccount, SubAccount
                 gsubs = (
                     GoogleSubAccount.objects
                     .filter(google_calendar__calendar__workspace=workspace, active=True)
@@ -82,8 +82,14 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                     .order_by('calendar_name', 'act_as_email')
                 )
                 for g in gsubs:
+                    # Ensure router SubAccount exists for this user and provider-specific id
+                    sub, _ = SubAccount.objects.get_or_create(
+                        owner=request.user,
+                        provider='google',
+                        sub_account_id=str(g.id),
+                    )
                     items.append({
-                        'id': g.id,
+                        'id': sub.id,
                         'provider': 'google',
                         'label': (g.calendar_name or g.act_as_email),
                     })
@@ -93,7 +99,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         # OUTLOOK
         if provider_filter in ('', 'outlook'):
             try:
-                from core.models import OutlookSubAccount
+                from core.models import OutlookSubAccount, SubAccount
                 osubs = (
                     OutlookSubAccount.objects
                     .filter(outlook_calendar__calendar__workspace=workspace, active=True)
@@ -101,8 +107,13 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                     .order_by('calendar_name', 'act_as_upn')
                 )
                 for o in osubs:
+                    sub, _ = SubAccount.objects.get_or_create(
+                        owner=request.user,
+                        provider='outlook',
+                        sub_account_id=str(o.id),
+                    )
                     items.append({
-                        'id': o.id,
+                        'id': sub.id,
                         'provider': 'outlook',
                         'label': (o.calendar_name or o.act_as_upn),
                     })
@@ -115,7 +126,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
             subs = SubAccount.objects.filter(owner_id__in=member_ids).order_by('provider', 'id')
             for s in subs:
                 # Avoid duplicates if provider-specific IDs already present
-                if any(str(it['id']) == str(s.sub_account_id) for it in items if it['provider'] == s.provider):
+                if any(str(it['id']) == str(s.id) for it in items if it['provider'] == s.provider):
                     continue
                 label = s.sub_account_id
                 try:
@@ -132,7 +143,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                 except Exception:
                     pass
                 items.append({
-                    'id': s.sub_account_id,  # return provider-specific id for consistency
+                    'id': s.id,  # return router id
                     'provider': s.provider,
                     'label': label,
                 })
