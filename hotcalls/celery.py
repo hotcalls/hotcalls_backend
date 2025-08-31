@@ -126,4 +126,14 @@ app.conf.beat_schedule = {
         }
     },
 
+    # Clean router SubAccount orphans every 5 minutes
+    'cleanup-router-subaccounts': {
+        'task': 'core.tasks.cleanup_orphan_router_subaccounts',
+        'schedule': 300.0,  # Run every 5 minutes
+        'options': {
+            'queue': 'celery',
+            'expires': 300,
+        }
+    },
+
 } 

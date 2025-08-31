@@ -1,4 +1,7 @@
 from django.shortcuts import get_object_or_404
+from datetime import datetime, timedelta, time
+from typing import List, Tuple
+from zoneinfo import ZoneInfo
 from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -6,6 +9,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 
 from core.models import EventType, Workspace, SubAccount
 from core.management_api.payment_api.permissions import IsWorkspaceMember
+from core.services.calendar_provider import CalendarProviderFacade
 from .serializers import (
     EventTypeSerializer,
     EventTypeCreateUpdateSerializer,
@@ -152,4 +156,231 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
         return Response(SubAccountListItemSerializer(items, many=True).data)
 
+
+
+    @extend_schema(
+        summary="Get availability for a date",
+        description="Return available start times for the given date in the EventType.timezone.",
+        responses={200: OpenApiResponse(description="List of slots in EventType.timezone")},
+        tags=["Event Types"],
+    )
+    def availability(self, request, *args, **kwargs):
+        """
+        Parameters (query):
+        - date: YYYY-MM-DD (required)
+
+        Returns list of ISO8601 datetimes (with offset) in EventType.timezone.
+        """
+        event_type: EventType = self.get_object()
+        date_str = (request.query_params.get('date') or '').strip()
+        if not date_str:
+            return Response({"error": "date is required (YYYY-MM-DD)"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            return Response({"error": "invalid date format; expected YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+        tz = ZoneInfo(event_type.timezone or 'UTC')
+
+        # Working hours for weekday
+        weekday = target_date.weekday()  # 0=Mon
+        working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
+        if not working_hour:
+            return Response({
+                "event_type_id": str(event_type.id),
+                "date": date_str,
+                "timezone": event_type.timezone,
+                "slots": [],
+            })
+
+        day_start_dt = datetime.combine(target_date, time(0, 0)).replace(tzinfo=tz)
+        day_end_dt = day_start_dt + timedelta(days=1)
+
+        # Aggregate busy intervals for all mappings
+        mappings = list(event_type.calendar_mappings.select_related('sub_account').all())
+        busy: List[Tuple[datetime, datetime]] = []
+        for m in mappings:
+            sub = m.sub_account
+            try:
+                items = CalendarProviderFacade.free_busy(sub, day_start_dt, day_end_dt, event_type.timezone)
+                for it in items:
+                    busy.append((it.start, it.end))
+            except Exception:
+                # Provider errors should not crash availability; assume no additional busy from this source
+                continue
+
+        # Extend busy intervals by buffers (before = buffer_hours + prep_minutes)
+        before_minutes = (event_type.buffer_time or 0) * 60 + (event_type.prep_time or 0)
+        extended_busy: List[Tuple[datetime, datetime]] = []
+        if busy:
+            for start_dt, end_dt in busy:
+                extended_busy.append((start_dt - timedelta(minutes=before_minutes), end_dt))
+
+        # Merge overlapping intervals
+        def merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
+            if not intervals:
+                return []
+            intervals.sort(key=lambda x: x[0])
+            merged: List[Tuple[datetime, datetime]] = []
+            cur_s, cur_e = intervals[0]
+            for s, e in intervals[1:]:
+                if s <= cur_e:
+                    if e > cur_e:
+                        cur_e = e
+                else:
+                    merged.append((cur_s, cur_e))
+                    cur_s, cur_e = s, e
+            merged.append((cur_s, cur_e))
+            return merged
+
+        merged_busy = merge_intervals(extended_busy)
+
+        # Restrict to working window for the day
+        work_start_dt = datetime.combine(target_date, working_hour.start_time).replace(tzinfo=tz)
+        work_end_dt = datetime.combine(target_date, working_hour.end_time).replace(tzinfo=tz)
+        if work_end_dt <= work_start_dt:
+            return Response({
+                "event_type_id": str(event_type.id),
+                "date": date_str,
+                "timezone": event_type.timezone,
+                "slots": [],
+            })
+
+        # Compute free intervals inside working window by subtracting busy
+        # Start with one candidate interval = working window
+        candidates: List[Tuple[datetime, datetime]] = [(work_start_dt, work_end_dt)]
+        for bs, be in merged_busy:
+            new_candidates: List[Tuple[datetime, datetime]] = []
+            for cs, ce in candidates:
+                # No overlap
+                if be <= cs or bs >= ce:
+                    new_candidates.append((cs, ce))
+                    continue
+                # Overlap cases: split
+                if bs > cs:
+                    new_candidates.append((cs, bs))
+                if be < ce:
+                    new_candidates.append((be, ce))
+            candidates = [(s, e) for (s, e) in new_candidates if e > s]
+
+        # Generate slots of duration minutes, stepping by duration minutes
+        duration_minutes = event_type.duration
+        step = timedelta(minutes=duration_minutes)
+        slots: List[str] = []
+        for s, e in candidates:
+            t = s
+            while t + step <= e:
+                slots.append(t.isoformat())
+                t = t + step
+
+        return Response({
+            "event_type_id": str(event_type.id),
+            "date": date_str,
+            "timezone": event_type.timezone,
+            "slots": slots,
+        })
+
+    @extend_schema(
+        summary="Book a slot",
+        description="Create events on all target calendars for this EventType. Body requires only 'start' (ISO) in EventType.timezone.",
+        responses={201: OpenApiResponse(description="Booking created and ICS returned.")},
+        tags=["Event Types"],
+    )
+    def book(self, request, *args, **kwargs):
+        event_type: EventType = self.get_object()
+        tz = ZoneInfo(event_type.timezone or 'UTC')
+
+        start_str = (request.data.get('start') if isinstance(request.data, dict) else None) or ''
+        if not start_str:
+            return Response({"error": "start is required (ISO8601)"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            # Parse start in event type timezone if naive
+            if start_str.endswith('Z'):
+                start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00')).astimezone(tz)
+            else:
+                parsed = datetime.fromisoformat(start_str)
+                start_dt = parsed.replace(tzinfo=tz) if parsed.tzinfo is None else parsed.astimezone(tz)
+        except Exception:
+            return Response({"error": "invalid start format; expected ISO8601"}, status=status.HTTP_400_BAD_REQUEST)
+
+        end_dt = start_dt + timedelta(minutes=event_type.duration)
+
+        # Final conflict check across all calendars with pre-buffers
+        before_minutes = (event_type.buffer_time or 0) * 60 + (event_type.prep_time or 0)
+        check_start = start_dt - timedelta(minutes=before_minutes)
+        check_end = end_dt
+
+        mappings = list(event_type.calendar_mappings.select_related('sub_account').all())
+        for m in mappings:
+            sub = m.sub_account
+            try:
+                if CalendarProviderFacade.is_busy(sub, check_start, check_end, event_type.timezone):
+                    return Response({"error": "slot no longer available"}, status=status.HTTP_409_CONFLICT)
+            except Exception:
+                # Be conservative on provider errors: treat as conflict
+                return Response({"error": "slot check failed"}, status=status.HTTP_409_CONFLICT)
+
+        # Create on all targets
+        title = event_type.name
+        description = f"Booking for {event_type.name}"
+        attendees = []
+        created_events: List[Tuple[SubAccount, dict]] = []
+        try:
+            for m in mappings:
+                if m.role != 'target':
+                    continue
+                sub = m.sub_account
+                ev = CalendarProviderFacade.create_event(
+                    sub_account=sub,
+                    start=start_dt,
+                    end=end_dt,
+                    title=title,
+                    description=description,
+                    attendees=attendees,
+                )
+                created_events.append((sub, ev))
+        except Exception as exc:
+            # Rollback already created
+            for sub, ev in created_events:
+                try:
+                    CalendarProviderFacade.delete_event(sub, (ev or {}).get('id'))
+                except Exception:
+                    pass
+            return Response({"error": "failed to create events", "details": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Generate ICS
+        import uuid
+        uid = f"{uuid.uuid4()}@hotcalls"
+        def to_ics_dt(dt: datetime) -> str:
+            # Local time with TZID; format: YYYYMMDDTHHMMSS
+            return dt.strftime("%Y%m%dT%H%M%S")
+
+        ics_lines = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//HotCalls//EN",
+            "CALSCALE:GREGORIAN",
+            "METHOD:PUBLISH",
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{to_ics_dt(datetime.now(tz))}",
+            f"DTSTART;TZID={event_type.timezone}:{to_ics_dt(start_dt)}",
+            f"DTEND;TZID={event_type.timezone}:{to_ics_dt(end_dt)}",
+            f"SUMMARY:{title}",
+            f"DESCRIPTION:{description}",
+            "END:VEVENT",
+            "END:VCALENDAR",
+        ]
+        ics_content = "\r\n".join(ics_lines) + "\r\n"
+
+        return Response({
+            "status": "success",
+            "event_type_id": str(event_type.id),
+            "timezone": event_type.timezone,
+            "start": start_dt.isoformat(),
+            "end": end_dt.isoformat(),
+            "created_event_ids": [ (ev or {}).get('id') for (_, ev) in created_events ],
+            "ics": ics_content,
+        }, status=status.HTTP_201_CREATED)
 

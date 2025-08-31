@@ -764,6 +764,90 @@ def refresh_microsoft_calendar_connections(self):
 # MicrosoftSubscription renewal task removed - MicrosoftSubscription model no longer exists
 
 
+@shared_task(bind=True, name="core.tasks.cleanup_orphan_router_subaccounts")
+def cleanup_orphan_router_subaccounts(self):
+    """
+    Remove router SubAccount rows that reference non-existent provider-specific
+    sub-accounts and delete any EventTypes that end up with no mappings.
+
+    Also removes EventTypes that were already orphaned (zero mappings), which
+    will cascade-delete their working hours via FK on_delete=CASCADE.
+
+    Runs every 5 minutes via beat.
+    """
+    from core.models import (
+        SubAccount,
+        GoogleSubAccount,
+        OutlookSubAccount,
+        EventType,
+    )
+    from django.db import transaction
+
+    checked_subaccounts = 0
+    deleted_subaccounts = 0
+    deleted_event_types = 0
+    errors = 0
+
+    # 1) Delete router SubAccount rows whose provider-specific record no longer exists
+    qs = SubAccount.objects.all().only("id", "provider", "sub_account_id")
+    for sub in qs.iterator(chunk_size=500):
+        checked_subaccounts += 1
+        try:
+            provider = (sub.provider or "").lower()
+            exists = False
+            if provider == "google":
+                exists = GoogleSubAccount.objects.filter(id=sub.sub_account_id).exists()
+            elif provider == "outlook":
+                exists = OutlookSubAccount.objects.filter(id=sub.sub_account_id).exists()
+            # Unknown provider types are considered invalid
+            if not exists:
+                with transaction.atomic():
+                    current = SubAccount.objects.select_for_update().filter(id=sub.id)
+                    if current.exists():
+                        current.delete()  # cascades EventTypeSubAccountMapping
+                        deleted_subaccounts += 1
+        except Exception as e:
+            errors += 1
+            logger.warning(
+                f"cleanup_orphan_router_subaccounts: failed for {sub.id}: {e}"
+            )
+
+    # 2) Delete EventTypes with zero mappings (fully orphaned templates)
+    try:
+        orphan_eventtypes = (
+            EventType.objects
+            .filter(calendar_mappings__isnull=True)
+            .distinct()
+        )
+        # The above returns EventTypes that have no mappings due to join being null
+        # However, some DBs require an explicit left join pattern; do a safety pass too
+        orphan_ids = list(orphan_eventtypes.values_list("id", flat=True))
+        if not orphan_ids:
+            # Fallback: compute via annotation count
+            from django.db.models import Count
+            orphan_ids = list(
+                EventType.objects
+                .annotate(mcount=Count("calendar_mappings"))
+                .filter(mcount=0)
+                .values_list("id", flat=True)
+            )
+        if orphan_ids:
+            deleted_event_types = (
+                EventType.objects.filter(id__in=orphan_ids).delete()[0]
+            )
+    except Exception as e:
+        errors += 1
+        logger.warning(f"cleanup_orphan_router_subaccounts: eventtype sweep failed: {e}")
+
+    result = {
+        "checked_subaccounts": checked_subaccounts,
+        "deleted_subaccounts": deleted_subaccounts,
+        "deleted_event_types": deleted_event_types,
+        "errors": errors,
+    }
+    logger.info(f"🧹 Router+EventType cleanup: {result}")
+    return result
+
 @shared_task(bind=True, max_retries=3)
 def refresh_calendar_subaccounts(self):
     """
@@ -772,10 +856,10 @@ def refresh_calendar_subaccounts(self):
     
     Runs daily at 2 AM.
     """
-    from core.models import GoogleCalendar, GoogleSubAccount, OutlookCalendar, OutlookSubAccount
+    from core.models import GoogleCalendar, GoogleSubAccount, OutlookCalendar
     from googleapiclient.discovery import build
     from google.oauth2.credentials import Credentials
-    import requests
+    # requests not needed here
     import logging
     
     logger = logging.getLogger(__name__)
@@ -970,7 +1054,7 @@ def cleanup_invalid_google_connections(self):
 
     Runs daily at midnight.
     """
-    from core.models import GoogleCalendar, Calendar
+    from core.models import GoogleCalendar
     from django.utils import timezone
     from django.db.models import Q
     import logging

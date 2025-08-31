@@ -2,18 +2,18 @@
 Google Calendar API service for handling OAuth and calendar operations.
 """
 import logging
-from datetime import datetime, timedelta, timezone as dt_timezone
-from typing import Dict, List, Optional
+from datetime import datetime, timezone as dt_timezone
+from typing import Dict, List
 from django.conf import settings
 from django.utils import timezone
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+from googleapiclient.errors import HttpError  # noqa: F401
 import requests
 
-from core.models import GoogleCalendar, Calendar
+from core.models import GoogleCalendar
 
 logger = logging.getLogger(__name__)
 
@@ -127,19 +127,31 @@ class GoogleCalendarService:
             scopes=self.google_calendar.scopes or settings.GOOGLE_SCOPES
         )
         
-        # Set expiry if available
+        # Set expiry if available (google-auth compares with naive utcnow → use naive-UTC)
         if self.google_calendar.token_expires_at:
-            credentials.expiry = self.google_calendar.token_expires_at
+            exp = self.google_calendar.token_expires_at
+            try:
+                if exp.tzinfo is None:
+                    # already naive → assume UTC
+                    exp_naive = exp
+                else:
+                    exp_naive = exp.astimezone(dt_timezone.utc).replace(tzinfo=None)
+            except Exception:
+                exp_naive = exp
+            credentials.expiry = exp_naive
         
-        # Refresh if needed
-        if not credentials.valid:
-            if credentials.expired and credentials.refresh_token:
-                try:
-                    credentials.refresh(Request())
-                    self._update_tokens(credentials)
-                except Exception as e:
-                    logger.error(f"Failed to refresh token: {str(e)}")
-                    raise
+        # Refresh if needed; be defensive against naive/aware comparisons in google-auth
+        try:
+            needs_refresh = not credentials.valid
+        except Exception:
+            needs_refresh = True
+        if needs_refresh and credentials.refresh_token:
+            try:
+                credentials.refresh(Request())
+                self._update_tokens(credentials)
+            except Exception as e:
+                logger.error(f"Failed to refresh token: {str(e)}")
+                raise
         
         return credentials
     
@@ -162,8 +174,6 @@ class GoogleCalendarService:
         Sync calendars from Google using sub-accounts.
         Returns list of synced calendar data for each active sub-account.
         """
-        from core.models import GoogleSubAccount
-        
         synced_calendars = []
         errors = {}
         
@@ -248,9 +258,18 @@ class GoogleCalendarService:
         try:
             service = self.get_service()
             
-            # Convert times to RFC3339 format
-            time_min = start_time.isoformat() if hasattr(start_time, 'isoformat') else start_time
-            time_max = end_time.isoformat() if hasattr(end_time, 'isoformat') else end_time
+            # Convert times to RFC3339 format; ensure timezone-aware, default UTC
+            from datetime import timezone
+            def to_rfc3339(dt):
+                try:
+                    if hasattr(dt, 'tzinfo') and dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.isoformat()
+                except Exception:
+                    return dt
+
+            time_min = to_rfc3339(start_time)
+            time_max = to_rfc3339(end_time)
             
             # Get events in the time range
             events_result = service.events().list(

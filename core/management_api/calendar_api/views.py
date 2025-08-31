@@ -164,20 +164,34 @@ class CalendarViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         """
         Delete a calendar and cascade to provider-specific data.
-        The CASCADE on the OneToOne relationship will handle cleanup.
+        Triggers a clean disconnect before deletion (via signals) and then
+        removes provider calendars, provider sub-accounts, router SubAccounts,
+        EventType mappings, and orphan EventTypes.
         """
         calendar = self.get_object()
         calendar_id = calendar.id
         provider = calendar.provider
-        
+
         try:
             with transaction.atomic():
-                # The CASCADE will delete GoogleCalendar or OutlookCalendar
+                # Signals (pre_delete) will revoke tokens. CASCADE removes provider models.
                 response = super().destroy(request, *args, **kwargs)
+
+                # After deletion, run a quick inline sweep for orphan EventTypes
+                try:
+                    from django.db.models import Count
+                    from core.models import EventType
+                    orphan_ids = list(
+                        EventType.objects.annotate(mcount=Count('calendar_mappings')).filter(mcount=0).values_list('id', flat=True)
+                    )
+                    if orphan_ids:
+                        EventType.objects.filter(id__in=orphan_ids).delete()
+                except Exception:
+                    pass
 
                 logger.info(f"Deleted {provider} calendar {calendar_id} for user {request.user.email}")
                 return response
-            
+
         except Exception as e:
             logger.error(f"Failed to delete calendar {calendar_id}: {e}")
             return Response(
