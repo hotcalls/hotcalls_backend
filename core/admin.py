@@ -85,7 +85,7 @@ class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
             'fields': ('email', 'first_name', 'last_name', 'phone', 'password1', 'password2'),
         }),
         ('Permissions', {
-            'fields': ('is_staff', 'is_superuser'),
+            'fields': ('is_active', 'is_email_verified', 'is_staff', 'is_superuser'),
         }),
         ('Custom Fields', {
             'fields': ('status', 'stripe_customer_id', 'social_id', 'social_provider'),
@@ -97,6 +97,58 @@ class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
     
     # Filter horizontal for many-to-many fields
     filter_horizontal = ('groups', 'user_permissions')
+
+    def save_model(self, request, obj, form, change):
+        """When creating a user via admin, mirror registration side-effects:
+        - Ensure user is active, verified, status=active
+        - Create a default workspace and set Enterprise plan as current plan
+        """
+        # Save first so we have a PK
+        super().save_model(request, obj, form, change)
+
+        # Only apply onboarding flow for newly created users
+        if not change:
+            # Ensure flags for admin-created accounts
+            needs_update = False
+            if not obj.is_active:
+                obj.is_active = True; needs_update = True
+            if not obj.is_email_verified:
+                obj.is_email_verified = True; needs_update = True
+            if getattr(obj, 'status', None) != 'active':
+                obj.status = 'active'; needs_update = True
+            if needs_update:
+                obj.save(update_fields=['is_active', 'is_email_verified', 'status'])
+
+            # Create default workspace (same as registration flow)
+            try:
+                from core.utils import create_user_workspace
+                workspace = create_user_workspace(obj)
+            except Exception:
+                workspace = None
+
+            # Assign Enterprise (max) plan and active subscription
+            if workspace is not None:
+                try:
+                    from core.models import Plan, WorkspaceSubscription
+                    enterprise_plan, _ = Plan.objects.get_or_create(
+                        plan_name='Enterprise',
+                        defaults={'price_monthly': None, 'is_active': True}
+                    )
+                    # Create active subscription if none exists
+                    if not WorkspaceSubscription.objects.filter(workspace=workspace, is_active=True).exists():
+                        WorkspaceSubscription.objects.create(
+                            workspace=workspace,
+                            plan=enterprise_plan,
+                            started_at=timezone.now(),
+                            is_active=True,
+                        )
+                    # Set current_plan on workspace
+                    if getattr(workspace, 'current_plan', None) != enterprise_plan:
+                        workspace.current_plan = enterprise_plan
+                        workspace.save(update_fields=['current_plan'])
+                except Exception:
+                    # Do not break admin save if plan assignment fails
+                    pass
 
 
 @admin.register(Voice)
