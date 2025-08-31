@@ -1041,9 +1041,10 @@ class Agent(models.Model):
         blank=True,
         default="I am a helpful and professional AI assistant."
     )
-    prompt = models.TextField(
-        help_text="Agent prompt/instructions for AI behavior",
-        blank=True
+    script_template = models.TextField(
+        help_text="Script template/instructions for AI behavior",
+        blank=True,
+        default=""
     )
     # Knowledge Base: single PDF file stored like voices (no manifest)
     kb_pdf = models.FileField(

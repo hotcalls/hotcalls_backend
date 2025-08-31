@@ -41,7 +41,7 @@ def _mk_env():
         call_from="09:00:00",
         call_to="17:00:00",
         character="",
-        prompt="",
+        script_template="",
     )
     # Assign a phone number to the agent (required for from_number inference)
     pn = PhoneNumber.objects.create(phonenumber="+49000000001")

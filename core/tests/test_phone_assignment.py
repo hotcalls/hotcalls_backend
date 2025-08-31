@@ -53,7 +53,7 @@ class AgentAutoAssignTests(TestCase):
             call_from="09:00:00",
             call_to="17:00:00",
             character="",
-            prompt="",
+            script_template="",
         )
         # Simulate serializer.create behavior by applying default after agent exists
         # Normally handled in AgentCreateSerializer.create

@@ -767,7 +767,7 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
             "call_from": str(base_agent.call_from) if base_agent.call_from else "",
             "call_to": str(base_agent.call_to) if base_agent.call_to else "",
             "character": base_agent.character,
-            "prompt": base_agent.prompt,
+            "script_template": getattr(base_agent, "script_template", ""),
             "calendar_configuration": str(base_agent.calendar_configuration.id) if base_agent.calendar_configuration else ""
         }
         
@@ -787,13 +787,13 @@ def _maybe_trigger_feedback_if_needed(call_log: CallLog, provided_calltask_id: s
                                 # Assume it's already an external ID
                                 agent_config['voice'] = str(value)
                         except (Voice.DoesNotExist, ValueError):
-                            # Keep original if voice not found
-                            import logging
-                            logger = logging.getLogger(__name__)
-                            logger.warning(f"Voice override failed: {value}")
+                            pass
                     else:
-                        # Direct override for other fields
-                        agent_config[key] = value
+                        # Allow overriding script_template via API as well
+                        if key == 'script_template':
+                            agent_config['script_template'] = str(value or '')
+                        else:
+                            agent_config[key] = value
         
         return agent_config
 

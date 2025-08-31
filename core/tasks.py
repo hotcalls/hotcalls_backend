@@ -183,7 +183,8 @@ def trigger_call(self, call_task_id):
             "name": agent.name,
             "voice_external_id": (agent.voice.voice_external_id if agent.voice else None),
             "language": agent.language,
-            "prompt": agent.prompt,
+            # New field propagated to runtime
+            "script_template": getattr(agent, "script_template", ""),
             "greeting_outbound": agent.greeting_outbound,
             "greeting_inbound": agent.greeting_inbound,
             "character": agent.character,

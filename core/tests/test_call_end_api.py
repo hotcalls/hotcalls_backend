@@ -82,7 +82,7 @@ class EndOfCallEndpointTests(TestCase):
             call_from="09:00:00",
             call_to="17:00:00",
             character="friendly",
-            prompt="do it",
+            script_template="do it",
             phone_number=phone_number,
         )
 

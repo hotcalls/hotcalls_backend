@@ -59,6 +59,8 @@ async def _make_call_async(
         "greeting_inbound": agent_config.get("greeting_inbound"),
         "greeting_outbound": agent_config.get("greeting_outbound"),
         "max_call_duration_s": max(1, 60 * int(agent_config["max_call_duration_minutes"])),
+        # Script template propagated for runtime prompt ingestion
+        "script_template": agent_config.get("script_template", ""),
         # Booking identifiers
         "workspace_id": agent_config.get("workspace_id"),
         "event_type_id": agent_config.get("event_type_id"),

@@ -29,7 +29,7 @@ def _setup_agent_lead_task():
         call_from="09:00:00",
         call_to="17:00:00",
         character="",
-        prompt="",
+        script_template="",
     )
     # Assign a phone number to satisfy from_number inference
     pn = PhoneNumber.objects.create(phonenumber="+49000000001")

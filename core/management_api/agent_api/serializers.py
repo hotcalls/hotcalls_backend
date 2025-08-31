@@ -68,7 +68,7 @@ class AgentSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt', 'phone_number', 'phone_number_display',
+            'character', 'script_template', 'phone_number', 'phone_number_display',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['agent_id', 'created_at', 'updated_at']
@@ -104,7 +104,7 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'event_type',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
-            'character', 'prompt', 'phone_number'
+            'character', 'script_template', 'phone_number'
         ]
     
     def validate_workspace(self, value):
@@ -209,7 +209,7 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'lead_funnel',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to',
-            'character', 'prompt'
+            'character', 'script_template'
         ]
     
     def validate_workdays(self, value):

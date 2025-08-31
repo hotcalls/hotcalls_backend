@@ -233,8 +233,8 @@ class OutboundCallSerializer(serializers.Serializer):
         allowed_fields = {
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             'voice', 'language', 'retry_interval', 'max_retries',
-            'workdays', 'call_from', 'call_to', 'character', 
-            'prompt', 'calendar_configuration'
+            'workdays', 'call_from', 'call_to', 'character',
+            'script_template', 'calendar_configuration'
         }
         
         # Check for invalid fields
