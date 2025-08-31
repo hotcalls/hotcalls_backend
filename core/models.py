@@ -1086,6 +1086,16 @@ class Agent(models.Model):
     )
     # calendar_configuration removed - CalendarConfiguration no longer exists
     
+    # NEW: One-to-one mapping to EventType for booking
+    event_type = models.OneToOneField(
+        'EventType',
+        on_delete=models.PROTECT,
+        related_name='agent',
+        null=True,
+        blank=True,
+        help_text="Event type used by this agent for availability and booking"
+    )
+    
     # NEW: Agent claims ownership of a lead funnel
     lead_funnel = models.OneToOneField(
         'LeadFunnel',

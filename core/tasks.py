@@ -191,6 +191,9 @@ def trigger_call(self, call_task_id):
             "max_call_duration_minutes": agent.max_call_duration_minutes,
             "workspace_name": workspace.workspace_name,
             "sip_trunk_id": sip_trunk_id,  # Pass dynamic trunk ID
+            # Pass booking identifiers
+            "workspace_id": str(workspace.id),
+            "event_type_id": (str(agent.event_type_id) if getattr(agent, 'event_type_id', None) else None),
         }
         if lead is not None:
             lead_data = {
