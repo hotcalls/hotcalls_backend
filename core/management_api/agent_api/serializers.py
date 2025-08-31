@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import Agent, PhoneNumber, Voice, LeadFunnel
+from core.models import Agent, PhoneNumber, Voice, LeadFunnel, EventType
 
 
 class PhoneNumberSerializer(serializers.ModelSerializer):
@@ -62,6 +62,8 @@ class AgentSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD (now FK to Voice)  
             'voice', 'voice_provider', 'voice_external_id',
+            # EVENT TYPE (booking)
+            'event_type',
             # LEAD FUNNEL FIELD
             'lead_funnel',
             # EXISTING FIELDS
@@ -98,6 +100,8 @@ class AgentCreateSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice', 
+            # EVENT TYPE (optional on create)
+            'event_type',
             # EXISTING FIELDS
             'language', 'retry_interval', 'max_retries', 'workdays', 'call_from', 'call_to', 
             'character', 'prompt', 'phone_number'
@@ -167,6 +171,15 @@ class AgentCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create an agent and auto-assign workspace default phone if not provided."""
         phone = validated_data.get('phone_number')
+        # Validate event_type belongs to workspace and is free if provided
+        workspace = validated_data.get('workspace')
+        et: EventType | None = validated_data.get('event_type')
+        if et is not None:
+            if et.workspace_id != workspace.id:
+                raise serializers.ValidationError({'event_type': 'Event type must belong to the same workspace as the agent'})
+            if hasattr(et, 'agent') and et.agent is not None:
+                raise serializers.ValidationError({'event_type': 'Event type is already assigned to another agent'})
+
         agent = Agent.objects.create(**validated_data)
         if phone is None:
             try:
@@ -190,6 +203,8 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
             'name', 'status', 'greeting_inbound', 'greeting_outbound',
             # UPDATED VOICE FIELD
             'voice',
+            # EVENT TYPE (booking)
+            'event_type',
             # LEAD FUNNEL FIELD
             'lead_funnel',
             # EXISTING FIELDS
@@ -237,6 +252,20 @@ class AgentUpdateSerializer(serializers.ModelSerializer):
         if not Voice.objects.filter(id=value.id).exists():
             raise serializers.ValidationError("Selected voice does not exist")
         
+        return value
+
+    def validate_event_type(self, value):
+        """Ensure event type is in the same workspace and not assigned to another agent."""
+        if value is None:
+            return value
+        instance: Agent | None = getattr(self, 'instance', None)
+        # Same workspace
+        if instance is not None and value.workspace_id != instance.workspace_id:
+            raise serializers.ValidationError('Event type must belong to the same workspace as the agent')
+        # One-to-one uniqueness (allow keeping same)
+        if hasattr(value, 'agent') and value.agent is not None:
+            if instance is None or value.agent.agent_id != instance.agent_id:
+                raise serializers.ValidationError('Event type is already assigned to another agent')
         return value
 
 
