@@ -4,7 +4,7 @@ from rest_framework.response import Response
 # Avoid unused Count import at module level; import where needed
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse, OpenApiExample, OpenApiParameter
-# from django.utils import timezone
+from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 import logging
 
@@ -1291,6 +1291,7 @@ def make_test_call(request):
         agent=agent,
         workspace=agent.workspace,
         target_ref=target_ref,
+        next_call=timezone.now(),
     )
     
     # Return success response

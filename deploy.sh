@@ -1935,6 +1935,115 @@ EOF
             log_info "Migration logs:"
             kubectl logs job/$JOB_NAME -n "$NAMESPACE" --tail=50
 
+            # -----------------------------------------------------------------
+            # Explicitly migrate django_celery_beat and seed periodic tasks
+            # -----------------------------------------------------------------
+            log_info "Running explicit django_celery_beat migrations..."
+            cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: django-migrate-beat-$(date +%s)
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: migration
+    environment: ${ENVIRONMENT}
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      containers:
+      - name: migrate-beat
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
+        command: ["python", "manage.py", "migrate", "django_celery_beat", "--noinput"]
+        envFrom:
+        - configMapRef:
+            name: ${PROJECT_PREFIX}-config
+        - secretRef:
+            name: ${PROJECT_PREFIX}-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "300m"
+EOF
+
+            BEAT_JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=migration \
+                --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+            if [[ -n "$BEAT_JOB_NAME" ]]; then
+                log_info "Waiting for beat migration job $BEAT_JOB_NAME to complete..."
+                if kubectl wait --for=condition=complete job/$BEAT_JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+                    log_success "django_celery_beat migrations completed!"
+                else
+                    log_error "django_celery_beat migration job failed or timed out!"
+                    kubectl logs job/$BEAT_JOB_NAME -n "$NAMESPACE" --tail=100 || true
+                    return 1
+                fi
+            fi
+
+            # Seed required periodic tasks (idempotent)
+            log_info "Seeding required periodic tasks in django_celery_beat..."
+            cat <<EOF | kubectl apply -f -
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: django-seed-periodic-$(date +%s)
+  namespace: $NAMESPACE
+  labels:
+    app.kubernetes.io/name: ${PROJECT_PREFIX}
+    app.kubernetes.io/component: migration
+    environment: ${ENVIRONMENT}
+spec:
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${PROJECT_PREFIX}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      containers:
+      - name: seed-periodic
+        image: ${ACR_LOGIN_SERVER}/${PROJECT_NAME}-backend:${IMAGE_TAG}
+        command: ["bash", "-lc", "python manage.py shell -c 'from django_celery_beat.models import IntervalSchedule, PeriodicTask;\n\nimport sys\n\n# helper to ensure/update a periodic task by interval (seconds)\n\ndef ensure_interval_task(name, task, every_seconds, enabled=True):\n    sched, _ = IntervalSchedule.objects.get_or_create(every=every_seconds, period=IntervalSchedule.SECONDS)\n    PeriodicTask.objects.update_or_create(\n        name=name, defaults={\"task\": task, \"interval\": sched, \"enabled\": enabled}\n    )\n\n# schedule-agent-calls every 5s\nensure_interval_task(\"schedule-agent-calls\", \"core.tasks.schedule_agent_call\", 5, True)\n# cleanup-stuck-call-tasks every 60s\nensure_interval_task(\"cleanup-stuck-call-tasks\", \"core.tasks.cleanup_stuck_call_tasks\", 60, True)\n# cleanup-router-subaccounts every 300s (5 minutes)\nensure_interval_task(\"cleanup-router-subaccounts\", \"core.tasks.cleanup_orphan_router_subaccounts\", 300, True)\n\nprint(\"Periodic tasks ensured.\")' "]
+        envFrom:
+        - configMapRef:
+            name: ${PROJECT_PREFIX}-config
+        - secretRef:
+            name: ${PROJECT_PREFIX}-secrets
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+EOF
+
+            SEED_JOB_NAME=$(kubectl get jobs -n "$NAMESPACE" -l app.kubernetes.io/component=migration \
+                --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1].metadata.name}')
+            if [[ -n "$SEED_JOB_NAME" ]]; then
+                log_info "Waiting for periodic task seed job $SEED_JOB_NAME to complete..."
+                if kubectl wait --for=condition=complete job/$SEED_JOB_NAME -n "$NAMESPACE" --timeout=300s; then
+                    log_success "Periodic tasks ensured in database!"
+                    kubectl logs job/$SEED_JOB_NAME -n "$NAMESPACE" --tail=50 || true
+                else
+                    log_error "Periodic task seed job failed or timed out!"
+                    kubectl logs job/$SEED_JOB_NAME -n "$NAMESPACE" --tail=200 || true
+                    return 1
+                fi
+            fi
+
             # When PURGE_DB=true, run seed defaults job right after migrations
             if [[ "$PURGE_DB" == "true" ]]; then
                 log_info "Running seed-defaults job (PURGE_DB=true)..."
