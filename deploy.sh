@@ -1659,7 +1659,8 @@ deploy_kubernetes() {
     # Create foundational resources in parallel
     envsubst < namespace.yaml | kubectl apply -f - &
     envsubst < rbac.yaml | kubectl apply -f - &
-    wait  # Wait for namespace and RBAC to be ready
+    kubectl apply -f priorityclasses.yaml &
+    wait  # Wait for namespace, RBAC, and priority classes to be ready
     
     log_info "Creating configuration (parallel)..."
     # Create config and secrets in parallel 
@@ -1691,6 +1692,9 @@ deploy_kubernetes() {
         log_info "Deploying outbound agent (REDEPLOY_OUTBOUNDAGENT=true)..."
         envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
         envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
+        envsubst < outboundagent-pdb.yaml | kubectl apply -f - &
+        envsubst < outboundagent-singleton-enforcer.yaml | kubectl apply -f - &
+        envsubst < outboundagent-singleton-enforcer-deploy.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
         wait  # Wait for parallel deployments to complete
