@@ -3,13 +3,14 @@ from datetime import datetime, timedelta, time
 from typing import List, Tuple
 from zoneinfo import ZoneInfo
 from rest_framework import viewsets, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResponse
 
 from core.models import EventType, Workspace, SubAccount
 from core.management_api.payment_api.permissions import IsWorkspaceMember
 from core.services.calendar_provider import CalendarProviderFacade
+import base64
 from .serializers import (
     EventTypeSerializer,
     EventTypeCreateUpdateSerializer,
@@ -27,6 +28,12 @@ from .serializers import (
 class EventTypeViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsWorkspaceMember]
     lookup_field = 'pk'
+
+    def get_permissions(self):
+        # Public access for availability lookup and booking (no authentication)
+        if getattr(self, 'action', None) in ['availability', 'book']:
+            return [AllowAny()]
+        return [perm() for perm in self.permission_classes]
 
     def get_workspace(self) -> Workspace:
         workspace_id = self.kwargs.get('workspace_id') or self.request.query_params.get('workspace_id')
@@ -166,58 +173,22 @@ class EventTypeViewSet(viewsets.ModelViewSet):
     )
     def availability(self, request, *args, **kwargs):
         """
-        Parameters (query):
-        - date: YYYY-MM-DD (required)
+        Two modes supported:
+        1) Legacy (frontend): ?date=YYYY-MM-DD
+           - Returns envelope with slots as ISO strings (backward compatible)
 
-        Returns list of ISO8601 datetimes (with offset) in EventType.timezone.
+        2) Agent-friendly: ?from=<ISO8601>&to=<ISO8601>
+           - from/to must be within the same calendar day
+           - Returns a bare JSON array of slot objects with id/start/end/timezone
         """
         event_type: EventType = self.get_object()
+        from_str = (request.query_params.get('from') or '').strip()
+        to_str = (request.query_params.get('to') or '').strip()
         date_str = (request.query_params.get('date') or '').strip()
-        if not date_str:
-            return Response({"error": "date is required (YYYY-MM-DD)"}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        except Exception:
-            return Response({"error": "invalid date format; expected YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
 
         tz = ZoneInfo(event_type.timezone or 'UTC')
 
-        # Working hours for weekday
-        weekday = target_date.weekday()  # 0=Mon
-        working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
-        if not working_hour:
-            return Response({
-                "event_type_id": str(event_type.id),
-                "date": date_str,
-                "timezone": event_type.timezone,
-                "slots": [],
-            })
-
-        day_start_dt = datetime.combine(target_date, time(0, 0)).replace(tzinfo=tz)
-        day_end_dt = day_start_dt + timedelta(days=1)
-
-        # Aggregate busy intervals for all mappings
-        mappings = list(event_type.calendar_mappings.select_related('sub_account').all())
-        busy: List[Tuple[datetime, datetime]] = []
-        for m in mappings:
-            sub = m.sub_account
-            try:
-                items = CalendarProviderFacade.free_busy(sub, day_start_dt, day_end_dt, event_type.timezone)
-                for it in items:
-                    busy.append((it.start, it.end))
-            except Exception:
-                # Provider errors should not crash availability; assume no additional busy from this source
-                continue
-
-        # Extend busy intervals by buffers (before = buffer_hours + prep_minutes)
-        before_minutes = (event_type.buffer_time or 0) * 60 + (event_type.prep_time or 0)
-        extended_busy: List[Tuple[datetime, datetime]] = []
-        if busy:
-            for start_dt, end_dt in busy:
-                extended_busy.append((start_dt - timedelta(minutes=before_minutes), end_dt))
-
-        # Merge overlapping intervals
+        # Helper: merge intervals
         def merge_intervals(intervals: List[Tuple[datetime, datetime]]) -> List[Tuple[datetime, datetime]]:
             if not intervals:
                 return []
@@ -234,9 +205,126 @@ class EventTypeViewSet(viewsets.ModelViewSet):
             merged.append((cur_s, cur_e))
             return merged
 
-        merged_busy = merge_intervals(extended_busy)
+        def compute_slots_for_window(window_start: datetime, window_end: datetime) -> List[Tuple[datetime, datetime]]:
+            # Aggregate busy intervals across mappings
+            mappings = list(event_type.calendar_mappings.select_related('sub_account').all())
+            busy: List[Tuple[datetime, datetime]] = []
+            for m in mappings:
+                sub = m.sub_account
+                try:
+                    items = CalendarProviderFacade.free_busy(sub, window_start, window_end, event_type.timezone)
+                    for it in items:
+                        busy.append((it.start, it.end))
+                except Exception:
+                    continue
 
-        # Restrict to working window for the day
+            # Extend busy intervals by pre-buffers
+            before_minutes = (event_type.buffer_time or 0) * 60 + (event_type.prep_time or 0)
+            extended_busy: List[Tuple[datetime, datetime]] = []
+            if busy:
+                for s, e in busy:
+                    extended_busy.append((s - timedelta(minutes=before_minutes), e))
+
+            merged_busy_local = merge_intervals(extended_busy)
+
+            # Start from the provided window and subtract busy
+            candidates: List[Tuple[datetime, datetime]] = [(window_start, window_end)]
+            for bs, be in merged_busy_local:
+                new_candidates: List[Tuple[datetime, datetime]] = []
+                for cs, ce in candidates:
+                    if be <= cs or bs >= ce:
+                        new_candidates.append((cs, ce))
+                        continue
+                    if bs > cs:
+                        new_candidates.append((cs, bs))
+                    if be < ce:
+                        new_candidates.append((be, ce))
+                candidates = [(s, e) for (s, e) in new_candidates if e > s]
+
+            # Step through by duration
+            duration_minutes = event_type.duration
+            step = timedelta(minutes=duration_minutes)
+            slot_ranges: List[Tuple[datetime, datetime]] = []
+            for s, e in candidates:
+                t = s
+                while t + step <= e:
+                    slot_ranges.append((t, t + step))
+                    t = t + step
+            return slot_ranges
+
+        # Agent-friendly windowed availability
+        if from_str and to_str:
+            try:
+                def parse_iso(s: str) -> datetime:
+                    return datetime.fromisoformat(s.replace('Z', '+00:00')) if s else None
+                raw_start = parse_iso(from_str)
+                raw_end = parse_iso(to_str)
+                if not raw_start or not raw_end:
+                    raise ValueError
+            except Exception:
+                return Response({"error": "invalid from/to format; expected ISO8601"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Localize to event type timezone
+            start_dt = raw_start.astimezone(tz)
+            end_dt = raw_end.astimezone(tz)
+            if start_dt.date() != end_dt.date():
+                return Response({"error": "from/to must be within the same calendar day"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Respect working hours for that weekday
+            weekday = start_dt.weekday()
+            working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
+            if not working_hour:
+                return Response([], status=status.HTTP_200_OK)
+
+            work_start_dt = datetime.combine(start_dt.date(), working_hour.start_time).replace(tzinfo=tz)
+            work_end_dt = datetime.combine(start_dt.date(), working_hour.end_time).replace(tzinfo=tz)
+            if work_end_dt <= work_start_dt:
+                return Response([], status=status.HTTP_200_OK)
+
+            window_start = max(work_start_dt, start_dt)
+            window_end = min(work_end_dt, end_dt)
+            if window_end <= window_start:
+                return Response([], status=status.HTTP_200_OK)
+
+            slot_ranges = compute_slots_for_window(window_start, window_end)
+
+            def encode_slot_id(dt: datetime) -> str:
+                iso = dt.isoformat()
+                return base64.urlsafe_b64encode(iso.encode()).decode()
+
+            slots_obj = [
+                {
+                    "id": encode_slot_id(s),
+                    "start": s.isoformat(),
+                    "end": e.isoformat(),
+                    "timezone": event_type.timezone,
+                }
+                for (s, e) in slot_ranges
+            ]
+            return Response(slots_obj, status=status.HTTP_200_OK)
+
+        # Legacy per-day availability (date)
+        if not date_str:
+            return Response({"error": "date is required (YYYY-MM-DD) or pass from/to"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            return Response({"error": "invalid date format; expected YYYY-MM-DD"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Working hours for weekday
+        weekday = target_date.weekday()  # 0=Mon
+        working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
+        if not working_hour:
+            return Response({
+                "event_type_id": str(event_type.id),
+                "date": date_str,
+                "timezone": event_type.timezone,
+                "slots": [],
+            })
+
+        day_start_dt = datetime.combine(target_date, time(0, 0)).replace(tzinfo=tz)
+        day_end_dt = day_start_dt + timedelta(days=1)
         work_start_dt = datetime.combine(target_date, working_hour.start_time).replace(tzinfo=tz)
         work_end_dt = datetime.combine(target_date, working_hour.end_time).replace(tzinfo=tz)
         if work_end_dt <= work_start_dt:
@@ -247,38 +335,13 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                 "slots": [],
             })
 
-        # Compute free intervals inside working window by subtracting busy
-        # Start with one candidate interval = working window
-        candidates: List[Tuple[datetime, datetime]] = [(work_start_dt, work_end_dt)]
-        for bs, be in merged_busy:
-            new_candidates: List[Tuple[datetime, datetime]] = []
-            for cs, ce in candidates:
-                # No overlap
-                if be <= cs or bs >= ce:
-                    new_candidates.append((cs, ce))
-                    continue
-                # Overlap cases: split
-                if bs > cs:
-                    new_candidates.append((cs, bs))
-                if be < ce:
-                    new_candidates.append((be, ce))
-            candidates = [(s, e) for (s, e) in new_candidates if e > s]
-
-        # Generate slots of duration minutes, stepping by duration minutes
-        duration_minutes = event_type.duration
-        step = timedelta(minutes=duration_minutes)
-        slots: List[str] = []
-        for s, e in candidates:
-            t = s
-            while t + step <= e:
-                slots.append(t.isoformat())
-                t = t + step
-
+        slot_ranges = compute_slots_for_window(work_start_dt, work_end_dt)
+        slot_strs: List[str] = [s.isoformat() for (s, _e) in slot_ranges]
         return Response({
             "event_type_id": str(event_type.id),
             "date": date_str,
             "timezone": event_type.timezone,
-            "slots": slots,
+            "slots": slot_strs,
         })
 
     @extend_schema(
@@ -291,9 +354,20 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         event_type: EventType = self.get_object()
         tz = ZoneInfo(event_type.timezone or 'UTC')
 
-        start_str = (request.data.get('start') if isinstance(request.data, dict) else None) or ''
-        if not start_str:
-            return Response({"error": "start is required (ISO8601)"}, status=status.HTTP_400_BAD_REQUEST)
+        data = request.data if isinstance(request.data, dict) else {}
+        start_str = (data.get('start') or '').strip()
+        slot_id = (data.get('slot_id') or '').strip()
+
+        if not start_str and not slot_id:
+            return Response({"error": "start or slot_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not start_str and slot_id:
+            try:
+                decoded = base64.urlsafe_b64decode(slot_id.encode()).decode()
+                start_str = decoded
+            except Exception:
+                return Response({"error": "invalid slot_id"}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             # Parse start in event type timezone if naive
             if start_str.endswith('Z'):
