@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${PROJECT_PREFIX}-outboundagent-singleton-enforcer
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${PROJECT_PREFIX}-outboundagent-singleton-enforcer
+  template:
+    metadata:
+      labels:
+        app: ${PROJECT_PREFIX}-outboundagent-singleton-enforcer
+    spec:
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      containers:
+      - name: enforcer
+        image: bitnami/kubectl:1.32
+        resources:
+          requests:
+            cpu: 5m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 64Mi
+        command:
+        - /bin/sh
+        - -c
+        - |
+          while true; do
+            ns="${PROJECT_PREFIX}-${ENVIRONMENT}"
+            selector="app.kubernetes.io/name=${PROJECT_PREFIX},app.kubernetes.io/component=outboundagent"
+            first=1
+            kubectl -n "$ns" get pods -l "$selector" --sort-by=.metadata.creationTimestamp \
+              -o jsonpath='{range .items[*]}{.metadata.name} {.status.phase}{"\n"}{end}' |
+            while read -r name phase; do
+              [ -z "$name" ] && continue
+              case "$phase" in Succeeded|Failed) continue;; esac
+              if [ "$first" -eq 1 ]; then
+                echo "Keeping $name"
+                first=0
+              else
+                echo "Deleting extra pod: $name"
+                kubectl -n "$ns" delete pod "$name" --grace-period=10 --timeout=30s --ignore-not-found || true
+              fi
+            done
+            sleep 10
+          done
+      restartPolicy: Always
+
+

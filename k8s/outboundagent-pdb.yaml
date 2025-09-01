@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ${PROJECT_PREFIX}-outboundagent-pdb
+  namespace: ${PROJECT_PREFIX}-${ENVIRONMENT}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ${PROJECT_PREFIX}
+      app.kubernetes.io/component: outboundagent
+
+

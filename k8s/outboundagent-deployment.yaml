@@ -30,6 +30,7 @@ spec:
         checksum/outboundagent-secrets: "${OUTBOUNDAGENT_SECRETS_CHECKSUM}"
     spec:
       serviceAccountName: ${PROJECT_PREFIX}-sa
+      priorityClassName: outboundagent-critical
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
