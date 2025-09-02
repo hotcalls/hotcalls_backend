@@ -252,7 +252,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                     t = t + step
             return slot_ranges
 
-        # Agent-friendly windowed availability
+        # Agent-friendly windowed availability (supports multi-day ranges)
         if from_str and to_str:
             try:
                 def parse_iso(s: str) -> datetime:
@@ -267,26 +267,27 @@ class EventTypeViewSet(viewsets.ModelViewSet):
             # Localize to event type timezone
             start_dt = raw_start.astimezone(tz)
             end_dt = raw_end.astimezone(tz)
-            if start_dt.date() != end_dt.date():
-                return Response({"error": "from/to must be within the same calendar day"}, status=status.HTTP_400_BAD_REQUEST)
+            if end_dt <= start_dt:
+                return Response({"error": "to must be after from"}, status=status.HTTP_400_BAD_REQUEST)
 
-            # Respect working hours for that weekday
-            weekday = start_dt.weekday()
-            working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
-            if not working_hour:
-                return Response([], status=status.HTTP_200_OK)
-
-            work_start_dt = datetime.combine(start_dt.date(), working_hour.start_time).replace(tzinfo=tz)
-            work_end_dt = datetime.combine(start_dt.date(), working_hour.end_time).replace(tzinfo=tz)
-            if work_end_dt <= work_start_dt:
-                return Response([], status=status.HTTP_200_OK)
-
-            window_start = max(work_start_dt, start_dt)
-            window_end = min(work_end_dt, end_dt)
-            if window_end <= window_start:
-                return Response([], status=status.HTTP_200_OK)
-
-            slot_ranges = compute_slots_for_window(window_start, window_end)
+            # Iterate day-by-day across the range
+            cur_date = start_dt.date()
+            end_date = end_dt.date()
+            slot_ranges: List[Tuple[datetime, datetime]] = []
+            while cur_date <= end_date:
+                # Working hours for this day
+                weekday = cur_date.weekday()
+                working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
+                if working_hour:
+                    day_work_start = datetime.combine(cur_date, working_hour.start_time).replace(tzinfo=tz)
+                    day_work_end = datetime.combine(cur_date, working_hour.end_time).replace(tzinfo=tz)
+                    if day_work_end > day_work_start:
+                        # Intersect with requested window
+                        day_window_start = day_work_start if cur_date > start_dt.date() else max(day_work_start, start_dt)
+                        day_window_end = day_work_end if cur_date < end_dt.date() else min(day_work_end, end_dt)
+                        if day_window_end > day_window_start:
+                            slot_ranges.extend(compute_slots_for_window(day_window_start, day_window_end))
+                cur_date = cur_date + timedelta(days=1)
 
             def encode_slot_id(dt: datetime) -> str:
                 iso = dt.isoformat()
