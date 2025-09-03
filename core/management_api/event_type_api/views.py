@@ -267,23 +267,38 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         working_hour = event_type.working_hours.filter(day_of_week=weekday).first()
         if not working_hour:
             return Response({
+                "error": "NO_AVAILABILITY",
+                "reason": "NO_WORKING_HOURS_CONFIGURED",
+                "message": f"No working hours set for {target_date.strftime('%A')}",
+                "weekday": weekday,
+                "weekday_name": target_date.strftime('%A'),
                 "event_type_id": str(event_type.id),
                 "date": date_str,
                 "timezone": event_type.timezone,
-                "slots": [],
-            })
+            }, status=status.HTTP_404_NOT_FOUND)
 
-        day_start_dt = datetime.combine(target_date, time(0, 0)).replace(tzinfo=tz)
-        day_end_dt = day_start_dt + timedelta(days=1)
-        work_start_dt = datetime.combine(target_date, working_hour.start_time).replace(tzinfo=tz)
+        now = datetime.now(tz)
+        target_time = working_hour.start_time
+        if target_date == now.date():
+            target_time = max(now.time(), target_time)
+
+        work_start_dt = datetime.combine(
+            target_date,
+            target_time
+        ).replace(tzinfo=tz)
+
         work_end_dt = datetime.combine(target_date, working_hour.end_time).replace(tzinfo=tz)
         if work_end_dt <= work_start_dt:
             return Response({
+                "error": "NO_AVAILABILITY",
+                "reason": "INVALID_WORKING_HOURS",
+                "message": f"Working hours end time ({working_hour.end_time}) must be after start time ({working_hour.start_time})",
+                "start_time": str(working_hour.start_time),
+                "end_time": str(working_hour.end_time),
                 "event_type_id": str(event_type.id),
                 "date": date_str,
                 "timezone": event_type.timezone,
-                "slots": [],
-            })
+            }, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
 
         slot_ranges = compute_slots_for_window(work_start_dt, work_end_dt)
         slot_strs: List[str] = [s.isoformat() for (s, _e) in slot_ranges]
