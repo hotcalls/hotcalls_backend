@@ -176,25 +176,7 @@ class MetaIntegrationService:
     def process_form_questions(self, questions: List[Dict]) -> Dict:
         """Process Meta form questions into normalized variable definitions"""
         variables = {
-            'contact': [],      # Core contact fields
-            'business': [],     # Business-related fields  
-            'custom': []        # Custom form fields
-        }
-        
-        # Reuse existing field sets from _map_lead_fields logic
-        CONTACT_FIELDS = {
-            'full_name', 'first_name', 'last_name', 'email', 'phone', 'given_name', 
-            'vorname', 'prenom', 'nombre', 'firstname', 'fname', 'forename', 'first',
-            'family_name', 'nachname', 'nom', 'apellido', 'lastname', 'lname', 
-            'surname', 'family', 'last', 'display_name', 'person_name',
-            'customer_name', 'user_name', 'client_name', 'contact_name',
-            'email_address', 'e_mail', 'mail', 'contact_email', 'user_email',
-            'phone_number', 'telephone', 'telefon', 'mobile', 'cell', 'handy'
-        }
-        BUSINESS_FIELDS = {
-            'company', 'company_name', 'business', 'business_name',
-            'organization', 'firm', 'enterprise', 'corporation',
-            'unternehmen', 'firma', 'entreprise', 'empresa'
+            'variables': []
         }
         
         for question in questions:
@@ -206,17 +188,10 @@ class MetaIntegrationService:
                 'key': key,
                 'label': label,
                 'type': self._map_question_type(meta_type),
-                'meta_type': meta_type,
+                'source': 'meta'
             }
             
-            # Categorize based on normalized key
-            key_lower = key.lower()
-            if any(contact_field in key_lower for contact_field in CONTACT_FIELDS):
-                variables['contact'].append(variable_def)
-            elif any(business_field in key_lower for business_field in BUSINESS_FIELDS):
-                variables['business'].append(variable_def)
-            else:
-                variables['custom'].append(variable_def)
+            variables['variables'].append(variable_def)
         
         return variables
     

@@ -328,25 +328,10 @@ class LeadViewSet(viewsets.ModelViewSet):
     def _process_csv_columns_to_variables(self, detected_keys: set) -> dict:
         """Convert detected CSV column names to custom_variables format"""
         variables = {
-            'contact': [],
-            'business': [], 
-            'custom': []
-        }
-        
-        # Reuse field categorization logic from Meta integration
-        CONTACT_FIELDS = {
-            'first_name', 'last_name', 'full_name', 'email', 'phone',
-            'given_name', 'vorname', 'surname', 'nachname', 'telefon',
-            'email_address', 'phone_number', 'mobile', 'handy', 'cell'
-        }
-        BUSINESS_FIELDS = {
-            'company', 'firma', 'unternehmen', 'industry', 'branche',
-            'business', 'organization', 'enterprise', 'corporation'
+            'variables': []
         }
         
         for key in sorted(detected_keys):
-            key_lower = key.lower()
-            
             variable_def = {
                 'key': key,
                 'label': key.replace('_', ' ').title(),
@@ -354,13 +339,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                 'source': 'csv'
             }
             
-            # Categorize based on key name
-            if any(contact_field in key_lower for contact_field in CONTACT_FIELDS):
-                variables['contact'].append(variable_def)
-            elif any(business_field in key_lower for business_field in BUSINESS_FIELDS):
-                variables['business'].append(variable_def) 
-            else:
-                variables['custom'].append(variable_def)
+            variables['variables'].append(variable_def)
         
         return variables
     
