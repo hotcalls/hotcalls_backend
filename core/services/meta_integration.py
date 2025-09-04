@@ -99,12 +99,36 @@ class MetaIntegrationService:
         }
         
         try:
+            logger.info(f"Requesting Facebook pages from: {url}")
+            logger.info(f"Request params: {dict(params, access_token='***REDACTED***')}")
+            
             response = requests.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            return data.get('data', [])
+            pages = data.get('data', [])
+            
+            # Enhanced logging for debugging
+            logger.info(f"Facebook API response structure: {list(data.keys())}")
+            logger.info(f"Found {len(pages)} pages for user")
+            
+            if pages:
+                for i, page in enumerate(pages):
+                    logger.info(f"Page {i+1}: {page.get('name', 'Unnamed')} (ID: {page.get('id')}, Category: {page.get('category', 'Unknown')})")
+                    if 'tasks' in page:
+                        logger.info(f"  - Page tasks: {page.get('tasks', [])}")
+            else:
+                logger.warning("No pages found in Facebook API response")
+                logger.info(f"Full API response: {data}")
+            
+            return pages
         except requests.RequestException as e:
             logger.error(f"Error getting user pages: {str(e)}")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    logger.error(f"Facebook API error response: {error_data}")
+                except:
+                    logger.error(f"Facebook API error response (raw): {e.response.text}")
             raise Exception(f"Failed to get user pages: {str(e)}")
     
     def get_page_details(self, page_id: str, access_token: str) -> Dict:
@@ -226,6 +250,82 @@ class MetaIntegrationService:
             logger.error(f"Error setting up webhook: {str(e)}")
             raise Exception(f"Failed to set up webhook: {str(e)}")
     
+    def validate_user_account(self, access_token: str) -> Dict[str, any]:
+        """Validate user account and permissions before creating integration"""
+        try:
+            # Check user info and permissions
+            user_info_url = f"{self.base_url}/me"
+            user_params = {
+                'access_token': access_token,
+                'fields': 'id,name,email,permissions'
+            }
+            
+            user_response = requests.get(user_info_url, params=user_params)
+            user_response.raise_for_status()
+            user_data = user_response.json()
+            
+            # Check pages
+            pages = self.get_user_pages(access_token)
+            
+            validation_result = {
+                'is_valid': True,
+                'errors': [],
+                'warnings': [],
+                'user_info': {
+                    'id': user_data.get('id'),
+                    'name': user_data.get('name'),
+                    'email': user_data.get('email')
+                },
+                'pages_count': len(pages),
+                'pages': pages[:5] if pages else []  # Limit to first 5 for response size
+            }
+            
+            # Validate pages
+            if not pages:
+                validation_result['is_valid'] = False
+                validation_result['errors'].append({
+                    'code': 'NO_PAGES',
+                    'message': 'No Facebook Pages found for this account',
+                    'solution': 'Create a Facebook Business Page or use an account that manages Pages'
+                })
+            
+            # Check permissions if available
+            if 'permissions' in user_data:
+                permissions_data = user_data['permissions'].get('data', [])
+                granted_permissions = [p['permission'] for p in permissions_data if p.get('status') == 'granted']
+                
+                required_perms = ['pages_read_engagement', 'leads_retrieval']
+                missing_perms = [perm for perm in required_perms if perm not in granted_permissions]
+                
+                if missing_perms:
+                    validation_result['warnings'].append({
+                        'code': 'MISSING_PERMISSIONS',
+                        'message': f'Missing permissions: {", ".join(missing_perms)}',
+                        'solution': 'Re-authorize with required permissions'
+                    })
+                
+                validation_result['permissions'] = {
+                    'granted': granted_permissions,
+                    'missing': missing_perms
+                }
+            
+            logger.info(f"Account validation result: {validation_result['is_valid']}, "
+                       f"Pages: {len(pages)}, Errors: {len(validation_result['errors'])}")
+            
+            return validation_result
+            
+        except Exception as e:
+            logger.error(f"Error validating user account: {str(e)}")
+            return {
+                'is_valid': False,
+                'errors': [{
+                    'code': 'VALIDATION_ERROR',
+                    'message': f'Failed to validate account: {str(e)}',
+                    'solution': 'Try again or contact support'
+                }],
+                'warnings': []
+            }
+
     def verify_webhook_signature(self, payload: bytes, signature: str, 
                                 verification_token: str) -> bool:
         """Verify Meta webhook signature"""
@@ -249,10 +349,15 @@ class MetaIntegrationService:
             expires_in = oauth_data.get('expires_in', 3600)
             token_expires_at = timezone.now() + timedelta(seconds=expires_in)
             
-            # Get user pages
+            # Get user pages with enhanced error handling
             pages = self.get_user_pages(access_token)
             if not pages:
-                raise Exception("No pages found for this account")
+                logger.error("No Facebook Pages found for this account during OAuth")
+                raise Exception(
+                    "No Facebook Pages found for this account. "
+                    "To use Meta Lead Ads integration, you need at least one Facebook Page. "
+                    "Please create a Facebook Business Page or use an account that manages Pages, then try again."
+                )
             
             # For now, use the first page
             # In production, you might want to let user choose
