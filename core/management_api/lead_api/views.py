@@ -324,6 +324,46 @@ class LeadViewSet(viewsets.ModelViewSet):
         },
         tags=["Lead Management"]
     )
+    
+    def _process_csv_columns_to_variables(self, detected_keys: set) -> dict:
+        """Convert detected CSV column names to custom_variables format"""
+        variables = {
+            'contact': [],
+            'business': [], 
+            'custom': []
+        }
+        
+        # Reuse field categorization logic from Meta integration
+        CONTACT_FIELDS = {
+            'first_name', 'last_name', 'full_name', 'email', 'phone',
+            'given_name', 'vorname', 'surname', 'nachname', 'telefon',
+            'email_address', 'phone_number', 'mobile', 'handy', 'cell'
+        }
+        BUSINESS_FIELDS = {
+            'company', 'firma', 'unternehmen', 'industry', 'branche',
+            'business', 'organization', 'enterprise', 'corporation'
+        }
+        
+        for key in sorted(detected_keys):
+            key_lower = key.lower()
+            
+            variable_def = {
+                'key': key,
+                'label': key.replace('_', ' ').title(),
+                'type': 'string',  # CSV columns are always strings initially
+                'source': 'csv'
+            }
+            
+            # Categorize based on key name
+            if any(contact_field in key_lower for contact_field in CONTACT_FIELDS):
+                variables['contact'].append(variable_def)
+            elif any(business_field in key_lower for business_field in BUSINESS_FIELDS):
+                variables['business'].append(variable_def) 
+            else:
+                variables['custom'].append(variable_def)
+        
+        return variables
+    
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
         """Create multiple leads in bulk with CSV-style mapping and batch tagging."""
@@ -610,10 +650,14 @@ class LeadViewSet(viewsets.ModelViewSet):
         if created_leads and isinstance(assigned_workspace, Workspace):
             try:
                 funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(created_leads)} Leads)"
+                # Process detected CSV columns into custom_variables format
+                csv_variables = self._process_csv_columns_to_variables(detected_variable_keys)
+                
                 funnel = LeadFunnel.objects.create(
                     name=funnel_name,
                     workspace=assigned_workspace,
                     is_active=True,
+                    custom_variables=csv_variables,
                 )
                 lead_funnel_id = str(funnel.id)
                 # Attach all created leads to this funnel in bulk
