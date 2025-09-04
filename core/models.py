@@ -1090,7 +1090,7 @@ class Agent(models.Model):
     # NEW: One-to-one mapping to EventType for booking
     event_type = models.OneToOneField(
         'EventType',
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
         related_name='agent',
         null=True,
         blank=True,
