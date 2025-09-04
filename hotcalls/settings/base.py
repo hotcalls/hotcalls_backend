@@ -36,7 +36,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 if ENVIRONMENT != 'development':
-    # CRITICAL: No default SECRET_KEY in staging/production!
+    # CRITICAL:  default SECRET_KEY in staging/production!
     try:
         SECRET_KEY = os.environ['SECRET_KEY']
     except KeyError:

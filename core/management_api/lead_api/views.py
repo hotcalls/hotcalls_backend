@@ -1,3 +1,5 @@
+from typing import Any
+
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -325,7 +327,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         tags=["Lead Management"]
     )
     
-    def _process_csv_columns_to_variables(self, detected_keys: set) -> dict:
+    def _process_csv_columns_to_variables(self, detected_keys: set) -> list[Any]:
         """Convert detected CSV column names to new nested format with core fields separated"""
         # Build custom variables list
         custom_variables = []
@@ -340,14 +342,7 @@ class LeadViewSet(viewsets.ModelViewSet):
             }
             custom_variables.append(variable_def)
 
-        return {
-            'variables': [{
-                'name': '',      # Always there as part of default structure
-                'surname': '',   # Always there as part of default structure
-                'email': '',     # Always there as part of default structure
-                'custom_variables': custom_variables
-            }]
-        }
+        return custom_variables
     
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
