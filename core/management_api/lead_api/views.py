@@ -326,22 +326,28 @@ class LeadViewSet(viewsets.ModelViewSet):
     )
     
     def _process_csv_columns_to_variables(self, detected_keys: set) -> dict:
-        """Convert detected CSV column names to custom_variables format"""
-        variables = {
-            'variables': []
-        }
-        
+        """Convert detected CSV column names to new nested format with core fields separated"""
+        # Build custom variables list
+        custom_variables = []
         for key in sorted(detected_keys):
+            normalized = _normalize_key(key).lower()
+            
             variable_def = {
-                'key': key,
-                'label': key.replace('_', ' ').title(),
-                'type': 'string',  # CSV columns are always strings initially
+                'key': normalized,
+                'label': key.replace('_', ' ').title(),  # Use original for label
+                'type': 'string',
                 'source': 'csv'
             }
-            
-            variables['variables'].append(variable_def)
-        
-        return variables
+            custom_variables.append(variable_def)
+
+        return {
+            'variables': [{
+                'name': '',      # Always there as part of default structure
+                'surname': '',   # Always there as part of default structure
+                'email': '',     # Always there as part of default structure
+                'custom_variables': custom_variables
+            }]
+        }
     
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
@@ -384,7 +390,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         created_leads = []
         errors = []
         detected_variable_keys = set()
-        all_csv_columns = set()  # NEW: Collect ALL column names
+        all_csv_column_names = set()  # NEW: Collect ALL column names
 
         # Field synonym sets aligned with Meta mapping logic
         PERSON_NAME_FIELDS = {
@@ -442,11 +448,13 @@ class LeadViewSet(viewsets.ModelViewSet):
             try:
                 # Fast path: use canonical normalization for provider-agnostic mapping
                 if isinstance(row, dict):
-                    # NEW: Collect ALL original column names from this row
-                    for k in row.keys():
-                        if k:
-                            all_csv_columns.add(str(k))
-                    
+                    # Collect custom fields from meta_data
+                    meta_data = row.get('meta_data', {})
+                    if isinstance(meta_data, dict):
+                        for k in meta_data.keys():
+                            if k:
+                                all_csv_column_names.add(k)
+
                     normalized = canonicalize_lead_payload(row)
                     first_name = (normalized.get('first_name') or '').strip()
                     last_name = (normalized.get('last_name') or '').strip()
@@ -490,7 +498,15 @@ class LeadViewSet(viewsets.ModelViewSet):
                     pairs.append((k_norm, v_str))
                     
                     # NEW: Collect original column name for funnel variables
-                    all_csv_columns.add(str(k))
+                    all_csv_column_names.add(str(k))
+                
+                # Also collect from meta_data if present
+                if isinstance(row, dict):
+                    meta_data = row.get('meta_data', {})
+                    if isinstance(meta_data, dict):
+                        for meta_key in meta_data.keys():
+                            if meta_key:
+                                all_csv_column_names.add(str(meta_key))
 
                 # Pick candidates similar to Meta mapping
                 first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
@@ -641,9 +657,9 @@ class LeadViewSet(viewsets.ModelViewSet):
                 
                 # Process ALL collected column names for funnel variables
                 final_column_names = set()
-                for raw_column in all_csv_columns:
+                for raw_column in all_csv_column_names:
                     # Normalize and apply canonical mapping
-                    normalized = _normalize_key(raw_column).lower()  # Ensure lowercase
+                    normalized = _normalize_key(raw_column)
                     canonical = CANONICAL_CUSTOM_KEYS.get(normalized, normalized)
                     final_column_names.add(canonical)
                 
