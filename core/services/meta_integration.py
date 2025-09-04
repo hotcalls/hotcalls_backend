@@ -156,6 +156,82 @@ class MetaIntegrationService:
             logger.error(f"Error getting lead data: {str(e)}")
             raise Exception(f"Failed to get lead data: {str(e)}")
     
+    def get_form_questions(self, form_id: str, access_token: str) -> List[Dict]:
+        """Get questions/fields for a specific Meta lead form"""
+        url = f"{self.base_url}/{form_id}"
+        params = {
+            'access_token': access_token,
+            'fields': 'id,name,questions'
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data.get('questions', [])
+        except requests.RequestException as e:
+            logger.error(f"Error getting form questions: {str(e)}")
+            raise Exception(f"Failed to get form questions: {str(e)}")
+    
+    def process_form_questions(self, questions: List[Dict]) -> Dict:
+        """Process Meta form questions into normalized variable definitions"""
+        variables = {
+            'contact': [],      # Core contact fields
+            'business': [],     # Business-related fields  
+            'custom': []        # Custom form fields
+        }
+        
+        # Reuse existing field sets from _map_lead_fields logic
+        CONTACT_FIELDS = {
+            'full_name', 'first_name', 'last_name', 'email', 'phone', 'given_name', 
+            'vorname', 'prenom', 'nombre', 'firstname', 'fname', 'forename', 'first',
+            'family_name', 'nachname', 'nom', 'apellido', 'lastname', 'lname', 
+            'surname', 'family', 'last', 'display_name', 'person_name',
+            'customer_name', 'user_name', 'client_name', 'contact_name',
+            'email_address', 'e_mail', 'mail', 'contact_email', 'user_email',
+            'phone_number', 'telephone', 'telefon', 'mobile', 'cell', 'handy'
+        }
+        BUSINESS_FIELDS = {
+            'company', 'company_name', 'business', 'business_name',
+            'organization', 'firm', 'enterprise', 'corporation',
+            'unternehmen', 'firma', 'entreprise', 'empresa'
+        }
+        
+        for question in questions:
+            key = _normalize_key(question.get('key', ''))
+            label = question.get('label', key)
+            meta_type = question.get('type', 'SHORT_ANSWER')
+            
+            variable_def = {
+                'key': key,
+                'label': label,
+                'type': self._map_question_type(meta_type),
+                'meta_type': meta_type,
+            }
+            
+            # Categorize based on normalized key
+            key_lower = key.lower()
+            if any(contact_field in key_lower for contact_field in CONTACT_FIELDS):
+                variables['contact'].append(variable_def)
+            elif any(business_field in key_lower for business_field in BUSINESS_FIELDS):
+                variables['business'].append(variable_def)
+            else:
+                variables['custom'].append(variable_def)
+        
+        return variables
+    
+    def _map_question_type(self, meta_type: str) -> str:
+        """Map Meta question type to internal type"""
+        type_mapping = {
+            'FULL_NAME': 'string',
+            'EMAIL': 'email', 
+            'PHONE': 'phone',
+            'SHORT_ANSWER': 'string',
+            'MULTIPLE_CHOICE': 'choice',
+            'CONDITIONAL': 'conditional',
+        }
+        return type_mapping.get(meta_type, 'string')
+    
     def setup_webhook_subscription(self, page_id: str, access_token: str, 
                                  callback_url: str, verify_token: str) -> Dict:
         """Set up webhook subscription for lead forms"""
