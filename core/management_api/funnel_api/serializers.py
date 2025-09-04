@@ -1,8 +1,11 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
+import logging
 from core.models import LeadFunnel, Agent, MetaLeadForm, Workspace, LeadProcessingStats
 from core.management_api.agent_api.serializers import AgentBasicSerializer
 from core.management_api.meta_api.serializers import MetaLeadFormSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class LeadFunnelSerializer(serializers.ModelSerializer):
@@ -21,9 +24,9 @@ class LeadFunnelSerializer(serializers.ModelSerializer):
             'id', 'name', 'workspace', 'workspace_name',
             'meta_lead_form', 'agent', 'has_agent',
             'is_active', 'lead_count', 'source_type', 'source_type_display',
-            'created_at', 'updated_at'
+            'custom_variables', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count', 'source_type', 'source_type_display']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'has_agent', 'lead_count', 'source_type', 'source_type_display', 'custom_variables']
     
     @extend_schema_field(serializers.BooleanField)
     def get_has_agent(self, obj) -> bool:
@@ -74,7 +77,7 @@ class LeadFunnelCreateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = LeadFunnel
-        fields = ['name', 'workspace', 'meta_lead_form_id', 'is_active']
+        fields = ['name', 'workspace', 'meta_lead_form_id', 'is_active', 'custom_variables']
     
     def validate(self, attrs):
         """Validate funnel creation"""
@@ -102,6 +105,20 @@ class LeadFunnelCreateSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         "Meta form must be in the same workspace as the funnel"
                     )
+                
+                # Fetch form questions from Meta API and process them
+                from core.services.meta_integration import MetaIntegrationService
+                meta_service = MetaIntegrationService()
+                try:
+                    questions = meta_service.get_form_questions(
+                        meta_form.meta_form_id, 
+                        meta_form.meta_integration.access_token
+                    )
+                    attrs['custom_variables'] = meta_service.process_form_questions(questions)
+                    logger.info(f"Fetched {len(questions)} questions for form {meta_form.name}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch form questions: {e}")
+                    attrs['custom_variables'] = {}
                 
                 attrs['meta_lead_form'] = meta_form
             except MetaLeadForm.DoesNotExist:

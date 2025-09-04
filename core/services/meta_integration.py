@@ -180,6 +180,57 @@ class MetaIntegrationService:
             logger.error(f"Error getting lead data: {str(e)}")
             raise Exception(f"Failed to get lead data: {str(e)}")
     
+    def get_form_questions(self, form_id: str, access_token: str) -> List[Dict]:
+        """Get questions/fields for a specific Meta lead form"""
+        url = f"{self.base_url}/{form_id}"
+        params = {
+            'access_token': access_token,
+            'fields': 'id,name,questions'
+        }
+        
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            return data.get('questions', [])
+        except requests.RequestException as e:
+            logger.error(f"Error getting form questions: {str(e)}")
+            raise Exception(f"Failed to get form questions: {str(e)}")
+    
+    def process_form_questions(self, questions: List[Dict]) -> Dict:
+        """Process Meta form questions into normalized variable definitions"""
+        variables = {
+            'variables': []
+        }
+        
+        for question in questions:
+            key = _normalize_key(question.get('key', ''))
+            label = question.get('label', key)
+            meta_type = question.get('type', 'SHORT_ANSWER')
+            
+            variable_def = {
+                'key': key,
+                'label': label,
+                'type': self._map_question_type(meta_type),
+                'source': 'meta'
+            }
+            
+            variables['variables'].append(variable_def)
+        
+        return variables
+    
+    def _map_question_type(self, meta_type: str) -> str:
+        """Map Meta question type to internal type"""
+        type_mapping = {
+            'FULL_NAME': 'string',
+            'EMAIL': 'email', 
+            'PHONE': 'phone',
+            'SHORT_ANSWER': 'string',
+            'MULTIPLE_CHOICE': 'choice',
+            'CONDITIONAL': 'conditional',
+        }
+        return type_mapping.get(meta_type, 'string')
+    
     def setup_webhook_subscription(self, page_id: str, access_token: str, 
                                  callback_url: str, verify_token: str) -> Dict:
         """Set up webhook subscription for lead forms"""

@@ -324,6 +324,25 @@ class LeadViewSet(viewsets.ModelViewSet):
         },
         tags=["Lead Management"]
     )
+    
+    def _process_csv_columns_to_variables(self, detected_keys: set) -> dict:
+        """Convert detected CSV column names to custom_variables format"""
+        variables = {
+            'variables': []
+        }
+        
+        for key in sorted(detected_keys):
+            variable_def = {
+                'key': key,
+                'label': key.replace('_', ' ').title(),
+                'type': 'string',  # CSV columns are always strings initially
+                'source': 'csv'
+            }
+            
+            variables['variables'].append(variable_def)
+        
+        return variables
+    
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
         """Create multiple leads in bulk with CSV-style mapping and batch tagging."""
@@ -365,6 +384,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         created_leads = []
         errors = []
         detected_variable_keys = set()
+        all_csv_columns = set()  # NEW: Collect ALL column names
 
         # Field synonym sets aligned with Meta mapping logic
         PERSON_NAME_FIELDS = {
@@ -422,6 +442,11 @@ class LeadViewSet(viewsets.ModelViewSet):
             try:
                 # Fast path: use canonical normalization for provider-agnostic mapping
                 if isinstance(row, dict):
+                    # NEW: Collect ALL original column names from this row
+                    for k in row.keys():
+                        if k:
+                            all_csv_columns.add(str(k))
+                    
                     normalized = canonicalize_lead_payload(row)
                     first_name = (normalized.get('first_name') or '').strip()
                     last_name = (normalized.get('last_name') or '').strip()
@@ -463,6 +488,9 @@ class LeadViewSet(viewsets.ModelViewSet):
                         continue
                     k_norm = _normalize_key(str(k))
                     pairs.append((k_norm, v_str))
+                    
+                    # NEW: Collect original column name for funnel variables
+                    all_csv_columns.add(str(k))
 
                 # Pick candidates similar to Meta mapping
                 first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
@@ -610,10 +638,23 @@ class LeadViewSet(viewsets.ModelViewSet):
         if created_leads and isinstance(assigned_workspace, Workspace):
             try:
                 funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(created_leads)} Leads)"
+                
+                # Process ALL collected column names for funnel variables
+                final_column_names = set()
+                for raw_column in all_csv_columns:
+                    # Normalize and apply canonical mapping
+                    normalized = _normalize_key(raw_column).lower()  # Ensure lowercase
+                    canonical = CANONICAL_CUSTOM_KEYS.get(normalized, normalized)
+                    final_column_names.add(canonical)
+                
+                # Create funnel variables from all columns
+                csv_variables = self._process_csv_columns_to_variables(final_column_names)
+                
                 funnel = LeadFunnel.objects.create(
                     name=funnel_name,
                     workspace=assigned_workspace,
                     is_active=True,
+                    custom_variables=csv_variables,
                 )
                 lead_funnel_id = str(funnel.id)
                 # Attach all created leads to this funnel in bulk

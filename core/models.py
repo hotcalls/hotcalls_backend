@@ -2004,6 +2004,12 @@ class LeadFunnel(models.Model):
         help_text="Whether this funnel should process incoming leads"
     )
     
+    custom_variables = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Variables extracted from connected form questions (Meta API response)"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
