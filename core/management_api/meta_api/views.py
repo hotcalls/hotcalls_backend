@@ -320,7 +320,7 @@ class MetaWebhookView(viewsets.ViewSet):
             
             # Redirect user back to frontend after successful OAuth
             from django.shortcuts import redirect
-            return redirect('https://app.hotcalls.de/dashboard/lead-sources?connected=true')
+            return redirect('/dashboard/lead-sources?meta_connected=true')
             
         except Workspace.DoesNotExist:
             return Response(
