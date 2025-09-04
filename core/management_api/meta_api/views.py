@@ -194,6 +194,83 @@ class MetaWebhookView(viewsets.ViewSet):
             403: OpenApiResponse(description="🚫 Invalid state parameter (CSRF protection)")
         }
     )
+    @extend_schema(
+        summary="🔍 Validate Meta account",
+        description="""
+        Validate a Meta account before creating integration.
+        
+        **Validation Flow**:
+        1. Exchange code for access token (temporary)
+        2. Check user permissions and pages
+        3. Return validation result without creating integration
+        
+        This allows frontend to show helpful messages before actual integration setup.
+        """,
+        request={'type': 'object', 'properties': {
+            'code': {'type': 'string', 'description': 'Authorization code from Meta'},
+            'state': {'type': 'string', 'description': 'State parameter (workspace_id)'}
+        }},
+        responses={
+            200: OpenApiResponse(
+                description="✅ Account validation result",
+                response={'type': 'object', 'properties': {
+                    'is_valid': {'type': 'boolean'},
+                    'errors': {'type': 'array'},
+                    'warnings': {'type': 'array'},
+                    'user_info': {'type': 'object'},
+                    'pages_count': {'type': 'integer'}
+                }}
+            ),
+            400: OpenApiResponse(description="❌ Invalid validation parameters")
+        }
+    )
+    def validate_account(self, request):
+        """Validate Meta account without creating integration"""
+        # Facebook sends GET requests with query parameters
+        if request.method == 'GET':
+            code = request.query_params.get('code')
+            state = request.query_params.get('state')
+        else:
+            # Fallback for POST requests
+            code = request.data.get('code')
+            state = request.data.get('state')
+        
+        if not code:
+            return Response(
+                {'error': 'Authorization code is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from core.services.meta_integration import MetaIntegrationService
+            
+            logger.info(f"Validating Meta account for code: {code[:20]}...")
+            
+            # Initialize Meta service
+            meta_service = MetaIntegrationService()
+            
+            # STEP 1: Exchange code for access token
+            token_data = meta_service.exchange_code_for_token(code)
+            
+            # STEP 2: Validate account
+            validation_result = meta_service.validate_user_account(token_data['access_token'])
+            
+            logger.info(f"Account validation completed: {validation_result['is_valid']}")
+            
+            return Response(validation_result)
+            
+        except Exception as e:
+            logger.error(f"Account validation error: {str(e)}")
+            return Response({
+                'is_valid': False,
+                'errors': [{
+                    'code': 'VALIDATION_FAILED',
+                    'message': f'Failed to validate account: {str(e)}',
+                    'solution': 'Try again or contact support'
+                }],
+                'warnings': []
+            }, status=status.HTTP_400_BAD_REQUEST)
+
     def oauth_hook(self, request):
         """Handle Meta OAuth callback - FULLY AUTOMATED"""
         # Facebook sends GET requests with query parameters
@@ -251,11 +328,51 @@ class MetaWebhookView(viewsets.ViewSet):
                 status=status.HTTP_403_FORBIDDEN
             )
         except Exception as e:
-            logger.error(f"OAuth callback error: {str(e)}")
-            return Response(
-                {'error': f'Failed to create Meta integration: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            error_message = str(e)
+            logger.error(f"OAuth callback error: {error_message}")
+            
+            # Provide user-friendly error messages based on error content
+            if "No Facebook Pages found" in error_message:
+                user_message = {
+                    'error': 'No Facebook Pages Found',
+                    'message': 'Your Facebook account does not have any Pages associated with it.',
+                    'details': 'To use Meta Lead Ads integration, you need at least one Facebook Business Page.',
+                    'actions': [
+                        'Create a Facebook Business Page at facebook.com/pages/create',
+                        'Or use a Facebook account that already manages Pages',
+                        'Then try the integration setup again'
+                    ],
+                    'support_url': 'https://www.facebook.com/business/help/104002523024878',
+                    'original_error': error_message
+                }
+                return Response(user_message, status=status.HTTP_400_BAD_REQUEST)
+            elif "access_token" in error_message.lower():
+                user_message = {
+                    'error': 'Authentication Failed',
+                    'message': 'There was a problem with Facebook authentication.',
+                    'details': 'The authorization code may have expired or been used already.',
+                    'actions': [
+                        'Try the OAuth flow again',
+                        'Make sure you complete the Facebook authorization quickly',
+                        'Check that you have the required permissions'
+                    ],
+                    'original_error': error_message
+                }
+                return Response(user_message, status=status.HTTP_401_UNAUTHORIZED)
+            else:
+                # Generic error response
+                user_message = {
+                    'error': 'Integration Setup Failed',
+                    'message': 'There was an unexpected error setting up your Meta integration.',
+                    'details': 'Please try again or contact support if the issue persists.',
+                    'actions': [
+                        'Try the integration setup again',
+                        'Check your Facebook account settings',
+                        'Contact support if the problem continues'
+                    ],
+                    'original_error': error_message
+                }
+                return Response(user_message, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(
         summary="📬 Meta lead webhook",
