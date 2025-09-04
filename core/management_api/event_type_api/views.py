@@ -11,7 +11,6 @@ from rest_framework import serializers
 from core.models import EventType, Workspace, SubAccount
 from core.management_api.payment_api.permissions import IsWorkspaceMember
 from core.services.calendar_provider import CalendarProviderFacade
-import base64
 from .serializers import (
     EventTypeSerializer,
     EventTypeCreateUpdateSerializer,
@@ -321,17 +320,9 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
         data = request.data if isinstance(request.data, dict) else {}
         start_str = (data.get('start') or '').strip()
-        slot_id = (data.get('slot_id') or '').strip()
 
-        if not start_str and not slot_id:
-            return Response({"error": "start or slot_id is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not start_str and slot_id:
-            try:
-                decoded = base64.urlsafe_b64decode(slot_id.encode()).decode()
-                start_str = decoded
-            except Exception:
-                return Response({"error": "invalid slot_id"}, status=status.HTTP_400_BAD_REQUEST)
+        if not start_str:
+            return Response({"error": "start is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Parse start in event type timezone if naive
