@@ -16,6 +16,7 @@ from .permissions import LeadPermission, LeadBulkPermission
 import uuid
 import logging
 from django.utils import timezone
+from core.utils.validators import normalize_phone_e164
 
 logger = logging.getLogger(__name__)
 
@@ -396,13 +397,17 @@ class LeadViewSet(viewsets.ModelViewSet):
                     variables = lead_data.get('variables', {})
                     if not isinstance(variables, dict):
                         variables = {}
+                    
+                    # Normalize phone number
+                    phone_normalized = normalize_phone_e164(phone_raw, default_region='DE')
+                    phone_to_save = phone_normalized or phone_raw
                         
                     # Create lead (no validation for now)
                     lead = Lead.objects.create(
                         name=first_name,
                         surname=last_name,
                         email=email_raw,
-                        phone=phone_raw,
+                        phone=phone_to_save,
                         workspace=assigned_workspace,
                         integration_provider='manual',
                         variables=variables,
