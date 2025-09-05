@@ -13,10 +13,11 @@ from .serializers import (
 )
 from .filters import LeadFilter
 from .permissions import LeadPermission, LeadBulkPermission
-from core.utils.validators import _normalize_key
-from core.utils.lead_normalization import canonicalize_lead_payload
 import uuid
+import logging
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 
 @extend_schema_view(
@@ -320,147 +321,122 @@ class LeadViewSet(viewsets.ModelViewSet):
         },
         tags=["Lead Management"]
     )
-    
-    def _process_csv_columns_to_variables(self, detected_keys: set) -> list[Any]:
-        """Convert detected CSV column names to new nested format with core fields separated"""
-        # Build custom variables list
-        custom_variables = []
-        for key in sorted(detected_keys):
-            normalized = _normalize_key(key).lower()
-            custom_variables.append(normalized)
-
-        return custom_variables
-    
     @action(detail=False, methods=['post'], permission_classes=[LeadBulkPermission])
     def bulk_create(self, request):
-        """Create multiple leads in bulk with CSV-style mapping and batch tagging."""
-        serializer = LeadBulkCreateSerializer(data=request.data)
-
-        # Prefer raw list from request for CSV-style flexible payloads
-        raw_leads = request.data.get('leads', None)
-        if isinstance(raw_leads, list):
-            pass
-        else:
-            # Fallback to strict validation path if no raw list provided
-            if not serializer.is_valid():
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-            raw_leads = serializer.validated_data['leads']
-
-        # Determine workspace auto-assignment (exactly one workspace for user)
-        user = request.user
-        assigned_workspace = None
+        """Create multiple leads from simplified frontend JSON format"""
+        
         try:
-            workspaces_qs = getattr(user, 'mapping_user_workspaces', None)
-            if workspaces_qs is not None and workspaces_qs.count() == 1:
-                assigned_workspace = workspaces_qs.first()
-        except Exception:
-            assigned_workspace = None
-
-        # Enforce hard limit of 10,000 rows per CSV/bulk import
-        try:
-            if isinstance(raw_leads, list) and len(raw_leads) > 10000:
-                return Response(
-                    {'error': 'CSV import exceeds 10,000 rows limit'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception:
-            pass
-
-        # Generate one batch id for this upload
-        import_batch_id = str(uuid.uuid4())
-
-        created_leads = []
-        errors = []
-        detected_variable_keys = set()
-        meta_data_columns = set()  # Only collect meta_data columns for custom variables
-
-        for index, row in enumerate(raw_leads):
+            # 1. PARSE REQUEST
+            workspace_id = request.data.get('workspace')
+            raw_leads = request.data.get('leads', [])
+            
+            if not workspace_id:
+                return Response({'error': 'workspace field required'}, status=status.HTTP_400_BAD_REQUEST)
+            if not raw_leads or not isinstance(raw_leads, list):
+                return Response({'error': 'leads field required (array)'}, status=status.HTTP_400_BAD_REQUEST)
+            if len(raw_leads) > 10000:
+                return Response({'error': 'Maximum 10,000 leads allowed'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            # 2. VALIDATE WORKSPACE
             try:
-                # Fast path: use canonical normalization for provider-agnostic mapping
-                if isinstance(row, dict):
-                    # Collect custom fields from meta_data
-                    meta_data = row.get('meta_data', {})
-                    if isinstance(meta_data, dict):
-                        for k in meta_data.keys():
-                            if k:
-                                meta_data_columns.add(k)
-
-                    normalized = canonicalize_lead_payload(row)
-                    first_name = (normalized.get('first_name') or '').strip()
-                    last_name = (normalized.get('last_name') or '').strip()
-                    email_to_save = (normalized.get('email') or '').strip()
-                    phone_to_save = (normalized.get('phone') or '').strip()
-                    variables = normalized.get('variables') or {}
-
-                    if first_name and email_to_save and phone_to_save:
-                        if variables:
-                            detected_variable_keys.update(variables.keys())
-                        meta_data = {
+                assigned_workspace = Workspace.objects.get(id=workspace_id)
+            except Workspace.DoesNotExist:
+                return Response({'error': 'Invalid workspace ID'}, status=status.HTTP_400_BAD_REQUEST)
+                
+            # 3. EXTRACT VARIABLES FROM FIRST LEAD
+            custom_variables = []
+            if raw_leads:
+                first_lead = raw_leads[0]
+                variables_dict = first_lead.get('variables', {})
+                if isinstance(variables_dict, dict):
+                    custom_variables = sorted(list(variables_dict.keys()))
+            
+            # 4. CREATE FUNNEL
+            import_batch_id = str(uuid.uuid4())
+            funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(raw_leads)} Leads)"
+            
+            funnel = LeadFunnel.objects.create(
+                name=funnel_name,
+                workspace=assigned_workspace,
+                is_active=True,
+                custom_variables=custom_variables,  # Simple string list
+            )
+            
+            logger.info(f"Created funnel '{funnel_name}' (ID: {funnel.id}) with variables: {custom_variables}")
+            
+            # 5. PROCESS LEADS
+            created_leads = []
+            errors = []
+            
+            for index, lead_data in enumerate(raw_leads):
+                try:
+                    # Direct field extraction (no canonicalization)
+                    first_name = (lead_data.get('name') or '').strip()
+                    last_name = (lead_data.get('surname') or '').strip() 
+                    email_raw = (lead_data.get('email') or '').strip()
+                    phone_raw = (lead_data.get('phone_number') or '').strip()  # Note: phone_number
+                    
+                    # Validate required fields
+                    if not first_name:
+                        logger.warning(f"Lead {index}: Missing first name, skipping")
+                        errors.append({'index': index, 'error': 'Missing first name'})
+                        continue
+                        
+                    if not email_raw:
+                        logger.warning(f"Lead {index}: Missing email, skipping") 
+                        errors.append({'index': index, 'error': 'Missing email'})
+                        continue
+                        
+                    if not phone_raw:
+                        logger.warning(f"Lead {index}: Missing phone number, skipping")
+                        errors.append({'index': index, 'error': 'Missing phone number'}) 
+                        continue
+                    
+                    # Extract variables (original keys preserved)
+                    variables = lead_data.get('variables', {})
+                    if not isinstance(variables, dict):
+                        variables = {}
+                        
+                    # Create lead (no validation for now)
+                    lead = Lead.objects.create(
+                        name=first_name,
+                        surname=last_name,
+                        email=email_raw,
+                        phone=phone_raw,
+                        workspace=assigned_workspace,
+                        integration_provider='manual',
+                        variables=variables,
+                        lead_funnel=funnel,
+                        meta_data={
                             'source': 'csv',
                             'import_batch_id': import_batch_id,
-                        }
-                        lead = Lead.objects.create(
-                            name=first_name,
-                            surname=last_name or '',
-                            email=email_to_save,
-                            phone=phone_to_save,
-                            workspace=assigned_workspace if isinstance(assigned_workspace, Workspace) else None,
-                            integration_provider='manual',
-                            variables=variables,
-                            meta_data=meta_data,
-                        )
-                        created_leads.append(lead)
-                        continue
-                else:
-                    errors.append({'index': index, 'error': 'Invalid row format'})
-                    continue
-
-            except Exception as e:
-                errors.append({'index': index, 'error': str(e)})
-
-        # If we successfully created leads and have a clear workspace, create a LeadFunnel for this CSV batch
-        lead_funnel_id = None
-        if created_leads and isinstance(assigned_workspace, Workspace):
-            try:
-                funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(created_leads)} Leads)"
-                
-                # Process meta_data column names for funnel custom variables
-                final_column_names = set()
-                for raw_column in meta_data_columns:
-                    # Normalize column name (canonicalization handled by canonicalize_lead_payload)
-                    normalized = _normalize_key(raw_column)
-                    final_column_names.add(normalized)
-                
-                # Create funnel variables from all columns
-                csv_variables = self._process_csv_columns_to_variables(final_column_names)
-                
-                funnel = LeadFunnel.objects.create(
-                    name=funnel_name,
-                    workspace=assigned_workspace,
-                    is_active=True,
-                    custom_variables=csv_variables,
-                )
-                lead_funnel_id = str(funnel.id)
-                # Attach all created leads to this funnel in bulk
-                Lead.objects.filter(id__in=[lead.id for lead in created_leads]).update(lead_funnel=funnel)
-            except Exception:
-                # If funnel creation fails, proceed without blocking the import
-                lead_funnel_id = None
-
-        response_payload = {
-            'total_leads': len(raw_leads),
-            'successful_creates': len(created_leads),
-            'failed_creates': len(errors),
-            'errors': errors,
-            'created_lead_ids': [str(lead.id) for lead in created_leads],
-            'import_batch_id': import_batch_id,
-            'detected_variable_keys': sorted(list(detected_variable_keys)),
-        }
-        # Additive, optional field: helps frontend to show the CSV source in Agent Config
-        if lead_funnel_id:
-            response_payload['lead_funnel_id'] = lead_funnel_id
-
-        return Response(response_payload, status=status.HTTP_201_CREATED)
+                        },
+                    )
+                    created_leads.append(lead)
+                    
+                except Exception as e:
+                    logger.error(f"Lead {index}: Error creating lead - {str(e)}")
+                    errors.append({'index': index, 'error': f'Error creating lead: {str(e)}'})
+            
+            logger.info(f"CSV import completed: {len(created_leads)} created, {len(errors)} failed")
+            
+            # 6. RETURN RESULTS
+            return Response({
+                'total_leads': len(raw_leads),
+                'successful_creates': len(created_leads),
+                'failed_creates': len(errors),
+                'errors': errors,
+                'created_lead_ids': [str(lead.id) for lead in created_leads],
+                'import_batch_id': import_batch_id,
+                'lead_funnel_id': str(funnel.id),
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Critical error in bulk_create: {str(e)}", exc_info=True)
+            return Response(
+                {'error': f'Import failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(
         summary="🏷️ Update lead metadata",
