@@ -179,12 +179,24 @@ def trigger_call(self, call_task_id):
         sip_trunk = getattr(phone_obj, "sip_trunk", None)
         sip_trunk_id = getattr(sip_trunk, "livekit_trunk_id", None)
 
+        # DYNAMIC SCRIPT RENDERING: Render script_template with target_ref data using Jinja2
+        raw_script_template = getattr(agent, "script_template", "")
+        from core.services.script_template_service import script_template_service
+        rendered_script = script_template_service.render_script_for_target_ref(
+            raw_script_template, 
+            call_task.target_ref
+        )
+        logger.info(
+            f"Script template rendered for target_ref '{call_task.target_ref}': "
+            f"{len(raw_script_template)} chars → {len(rendered_script)} chars"
+        )
+
         agent_config = {
             "name": agent.name,
             "voice_external_id": (agent.voice.voice_external_id if agent.voice else None),
             "language": agent.language,
-            # New field propagated to runtime
-            "script_template": getattr(agent, "script_template", ""),
+            # RENDERED script template (dynamically generated with lead data)
+            "script_template": rendered_script,
             "greeting_outbound": agent.greeting_outbound,
             "greeting_inbound": agent.greeting_inbound,
             "character": agent.character,

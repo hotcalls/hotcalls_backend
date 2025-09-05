@@ -12,6 +12,7 @@ python-dotenv
 gunicorn
 whitenoise
 Pillow
+jinja2>=3.1.0
 boto3
 django-storages[azure]>=1.14.0
 azure-storage-blob>=12.19.0
