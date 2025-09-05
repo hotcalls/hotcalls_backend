@@ -777,18 +777,10 @@ class MetaIntegrationService:
             # Phone normalization to strict +<digits>
             phone = normalize_phone_e164(raw_phone, default_region='DE')
 
-            # Name handling: allow one-word names
-            if raw_name and not raw_surname:
-                name_parts = raw_name.split()
-                if len(name_parts) >= 2:
-                    name_first = name_parts[0]
-                    name_surname = ' '.join(name_parts[1:])
-                else:
-                    name_first = raw_name
-                    name_surname = ''
-            else:
-                name_first = raw_name
-                name_surname = raw_surname
+            # Use the priority-based name handling from _map_lead_fields
+            # (no additional name processing needed here)
+            name_first = raw_name
+            name_surname = raw_surname
 
             # Presence-based acceptance: only fail if fields are missing entirely
             if not (name_first and raw_email and raw_phone):
@@ -903,10 +895,7 @@ class MetaIntegrationService:
             'surname': '',
             'email': '',
             'phone': '',
-            'variables': {
-                'custom': {},
-                'matched_keys': {}
-            }
+            'variables': {}
         }
 
         # Collect name fields separately for priority-based processing
@@ -938,34 +927,29 @@ class MetaIntegrationService:
                 # Validate email
                 validated_email = validate_email_strict(value_raw)
                 mapped_data['email'] = validated_email or value_raw
-                mapped_data['variables']['matched_keys']['email'] = normalized_key
                 
             elif normalized_key == 'phone_number':
                 # Normalize phone
                 normalized_phone = normalize_phone_e164(value_raw, default_region='DE')
                 mapped_data['phone'] = normalized_phone or value_raw
-                mapped_data['variables']['matched_keys']['phone'] = normalized_key
                 
             elif normalized_key == 'first_name':
                 name_fields['first_name'] = value_raw
-                mapped_data['variables']['matched_keys']['first_name'] = normalized_key
                 
             elif normalized_key == 'last_name':
                 name_fields['last_name'] = value_raw
-                mapped_data['variables']['matched_keys']['last_name'] = normalized_key
                 
             elif normalized_key == 'full_name':
                 name_fields['full_name'] = value_raw
-                mapped_data['variables']['matched_keys']['full_name'] = normalized_key
                 
             elif self._is_standard_field(field_name):
-                # Other standard fields (company_name, city, etc.) go to custom variables
+                # Other standard fields (company_name, city, etc.) go to variables
                 # These are standard Meta fields but not core Lead model fields
-                mapped_data['variables']['custom'][normalized_key] = value_raw
+                mapped_data['variables'][normalized_key] = value_raw
                 
             else:
                 # Truly custom fields (form-specific questions)
-                mapped_data['variables']['custom'][normalized_key] = value_raw
+                mapped_data['variables'][normalized_key] = value_raw
 
         # Apply priority-based name handling
         first_name = name_fields['first_name'].strip()
@@ -1016,7 +1000,7 @@ class MetaIntegrationService:
                     'surname': mapped_data['surname'],
                     'email_present': bool(mapped_data['email']),
                     'phone_present': bool(mapped_data['phone']),
-                    'custom_keys': list(mapped_data['variables'].get('custom', {}).keys()),
+                    'variable_keys': list(mapped_data['variables'].keys()),
                 },
             }
         )
