@@ -414,33 +414,175 @@ class MetaIntegrationService:
             logger.error(f"Error creating integration: {str(e)}")
             raise
     
-    def sync_lead_forms(self, integration: MetaIntegration) -> List[MetaLeadForm]:
-        """Sync lead forms from Meta API"""
+    def sync_integration_forms_with_variables(self, integration: MetaIntegration) -> Dict:
+        """
+        Comprehensive sync of Meta lead forms with custom variables extraction
+        
+        This method:
+        1. Fetches all lead forms from Meta API
+        2. Creates/updates MetaLeadForm records
+        3. Creates/updates LeadFunnel records  
+        4. Extracts custom variables from form questions
+        5. Handles form removals/deactivations
+        6. Returns detailed sync results
+        """
+        from core.models import MetaLeadForm, LeadFunnel
+        from django.utils import timezone
+        
         try:
+            # Fetch current forms from Meta API
             forms_data = self.get_page_lead_forms(
                 integration.page_id, 
                 integration.access_token
             )
             
-            synced_forms = []
-            for form_data in forms_data:
-                form, created = MetaLeadForm.objects.get_or_create(
-                    meta_integration=integration,
-                    meta_form_id=form_data['id'],
-                    defaults={
-                        'name': form_data.get('name', f"Form {form_data['id']}")
-                    }
-                )
-                synced_forms.append(form)
-                
-                if created:
-                    logger.info(f"Created new lead form: {form_data['name']}")
+            # Get all form IDs from Meta
+            meta_form_ids = {form['id'] for form in forms_data}
             
-            return synced_forms
+            # Get all existing forms for this integration
+            existing_forms = MetaLeadForm.objects.filter(
+                meta_integration=integration
+            ).select_related('lead_funnel')
+            existing_form_ids = {form.meta_form_id for form in existing_forms}
+            
+            # Find new forms and removed forms
+            new_form_ids = meta_form_ids - existing_form_ids
+            removed_form_ids = existing_form_ids - meta_form_ids
+            
+            # Initialize counters
+            created_forms = []
+            updated_forms = []
+            created_funnels = []
+            variables_extracted = []
+            deactivated_forms = []
+            
+            # Process each form from Meta
+            for form_data in forms_data:
+                form_id = form_data['id']
+                form_name = form_data.get('name', f"Form {form_id}")
+                
+                if form_id in new_form_ids:
+                    # Create new form
+                    meta_form = MetaLeadForm.objects.create(
+                        meta_integration=integration,
+                        meta_form_id=form_id,
+                        name=form_name
+                    )
+                    created_forms.append(form_id)
+                    
+                    # Create corresponding LeadFunnel
+                    new_funnel = LeadFunnel.objects.create(
+                        name=form_name,
+                        workspace=integration.workspace,
+                        meta_lead_form=meta_form,
+                        is_active=True,
+                        custom_variables={}  # Will be populated below
+                    )
+                    created_funnels.append({
+                        'id': str(new_funnel.id),
+                        'name': new_funnel.name,
+                        'form_id': form_id
+                    })
+                    
+                    logger.info(f"Created MetaLeadForm and LeadFunnel for form {form_id}")
+                    
+                else:
+                    # Update existing form name if changed
+                    meta_form = next(
+                        (form for form in existing_forms if form.meta_form_id == form_id), 
+                        None
+                    )
+                    if meta_form and meta_form.name != form_name:
+                        meta_form.name = form_name
+                        meta_form.save(update_fields=['name', 'updated_at'])
+                        updated_forms.append(form_id)
+                        
+                        # Also update funnel name if it exists
+                        if hasattr(meta_form, 'lead_funnel') and meta_form.lead_funnel:
+                            meta_form.lead_funnel.name = form_name
+                            meta_form.lead_funnel.save(update_fields=['name', 'updated_at'])
+                
+                # Extract custom variables for all forms (new and existing)
+                try:
+                    questions = self.get_form_questions(form_id, integration.access_token)
+                    custom_vars = self.process_form_questions(questions)
+                    
+                    # Find the form (either newly created or existing)
+                    if form_id in new_form_ids:
+                        target_form = meta_form  # Just created above
+                    else:
+                        target_form = next(
+                            (form for form in existing_forms if form.meta_form_id == form_id),
+                            None
+                        )
+                    
+                    # Save custom variables to LeadFunnel
+                    if target_form and hasattr(target_form, 'lead_funnel') and target_form.lead_funnel:
+                        target_form.lead_funnel.custom_variables = custom_vars
+                        target_form.lead_funnel.save(update_fields=['custom_variables', 'updated_at'])
+                        variables_extracted.append({
+                            'form_id': form_id,
+                            'variables_count': len(custom_vars.get('variables', [])),
+                            'funnel_id': str(target_form.lead_funnel.id)
+                        })
+                        logger.info(f"Extracted {len(custom_vars.get('variables', []))} custom variables for form {form_id}")
+                    
+                except Exception as e:
+                    logger.warning(f"Could not extract custom variables for form {form_id}: {str(e)}")
+                    # Continue processing other forms
+            
+            # Handle removed forms (deactivate their funnels)
+            if removed_form_ids:
+                removed_forms = [form for form in existing_forms if form.meta_form_id in removed_form_ids]
+                
+                for form in removed_forms:
+                    if hasattr(form, 'lead_funnel') and form.lead_funnel:
+                        form.lead_funnel.is_active = False
+                        form.lead_funnel.save(update_fields=['is_active', 'updated_at'])
+                        deactivated_forms.append({
+                            'form_id': form.meta_form_id,
+                            'form_name': form.name,
+                            'funnel_id': str(form.lead_funnel.id)
+                        })
+                        logger.info(f"Deactivated funnel for removed form {form.meta_form_id}")
+            
+            # Prepare comprehensive result
+            result = {
+                'success': True,
+                'integration_id': str(integration.id),
+                'workspace': integration.workspace.workspace_name,
+                'total_forms': len(forms_data),
+                'created_forms': len(created_forms),
+                'updated_forms': len(updated_forms),
+                'created_funnels': len(created_funnels),
+                'variables_extracted': len(variables_extracted),
+                'deactivated_forms': len(deactivated_forms),
+                'form_ids': {
+                    'created': created_forms,
+                    'updated': updated_forms,
+                    'removed': list(removed_form_ids)
+                },
+                'funnels': created_funnels,
+                'variables': variables_extracted,
+                'deactivated': deactivated_forms,
+                'timestamp': timezone.now().isoformat()
+            }
+            
+            logger.info(f"Comprehensive sync completed for integration {integration.id}: "
+                       f"Forms: {len(created_forms)} created, {len(updated_forms)} updated, "
+                       f"{len(deactivated_forms)} deactivated. "
+                       f"Variables extracted for {len(variables_extracted)} forms.")
+            
+            return result
             
         except Exception as e:
-            logger.error(f"Error syncing lead forms: {str(e)}")
-            return []
+            logger.error(f"Error in comprehensive sync for integration {integration.id}: {str(e)}")
+            return {
+                'success': False,
+                'integration_id': str(integration.id),
+                'error': str(e),
+                'timestamp': timezone.now().isoformat()
+            }
 
     
     def _update_lead_stats(self, workspace, reason: str):
