@@ -487,7 +487,7 @@ class MetaIntegrationService:
                         workspace=integration.workspace,
                         meta_lead_form=meta_form,
                         is_active=True,
-                        custom_variables={}  # Will be populated below
+                        custom_variables=[]  # Will be populated below
                     )
                     created_funnels.append({
                         'id': str(new_funnel.id),
@@ -533,10 +533,11 @@ class MetaIntegrationService:
                         target_form.lead_funnel.save(update_fields=['custom_variables', 'updated_at'])
                         variables_extracted.append({
                             'form_id': form_id,
-                            'variables_count': len(custom_vars.get('variables', [])),
-                            'funnel_id': str(target_form.lead_funnel.id)
+                            'variables_count': len(custom_vars),
+                            'funnel_id': str(target_form.lead_funnel.id),
+                            'variables_sample': custom_vars[:10]
                         })
-                        logger.info(f"Extracted {len(custom_vars.get('variables', []))} custom variables for form {form_id}")
+                        logger.info(f"Extracted {len(custom_vars)} custom variable keys for form {form_id}: {', '.join(custom_vars)}")
                     
                 except Exception as e:
                     logger.warning(f"Could not extract custom variables for form {form_id}: {str(e)}")

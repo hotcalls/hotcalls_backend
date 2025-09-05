@@ -2006,9 +2006,9 @@ class LeadFunnel(models.Model):
     )
     
     custom_variables = models.JSONField(
-        default=dict,
+        default=list,
         blank=True,
-        help_text="Variables extracted from connected form questions (Meta API response)"
+        help_text="List of variable keys discovered from connected form questions (Meta API)"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
