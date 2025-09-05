@@ -1,11 +1,10 @@
 import hashlib
-import re
 import hmac
 import requests
 import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from urllib.parse import urlencode
 from django.conf import settings
 from django.utils import timezone
@@ -24,6 +23,22 @@ logger = logging.getLogger(__name__)
 
 class MetaIntegrationService:
     """Service for Meta API integration"""
+    
+    # Meta's standard field identifiers (API always returns these in English)
+    META_STANDARD_FIELDS = {
+        # Core contact fields
+        'email',
+        'full_name', 'first_name', 'last_name',  
+        'phone_number',
+        
+        # Address fields
+        'city', 'zip_code', 'country', 'state',
+        
+        # Other standard fields
+        'date_of_birth', 'gender', 'relationship_status',
+        'work_email', 'work_phone_number',
+        'company_name', 'job_title'
+    }
     
     def __init__(self):
         self.app_id = getattr(settings, 'META_APP_ID', None)
@@ -197,39 +212,22 @@ class MetaIntegrationService:
             logger.error(f"Error getting form questions: {str(e)}")
             raise Exception(f"Failed to get form questions: {str(e)}")
     
-    def process_form_questions(self, questions: List[Dict]) -> Dict:
-        """Process Meta form questions into normalized variable definitions"""
-        variables = {
-            'variables': []
-        }
+    def _is_standard_field(self, field_key: str) -> bool:
+        """Check if field is a Meta standard field (handled by lead mapping)"""
+        normalized_key = _normalize_key(field_key)
+        return normalized_key in self.META_STANDARD_FIELDS
+    
+    def process_form_questions(self, questions: List[Dict]) -> List[str]:
+        """Process Meta form questions into list of custom variable names, excluding standard fields"""
+        custom_variables = []
         
         for question in questions:
-            key = _normalize_key(question.get('key', ''))
-            label = question.get('label', key)
-            meta_type = question.get('type', 'SHORT_ANSWER')
-            
-            variable_def = {
-                'key': key,
-                'label': label,
-                'type': self._map_question_type(meta_type),
-                'source': 'meta'
-            }
-            
-            variables['variables'].append(variable_def)
+            key = question.get('key', '')
+            if key and not self._is_standard_field(key):
+                custom_variables.append(_normalize_key(key))
         
-        return variables
+        return custom_variables
     
-    def _map_question_type(self, meta_type: str) -> str:
-        """Map Meta question type to internal type"""
-        type_mapping = {
-            'FULL_NAME': 'string',
-            'EMAIL': 'email', 
-            'PHONE': 'phone',
-            'SHORT_ANSWER': 'string',
-            'MULTIPLE_CHOICE': 'choice',
-            'CONDITIONAL': 'conditional',
-        }
-        return type_mapping.get(meta_type, 'string')
     
     def setup_webhook_subscription(self, page_id: str, access_token: str, 
                                  callback_url: str, verify_token: str) -> Dict:
@@ -893,13 +891,9 @@ class MetaIntegrationService:
     
     def _map_lead_fields(self, field_data: List[Dict]) -> Dict:
         """
-        BULLETPROOF Meta field mapping for production at scale
+        Clean Meta field mapping using standard field identifiers
         
-        Handles 100,000+ users and any Meta form configuration:
-        - Prioritized field matching (person > company > custom)
-        - Synonym-based matching with value validation (email/phone)
-        - Comprehensive logging for debugging
-        - Fallback strategies for unknown fields → variables.custom
+        Maps Meta's standard fields to Lead model fields and collects custom fields.
         """
         mapped_data: Dict = {
             'name': '',
@@ -912,174 +906,59 @@ class MetaIntegrationService:
             }
         }
 
-        processed_fields: List[str] = []
-        unmatched_fields: List[str] = []
-
-        PERSON_NAME_FIELDS = {
-            # First/Given name variants (multi-language)
-            'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
-            'firstname', 'fname', 'forename', 'first'
-        }
-        PERSON_SURNAME_FIELDS = {
-            # Last/Family name variants (multi-language)
-            'last_name', 'family_name', 'nachname', 'nom', 'apellido',
-            'lastname', 'lname', 'surname', 'family', 'last'
-        }
-        FULL_NAME_FIELDS = {
-            # Full name and contact name variants (multi-language)
-            'full_name', 'fullname', 'name', 'display_name', 'person_name',
-            'customer_name', 'user_name', 'client_name', 'contact_name',
-            'vollstandiger_name', 'kontakt_name'
-        }
-        EMAIL_FIELDS = {
-            # Email variants (multi-language)
-            'email', 'email_address', 'e_mail', 'mail', 'contact_email',
-            'user_email', 'customer_email', 'business_email', 'work_email',
-            'email_adresse', 'e_mail_adresse', 'emailadresse', 'kontakt_email',
-            'kontaktmail'
-        }
-        PHONE_FIELDS = {
-            # Phone variants (multi-language)
-            'phone', 'phone_number', 'telephone', 'telefon', 'mobile',
-            'cell', 'handy', 'contact_phone', 'mobile_number', 'cell_phone',
-            'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
-            'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
-            'telefono', 'telefone', 'handynummer'
-        }
-        BUSINESS_FIELDS = {
-            'company', 'company_name', 'business', 'business_name',
-            'organization', 'firm', 'enterprise', 'corporation',
-            'unternehmen', 'firma', 'entreprise', 'empresa'
-        }
-
-        pairs: List[Tuple[str, str]] = []
+        # Process each field from Meta API
         for field in field_data:
-            name_raw = str(field.get('name') or field.get('key') or '').strip()
+            field_name = str(field.get('name') or field.get('key') or '').strip()
             values = field.get('values') or field.get('value')
+            
+            # Extract field value
             value_raw = ''
             if isinstance(values, list):
                 value_raw = str(values[0]).strip() if values else ''
             elif values is not None:
                 value_raw = str(values).strip()
-            if not name_raw or not value_raw:
+            
+            if not field_name or not value_raw:
                 continue
-            k = _normalize_key(name_raw)
-            pairs.append((k, value_raw))
-
-        # pick candidates
-        first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
-        last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
-        full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
-
-        # Heuristic: any key containing "name" (but not company/business) is a full name
-        if not full:
-            BUSINESS_TOKENS = {'company', 'business', 'firma', 'unternehmen', 'organization', 'org', 'brand'}
-            for k, v in pairs:
-                if 'name' in k and not any(tok in k for tok in BUSINESS_TOKENS):
-                    full = v
-                    break
-
-        email_val = None
-        email_key = None
-        for k, v in pairs:
-            if k in EMAIL_FIELDS:
-                e = validate_email_strict(v)
-                if e:
-                    email_val = e
-                    email_key = k
-                    break
-        if not email_val:
-            # Heuristic: keys containing 'email' or 'mail'
-            for k, v in pairs:
-                if ('email' in k or 'mail' in k) and v:
-                    e = validate_email_strict(v)
-                    if e:
-                        email_val = e
-                        email_key = k
-                        break
-        if not email_val:
-            for k, v in pairs:
-                if '@' in v:
-                    e = validate_email_strict(v)
-                    if e:
-                        email_val = e
-                        email_key = k
-                        break
-        # Fallback: accept first string that contains '@' even if not strictly valid
-        if not email_val:
-            fallback_email = next((v for k, v in pairs if '@' in v), '')
-            if fallback_email:
-                mapped_data['email'] = fallback_email
-
-        phone_val = None
-        phone_key = None
-        for k, v in pairs:
-            if k in PHONE_FIELDS:
-                p = normalize_phone_e164(v, default_region='DE')
-                if p:
-                    phone_val = p
-                    phone_key = k
-                    break
-        if not phone_val:
-            for k, v in pairs:
-                p = normalize_phone_e164(v, default_region='DE')
-                if p:
-                    phone_val = p
-                    phone_key = k
-                    break
-        # Fallback: accept first phone-like string (prefer known phone fields), minimal sanitization
-        if not phone_val:
-            def _digits_count(s: str) -> int:
-                return sum(ch.isdigit() for ch in s)
-
-            candidate = None
-            # Prefer values from known phone fields
-            for k, v in pairs:
-                if (k in PHONE_FIELDS or any(t in k for t in ['phone', 'telefon', 'tel', 'mobile', 'handy'])) and _digits_count(v) >= 6:
-                    candidate = re.sub(r"[^0-9+]", "", v)
-                    phone_key = k
-                    break
-            # Otherwise any field with 6+ digits
-            if candidate is None:
-                for k, v in pairs:
-                    if _digits_count(v) >= 6:
-                        candidate = re.sub(r"[^0-9+]", "", v)
-                        phone_key = k
-                        break
-            if candidate:
-                mapped_data['phone'] = candidate
-
-        name_triplet = extract_name(first, last, full)
-        if name_triplet:
-            mapped_data['name'], mapped_data['surname'] = name_triplet[0], name_triplet[1]
-        if email_val:
-            mapped_data['email'] = email_val
-        if phone_val:
-            mapped_data['phone'] = phone_val
-
-        matched_keys = set(filter(None, [
-            next((k for k, v in pairs if v == first), None),
-            next((k for k, v in pairs if v == last), None),
-            next((k for k, v in pairs if v == full), None),
-            email_key,
-            phone_key,
-        ]))
-
-        for k, v in pairs:
-            if k in BUSINESS_FIELDS:
-                mapped_data['variables']['custom'][k] = v
-                continue
-            if k in matched_keys:
-                continue
-            mapped_data['variables']['custom'][k] = v
-
-        mapped_data['variables']['matched_keys'] = {
-            'first_name': first or '',
-            'last_name': last or '',
-            'full_name': full or '',
-            'email': email_key or '',
-            'phone': phone_key or '',
-        }
+                
+            normalized_key = _normalize_key(field_name)
+            
+            # Map standard fields to Lead model fields
+            if normalized_key == 'email':
+                # Validate email
+                validated_email = validate_email_strict(value_raw)
+                mapped_data['email'] = validated_email or value_raw
+                mapped_data['variables']['matched_keys']['email'] = normalized_key
+                
+            elif normalized_key == 'phone_number':
+                # Normalize phone
+                normalized_phone = normalize_phone_e164(value_raw, default_region='DE')
+                mapped_data['phone'] = normalized_phone or value_raw
+                mapped_data['variables']['matched_keys']['phone'] = normalized_key
+                
+            elif normalized_key == 'first_name':
+                mapped_data['name'] = value_raw
+                mapped_data['variables']['matched_keys']['first_name'] = normalized_key
+                
+            elif normalized_key == 'last_name':
+                mapped_data['surname'] = value_raw
+                mapped_data['variables']['matched_keys']['last_name'] = normalized_key
+                
+            elif normalized_key == 'full_name':
+                # Extract name parts
+                name_parts = extract_name('', '', value_raw)
+                if name_parts:
+                    mapped_data['name'], mapped_data['surname'] = name_parts[0], name_parts[1]
+                mapped_data['variables']['matched_keys']['full_name'] = normalized_key
+                
+            elif self._is_standard_field(field_name):
+                # Other standard fields (company_name, city, etc.) go to custom variables
+                # These are standard Meta fields but not core Lead model fields
+                mapped_data['variables']['custom'][normalized_key] = value_raw
+                
+            else:
+                # Truly custom fields (form-specific questions)
+                mapped_data['variables']['custom'][normalized_key] = value_raw
 
         logger.info(
             "Meta field mapping completed",
