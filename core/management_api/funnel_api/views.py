@@ -258,7 +258,7 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     
     @extend_schema(
         summary="Get Funnel Variables",
-        description="Get available variables for a specific funnel (core + custom fields from recent leads)",
+        description="Get available variables for a specific funnel (core contact fields + custom variables from funnel.custom_variables)",
         responses={
             200: OpenApiResponse(
                 description="List of available variables with their labels and types"
@@ -267,83 +267,32 @@ class LeadFunnelViewSet(viewsets.ModelViewSet):
     )
     @action(detail=True, methods=['get'])
     def variables(self, request, pk=None):
-        """Return available variables (core + custom keys from recent leads).
+        """Return available variables (core + custom from funnel.custom_variables).
 
-        Keys are normalized to EN canonical. We also provide a German label for display.
-        For CSV sources, we expose all top-level keys found in `Lead.variables` in addition to
-        any nested `variables.custom` keys. Core contact keys are always provided separately and
-        are excluded from the custom list.
+        Returns core contact variables (name, surname, email, phone_number) plus
+        custom variables stored in the funnel's custom_variables field as a list of strings.
         """
         funnel = self.get_object()
-        # Core variables always available
+        
+        # Core variables (always available)
         core_vars = [
-            {'key': 'first_name', 'label': 'Vorname', 'category': 'contact', 'type': 'string'},
-            {'key': 'last_name', 'label': 'Nachname', 'category': 'contact', 'type': 'string'},
-            {'key': 'full_name', 'label': 'Vollständiger Name', 'category': 'contact', 'type': 'string'},
+            {'key': 'name', 'label': 'Vorname', 'category': 'contact', 'type': 'string'},
+            {'key': 'surname', 'label': 'Nachname', 'category': 'contact', 'type': 'string'},
             {'key': 'email', 'label': 'E-Mail', 'category': 'contact', 'type': 'email'},
-            {'key': 'phone', 'label': 'Telefon', 'category': 'contact', 'type': 'phone'},
+            {'key': 'phone_number', 'label': 'Telefon', 'category': 'contact', 'type': 'phone'},
         ]
-
-        # Collect custom keys from recent leads' variables
-        recent = list(
-            funnel.leads.order_by('-created_at').values_list('variables', flat=True)[:100]
-        )
-
-        excluded = {"first_name", "last_name", "full_name", "email", "phone", "matched_keys", "raw", "meta", "source", "import_batch_id", "external_id", "id", "lead_id"}
-        custom_keys = set()
-
-        # Canonical mapping for display labels (EN key -> DE label)
-        LABEL_DE = {
-            'first_name': 'Vorname',
-            'last_name': 'Nachname',
-            'full_name': 'Vollständiger Name',
-            'email': 'E-Mail',
-            'phone': 'Telefon',
-            'company': 'Firma',
-            'industry': 'Branche',
-            'employee_count': 'Mitarbeiteranzahl',
-            'budget': 'Budget',
-        }
-
-        for vars_dict in recent:
-            if not isinstance(vars_dict, dict):
-                continue
-            # 1) Collect flat keys from variables (CSV stores fields here)
-            for k, v in vars_dict.items():
-                try:
-                    key_str = str(k)
-                except Exception:
-                    continue
-                if key_str not in excluded:
-                    custom_keys.add(key_str)
-
-            # 2) Additionally collect keys from variables.custom (if present)
-            custom = vars_dict.get('custom') or {}
-            if isinstance(custom, dict):
-                for k in custom.keys():
-                    try:
-                        key_str = str(k)
-                    except Exception:
-                        continue
-                    custom_keys.add(key_str)
-
-        def label_de(key: str) -> str:
-            return LABEL_DE.get(key, key.replace('_', ' ').title())
-
-        custom_vars = [
-            {
-                'key': k,
-                'label': label_de(k),
-                'category': 'custom',
-                'type': 'string'
-            }
-            for k in sorted(custom_keys)
-        ]
-
-        # Also translate labels for core vars to DE consistently
-        for item in core_vars:
-            item['label'] = label_de(item['key'])
-
+        
+        # Custom variables from funnel.custom_variables list
+        custom_vars = []
+        if funnel.custom_variables and isinstance(funnel.custom_variables, list):
+            for var_name in funnel.custom_variables:
+                custom_vars.append({
+                    'key': var_name,
+                    'label': var_name,
+                    'category': 'custom',
+                    'type': 'string'
+                })
+        
         return Response(core_vars + custom_vars)
 
     @extend_schema(
