@@ -327,7 +327,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         
         try:
             # 1. PARSE REQUEST
-            workspace_id = request.data.get('workspace')
+            workspace_id = request.data.get('workspace_id')
             raw_leads = request.data.get('leads', [])
             
             if not workspace_id:
@@ -437,7 +437,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                 {'error': f'Import failed: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @extend_schema(
         summary="🏷️ Update lead metadata",
         description="""
