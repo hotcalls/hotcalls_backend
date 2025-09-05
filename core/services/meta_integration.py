@@ -14,7 +14,6 @@ from core.models import MetaIntegration, MetaLeadForm, Lead, Workspace
 from core.utils.validators import (
     validate_email_strict,
     normalize_phone_e164,
-    extract_name,
     _normalize_key,
 )
 
@@ -894,6 +893,10 @@ class MetaIntegrationService:
         Clean Meta field mapping using standard field identifiers
         
         Maps Meta's standard fields to Lead model fields and collects custom fields.
+        Implements priority-based name handling:
+        1. If first_name AND last_name are present, use those
+        2. If only full_name is present, split it (first word = first_name, rest = last_name) 
+        3. If only first_name OR only last_name is present, reject the lead (return empty names)
         """
         mapped_data: Dict = {
             'name': '',
@@ -904,6 +907,13 @@ class MetaIntegrationService:
                 'custom': {},
                 'matched_keys': {}
             }
+        }
+
+        # Collect name fields separately for priority-based processing
+        name_fields = {
+            'first_name': '',
+            'last_name': '',
+            'full_name': ''
         }
 
         # Process each field from Meta API
@@ -937,18 +947,15 @@ class MetaIntegrationService:
                 mapped_data['variables']['matched_keys']['phone'] = normalized_key
                 
             elif normalized_key == 'first_name':
-                mapped_data['name'] = value_raw
+                name_fields['first_name'] = value_raw
                 mapped_data['variables']['matched_keys']['first_name'] = normalized_key
                 
             elif normalized_key == 'last_name':
-                mapped_data['surname'] = value_raw
+                name_fields['last_name'] = value_raw
                 mapped_data['variables']['matched_keys']['last_name'] = normalized_key
                 
             elif normalized_key == 'full_name':
-                # Extract name parts
-                name_parts = extract_name('', '', value_raw)
-                if name_parts:
-                    mapped_data['name'], mapped_data['surname'] = name_parts[0], name_parts[1]
+                name_fields['full_name'] = value_raw
                 mapped_data['variables']['matched_keys']['full_name'] = normalized_key
                 
             elif self._is_standard_field(field_name):
@@ -960,10 +967,50 @@ class MetaIntegrationService:
                 # Truly custom fields (form-specific questions)
                 mapped_data['variables']['custom'][normalized_key] = value_raw
 
+        # Apply priority-based name handling
+        first_name = name_fields['first_name'].strip()
+        last_name = name_fields['last_name'].strip()
+        full_name = name_fields['full_name'].strip()
+        
+        # Priority 1: If both first_name and last_name are present, use those
+        if first_name and last_name:
+            mapped_data['name'] = first_name
+            mapped_data['surname'] = last_name
+        # Priority 2: If only full_name is present, split it
+        elif full_name and not first_name and not last_name:
+            name_parts = full_name.split()
+            if len(name_parts) >= 2:
+                mapped_data['name'] = name_parts[0]
+                mapped_data['surname'] = ' '.join(name_parts[1:])
+            else:
+                # Only one word in full_name - treat as incomplete, don't save lead
+                mapped_data['name'] = ''
+                mapped_data['surname'] = ''
+        # Priority 3: If only first_name OR only last_name is present, reject the lead
+        elif first_name and not last_name:
+            # Only first name provided - don't save the lead
+            mapped_data['name'] = ''
+            mapped_data['surname'] = ''
+        elif last_name and not first_name:
+            # Only last name provided - don't save the lead  
+            mapped_data['name'] = ''
+            mapped_data['surname'] = ''
+        else:
+            # No name fields provided
+            mapped_data['name'] = ''
+            mapped_data['surname'] = ''
+
         logger.info(
             "Meta field mapping completed",
             extra={
                 'total_fields': len(field_data),
+                'name_processing': {
+                    'first_name_present': bool(first_name),
+                    'last_name_present': bool(last_name), 
+                    'full_name_present': bool(full_name),
+                    'final_name': mapped_data['name'],
+                    'final_surname': mapped_data['surname']
+                },
                 'final_mapping': {
                     'name': mapped_data['name'],
                     'surname': mapped_data['surname'],
