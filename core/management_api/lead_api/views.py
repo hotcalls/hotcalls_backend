@@ -13,15 +13,9 @@ from .serializers import (
 )
 from .filters import LeadFilter
 from .permissions import LeadPermission, LeadBulkPermission
-from core.utils.validators import (
-    validate_email_strict,
-    normalize_phone_e164,
-    extract_name,
-    _normalize_key,
-)
+from core.utils.validators import _normalize_key
 from core.utils.lead_normalization import canonicalize_lead_payload
 import uuid
-import re
 from django.utils import timezone
 
 
@@ -385,59 +379,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         created_leads = []
         errors = []
         detected_variable_keys = set()
-        all_csv_column_names = set()  # NEW: Collect ALL column names
-
-        # Field synonym sets aligned with Meta mapping logic
-        PERSON_NAME_FIELDS = {
-            'first_name', 'given_name', 'vorname', 'prenom', 'nombre',
-            'firstname', 'fname', 'forename', 'first'
-        }
-        PERSON_SURNAME_FIELDS = {
-            'last_name', 'family_name', 'nachname', 'nom', 'apellido',
-            'lastname', 'lname', 'surname', 'family', 'last'
-        }
-        FULL_NAME_FIELDS = {
-            'full_name', 'fullname', 'name', 'display_name', 'person_name',
-            'customer_name', 'user_name', 'client_name', 'contact_name',
-            'vollstandiger_name', 'kontakt_name'
-        }
-        EMAIL_FIELDS = {
-            'email', 'email_address', 'e_mail', 'mail', 'contact_email',
-            'user_email', 'customer_email', 'business_email', 'work_email',
-            'email_adresse', 'e_mail_adresse', 'emailadresse', 'kontakt_email',
-            'kontaktmail'
-        }
-        PHONE_FIELDS = {
-            'phone', 'phone_number', 'telephone', 'telefon', 'mobile',
-            'cell', 'handy', 'contact_phone', 'mobile_number', 'cell_phone',
-            'phone_mobile', 'tel', 'telefonnummer', 'telefon_nummer',
-            'geschaftliche_telefonnummer', 'business_phone', 'work_phone',
-            'telefono', 'telefone', 'handynummer'
-        }
-
-        # Canonical mapping for common business CSV fields (DE/EN -> EN canonical)
-        CANONICAL_CUSTOM_KEYS = {
-            # Company
-            'firma': 'company',
-            'unternehmen': 'company',
-            'unternehmensname': 'company',
-            'company': 'company',
-            'company_name': 'company',
-            'firmenname': 'company',
-            # Industry / Branche
-            'branche': 'industry',
-            'industrie': 'industry',
-            'industry': 'industry',
-            'sektor': 'industry',
-            # Employee count
-            'mitarbeiteranzahl': 'employee_count',
-            'anzahl_mitarbeiter': 'employee_count',
-            'mitarbeiter': 'employee_count',
-            'employees': 'employee_count',
-            'employee_count': 'employee_count',
-            # Budget
-            'budget': 'budget',
-        }
+        meta_data_columns = set()  # Only collect meta_data columns for custom variables
 
         for index, row in enumerate(raw_leads):
             try:
@@ -448,7 +390,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                     if isinstance(meta_data, dict):
                         for k in meta_data.keys():
                             if k:
-                                all_csv_column_names.add(k)
+                                meta_data_columns.add(k)
 
                     normalized = canonicalize_lead_payload(row)
                     first_name = (normalized.get('first_name') or '').strip()
@@ -480,167 +422,6 @@ class LeadViewSet(viewsets.ModelViewSet):
                     errors.append({'index': index, 'error': 'Invalid row format'})
                     continue
 
-                # Legacy fallback (kept for robustness)
-                # Normalize keys and collect pairs
-                pairs = []  # List[Tuple[str, str]]
-                for k, v in row.items():
-                    if v is None:
-                        continue
-                    v_str = str(v).strip()
-                    if not v_str:
-                        continue
-                    k_norm = _normalize_key(str(k))
-                    pairs.append((k_norm, v_str))
-                    
-                    # NEW: Collect original column name for funnel variables
-                    all_csv_column_names.add(str(k))
-                
-                # Also collect from meta_data if present
-                if isinstance(row, dict):
-                    meta_data = row.get('meta_data', {})
-                    if isinstance(meta_data, dict):
-                        for meta_key in meta_data.keys():
-                            if meta_key:
-                                all_csv_column_names.add(str(meta_key))
-
-                # Pick candidates similar to Meta mapping
-                first = next((v for k, v in pairs if k in PERSON_NAME_FIELDS and v), '')
-                last = next((v for k, v in pairs if k in PERSON_SURNAME_FIELDS and v), '')
-                full = next((v for k, v in pairs if k in FULL_NAME_FIELDS and v), '')
-
-                # Heuristic: any key containing "name" but not business tokens
-                if not full:
-                    BUSINESS_TOKENS = {'company', 'business', 'firma', 'unternehmen', 'organization', 'org', 'brand'}
-                    for k, v in pairs:
-                        if 'name' in k and not any(tok in k for tok in BUSINESS_TOKENS):
-                            full = v
-                            break
-
-                # Email detection
-                email_val = None
-                email_key = None
-                raw_email_fallback = None
-                for k, v in pairs:
-                    if k in EMAIL_FIELDS:
-                        e = validate_email_strict(v)
-                        if e:
-                            email_val = e
-                            email_key = k
-                            break
-                if not email_val:
-                    for k, v in pairs:
-                        if ('email' in k or 'mail' in k) and v:
-                            e = validate_email_strict(v)
-                            if e:
-                                email_val = e
-                                email_key = k
-                                break
-                if not email_val:
-                    for k, v in pairs:
-                        if '@' in v:
-                            # Keep raw as fallback, also try strict
-                            raw_email_fallback = v
-                            e = validate_email_strict(v)
-                            if e:
-                                email_val = e
-                                email_key = k
-                                break
-
-                # Phone detection
-                phone_val = None
-                phone_key = None
-                raw_phone_candidate = None
-                for k, v in pairs:
-                    if k in PHONE_FIELDS:
-                        p = normalize_phone_e164(v, default_region='DE')
-                        if p:
-                            phone_val = p
-                            phone_key = k
-                            break
-                if not phone_val:
-                    for k, v in pairs:
-                        p = normalize_phone_e164(v, default_region='DE')
-                        if p:
-                            phone_val = p
-                            phone_key = k
-                            break
-                if not phone_val:
-                    # Fallback: accept first phone-like string (prefer known phone fields), minimal sanitization
-                    def _digits_count(s: str) -> int:
-                        return sum(ch.isdigit() for ch in s)
-
-                    candidate = None
-                    # Prefer values from known phone fields
-                    for k, v in pairs:
-                        if (k in PHONE_FIELDS or any(t in k for t in ['phone', 'telefon', 'tel', 'mobile', 'handy'])) and _digits_count(v) >= 6:
-                            candidate = re.sub(r"[^0-9+]", "", v)
-                            phone_key = k
-                            break
-                    # Otherwise any field with 6+ digits
-                    if candidate is None:
-                        for k, v in pairs:
-                            if _digits_count(v) >= 6:
-                                candidate = re.sub(r"[^0-9+]", "", v)
-                                phone_key = k
-                                break
-                    if candidate:
-                        raw_phone_candidate = candidate
-
-                # Name resolution
-                name_first = ''
-                name_surname = ''
-                name_triplet = extract_name(first, last, full)
-                if name_triplet:
-                    name_first, name_surname, _ = name_triplet
-                else:
-                    # Fallback: if only full exists
-                    if full:
-                        name_first = full
-                # Validate presence (Meta-like tolerance): allow raw fallbacks if strict failed
-                email_to_save = email_val or raw_email_fallback or ''
-                phone_to_save = phone_val or raw_phone_candidate or ''
-
-                # Validate required fields (must have name + email + phone, but email/phone may be raw)
-                if not (name_first and email_to_save and phone_to_save):
-                    errors.append({
-                        'index': index,
-                        'error': 'Missing or invalid required fields (name/email/phone)'
-                    })
-                    continue
-
-                # Build variables from remaining keys
-                used_keys = {k for k in [email_key, phone_key] if k}
-                # Mark name-related keys as used
-                used_keys.update(PERSON_NAME_FIELDS)
-                used_keys.update(PERSON_SURNAME_FIELDS)
-                used_keys.update(FULL_NAME_FIELDS)
-
-                variables = {}
-                for k, v in pairs:
-                    if k not in used_keys:
-                        canonical_k = CANONICAL_CUSTOM_KEYS.get(k, k)
-                        variables[canonical_k] = v
-
-                if variables:
-                    detected_variable_keys.update(variables.keys())
-
-                meta_data = {
-                    'source': 'csv',
-                    'import_batch_id': import_batch_id,
-                }
-
-                lead = Lead.objects.create(
-                    name=name_first,
-                    surname=name_surname or '',
-                    email=email_to_save,
-                    phone=phone_to_save,
-                    workspace=assigned_workspace if isinstance(assigned_workspace, Workspace) else None,
-                    integration_provider='manual',
-                    variables=variables,
-                    meta_data=meta_data,
-                )
-                created_leads.append(lead)
-
             except Exception as e:
                 errors.append({'index': index, 'error': str(e)})
 
@@ -650,13 +431,12 @@ class LeadViewSet(viewsets.ModelViewSet):
             try:
                 funnel_name = f"CSV Import {timezone.now().strftime('%Y-%m-%d %H:%M')} ({len(created_leads)} Leads)"
                 
-                # Process ALL collected column names for funnel variables
+                # Process meta_data column names for funnel custom variables
                 final_column_names = set()
-                for raw_column in all_csv_column_names:
-                    # Normalize and apply canonical mapping
+                for raw_column in meta_data_columns:
+                    # Normalize column name (canonicalization handled by canonicalize_lead_payload)
                     normalized = _normalize_key(raw_column)
-                    canonical = CANONICAL_CUSTOM_KEYS.get(normalized, normalized)
-                    final_column_names.add(canonical)
+                    final_column_names.add(normalized)
                 
                 # Create funnel variables from all columns
                 csv_variables = self._process_csv_columns_to_variables(final_column_names)
