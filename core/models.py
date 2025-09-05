@@ -92,6 +92,7 @@ INTEGRATION_PROVIDER_CHOICES = [
     ('google', 'Google'),
     ('manual', 'Manual Entry'),
     ('custom-webhook', 'Custom Webhook'),
+    ('csv', "CSV File"),
 ]
 
 META_INTEGRATION_STATUS_CHOICES = [

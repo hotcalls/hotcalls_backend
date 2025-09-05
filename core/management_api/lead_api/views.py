@@ -409,7 +409,7 @@ class LeadViewSet(viewsets.ModelViewSet):
                         email=email_raw,
                         phone=phone_to_save,
                         workspace=assigned_workspace,
-                        integration_provider='manual',
+                        integration_provider='csv',
                         variables=variables,
                         lead_funnel=funnel,
                         meta_data={
