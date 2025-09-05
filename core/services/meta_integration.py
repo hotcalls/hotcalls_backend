@@ -39,6 +39,15 @@ class MetaIntegrationService:
         'company_name', 'job_title'
     }
     
+    # Core Lead model fields that should be excluded from custom variables
+    CORE_LEAD_FIELDS = {
+        'email',
+        'name', 'surname',  # Actual field names from Meta
+        'telefonnummer',    # German phone field name
+        'phone_number',     # English phone field name
+        'full_name', 'first_name', 'last_name'  # Keep these for compatibility
+    }
+    
     def __init__(self):
         self.app_id = getattr(settings, 'META_APP_ID', None)
         self.app_secret = getattr(settings, 'META_APP_SECRET', None)
@@ -216,13 +225,18 @@ class MetaIntegrationService:
         normalized_key = _normalize_key(field_key)
         return normalized_key in self.META_STANDARD_FIELDS
     
+    def _is_core_lead_field(self, field_key: str) -> bool:
+        """Check if field maps directly to Lead model fields (name, surname, email, phone)"""
+        normalized_key = _normalize_key(field_key)
+        return normalized_key in self.CORE_LEAD_FIELDS
+    
     def process_form_questions(self, questions: List[Dict]) -> List[str]:
-        """Process Meta form questions into list of custom variable names, excluding standard fields"""
+        """Process Meta form questions into list of custom variable names, excluding only core Lead model fields"""
         custom_variables = []
         
         for question in questions:
             key = question.get('key', '')
-            if key and not self._is_standard_field(key):
+            if key and not self._is_core_lead_field(key):
                 custom_variables.append(_normalize_key(key))
         
         return custom_variables
