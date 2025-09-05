@@ -327,14 +327,7 @@ class LeadViewSet(viewsets.ModelViewSet):
         custom_variables = []
         for key in sorted(detected_keys):
             normalized = _normalize_key(key).lower()
-            
-            variable_def = {
-                'key': normalized,
-                'label': key.replace('_', ' ').title(),  # Use original for label
-                'type': 'string',
-                'source': 'csv'
-            }
-            custom_variables.append(variable_def)
+            custom_variables.append(normalized)
 
         return custom_variables
     
