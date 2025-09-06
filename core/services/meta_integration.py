@@ -231,12 +231,22 @@ class MetaIntegrationService:
         return normalized_key in self.CORE_LEAD_FIELDS
     
     def process_form_questions(self, questions: List[Dict]) -> List[str]:
-        """Process Meta form questions into list of custom variable names, excluding only core Lead model fields"""
+        """Process Meta form questions into list of custom variable names, excluding core Lead model fields by type"""
+        # Core field types that map to Lead model fields
+        CORE_FIELD_TYPES = {
+            'FULL_NAME', 'FIRST_NAME', 'LAST_NAME',  # Name fields
+            'EMAIL',                                  # Email field
+            'PHONE'                                   # Phone field
+        }
+        
         custom_variables = []
         
         for question in questions:
             key = question.get('key', '')
-            if key and not self._is_core_lead_field(key):
+            field_type = question.get('type', '').upper()
+            
+            # Only include if key exists and it's not a core field type
+            if key and field_type not in CORE_FIELD_TYPES:
                 custom_variables.append(_normalize_key(key))
         
         return custom_variables
@@ -767,8 +777,17 @@ class MetaIntegrationService:
             lead_data = self.get_lead_data(leadgen_id, integration.access_token)
             field_data = lead_data.get('field_data', [])
             
-            # Map fields to lead model
-            mapped_data = self._map_lead_fields(field_data)
+            # Fetch form schema for type-based mapping
+            form_schema = None
+            try:
+                form_questions = self.get_form_questions(form_id, integration.access_token)
+                form_schema = {'questions': form_questions}
+            except Exception as e:
+                logger.warning(f"Could not fetch form schema for {form_id}: {str(e)}")
+                # Continue with fallback string-based mapping
+            
+            # Map fields to lead model using type-based approach
+            mapped_data = self._map_lead_fields(field_data, form_schema)
 
             # Canonicalize to enforce singular contact fields and canonical variables
             from core.utils.lead_normalization import canonicalize_lead_payload
@@ -895,15 +914,14 @@ class MetaIntegrationService:
             )
             return None
     
-    def _map_lead_fields(self, field_data: List[Dict]) -> Dict:
+    def _map_lead_fields(self, field_data: List[Dict], form_schema: Dict = None) -> Dict:
         """
-        Clean Meta field mapping using standard field identifiers
+        Type-based Meta field mapping using form schema
         
-        Maps Meta's standard fields to Lead model fields and collects custom fields.
-        Implements priority-based name handling:
-        1. If first_name AND last_name are present, use those
-        2. If only full_name is present, split it (first word = first_name, rest = last_name) 
-        3. If only first_name OR only last_name is present, reject the lead (return empty names)
+        Maps Meta's fields to Lead model fields based on field TYPES, not names.
+        This handles any localized field names (German, English, etc.)
+        
+        Uses form_schema to get field types, falls back to string matching if no schema.
         """
         mapped_data: Dict = {
             'name': '',
@@ -912,6 +930,15 @@ class MetaIntegrationService:
             'phone': '',
             'variables': {}
         }
+
+        # Build field key -> type mapping from form schema
+        field_types = {}
+        if form_schema and 'questions' in form_schema:
+            for question in form_schema['questions']:
+                key = question.get('key', '')
+                field_type = question.get('type', '').upper()
+                if key:
+                    field_types[key] = field_type
 
         # Collect name fields separately for priority-based processing
         name_fields = {
@@ -934,36 +961,31 @@ class MetaIntegrationService:
             
             if not field_name or not value_raw:
                 continue
-                
+            
+            # Get field type from schema, fallback to string matching
+            field_type = field_types.get(field_name, '').upper()
             normalized_key = _normalize_key(field_name)
             
-            # Map standard fields to Lead model fields
-            if normalized_key == 'email':
-                # Validate email
+            # Type-based mapping for core fields
+            if field_type == 'EMAIL' or (not field_type and normalized_key == 'email'):
                 validated_email = validate_email_strict(value_raw)
                 mapped_data['email'] = validated_email or value_raw
                 
-            elif normalized_key == 'phone_number':
-                # Normalize phone
+            elif field_type == 'PHONE' or (not field_type and normalized_key == 'phone_number'):
                 normalized_phone = normalize_phone_e164(value_raw, default_region='DE')
                 mapped_data['phone'] = normalized_phone or value_raw
                 
-            elif normalized_key == 'first_name':
+            elif field_type == 'FIRST_NAME' or (not field_type and normalized_key == 'first_name'):
                 name_fields['first_name'] = value_raw
                 
-            elif normalized_key == 'last_name':
+            elif field_type == 'LAST_NAME' or (not field_type and normalized_key == 'last_name'):
                 name_fields['last_name'] = value_raw
                 
-            elif normalized_key == 'full_name':
+            elif field_type == 'FULL_NAME' or (not field_type and normalized_key == 'full_name'):
                 name_fields['full_name'] = value_raw
                 
-            elif self._is_standard_field(field_name):
-                # Other standard fields (company_name, city, etc.) go to variables
-                # These are standard Meta fields but not core Lead model fields
-                mapped_data['variables'][normalized_key] = value_raw
-                
             else:
-                # Truly custom fields (form-specific questions)
+                # Everything else goes to variables (including standard Meta fields like company, city, etc.)
                 mapped_data['variables'][normalized_key] = value_raw
 
         # Apply priority-based name handling
@@ -987,11 +1009,9 @@ class MetaIntegrationService:
                 mapped_data['surname'] = ''
         # Priority 3: If only first_name OR only last_name is present, reject the lead
         elif first_name and not last_name:
-            # Only first name provided - don't save the lead
             mapped_data['name'] = ''
             mapped_data['surname'] = ''
         elif last_name and not first_name:
-            # Only last name provided - don't save the lead  
             mapped_data['name'] = ''
             mapped_data['surname'] = ''
         else:
@@ -1003,6 +1023,8 @@ class MetaIntegrationService:
             "Meta field mapping completed",
             extra={
                 'total_fields': len(field_data),
+                'schema_available': bool(form_schema),
+                'field_types_found': len(field_types),
                 'name_processing': {
                     'first_name_present': bool(first_name),
                     'last_name_present': bool(last_name), 
