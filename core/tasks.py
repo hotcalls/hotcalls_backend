@@ -179,16 +179,22 @@ def trigger_call(self, call_task_id):
         sip_trunk = getattr(phone_obj, "sip_trunk", None)
         sip_trunk_id = getattr(sip_trunk, "livekit_trunk_id", None)
 
-        # DYNAMIC SCRIPT RENDERING: Render script_template with target_ref data using Jinja2
+        # DYNAMIC TEMPLATE RENDERING: Render script_template and greeting_outbound with target_ref data
         raw_script_template = getattr(agent, "script_template", "")
+        raw_greeting_outbound = getattr(agent, "greeting_outbound", "")
         from core.services.script_template_service import script_template_service
+        
         rendered_script = script_template_service.render_script_for_target_ref(
-            raw_script_template, 
-            call_task.target_ref
+            raw_script_template, call_task.target_ref
         )
+        rendered_greeting_outbound = script_template_service.render_script_for_target_ref(
+            raw_greeting_outbound, call_task.target_ref
+        )
+        
         logger.info(
-            f"Script template rendered for target_ref '{call_task.target_ref}': "
-            f"{len(raw_script_template)} chars → {len(rendered_script)} chars"
+            f"Templates rendered for target_ref '{call_task.target_ref}': "
+            f"script {len(raw_script_template)}→{len(rendered_script)}, "
+            f"greeting_outbound {len(raw_greeting_outbound)}→{len(rendered_greeting_outbound)} chars"
         )
 
         agent_config = {
@@ -197,7 +203,7 @@ def trigger_call(self, call_task_id):
             "language": agent.language,
             # RENDERED script template (dynamically generated with lead data)
             "script_template": rendered_script,
-            "greeting_outbound": agent.greeting_outbound,
+            "greeting_outbound": rendered_greeting_outbound,
             "greeting_inbound": agent.greeting_inbound,
             "character": agent.character,
             # Provide max duration to agent runtime; convert minutes→seconds downstream
