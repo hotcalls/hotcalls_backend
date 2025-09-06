@@ -23,6 +23,13 @@ logger = logging.getLogger(__name__)
 class MetaIntegrationService:
     """Service for Meta API integration"""
     
+    # Core field types that map to Lead model fields (used for both filtering and mapping)
+    CORE_FIELD_TYPES = {
+        'FULL_NAME', 'FIRST_NAME', 'LAST_NAME',  # Name fields
+        'EMAIL',                                  # Email field
+        'PHONE'                                   # Phone field
+    }
+    
     # Meta's standard field identifiers (API always returns these in English)
     META_STANDARD_FIELDS = {
         # Core contact fields
@@ -39,7 +46,7 @@ class MetaIntegrationService:
         'company_name', 'job_title'
     }
     
-    # Core Lead model fields that should be excluded from custom variables
+    # Core Lead model fields that should be excluded from custom variables (fallback for string matching)
     CORE_LEAD_FIELDS = {
         'email',
         'name', 'surname',  # Actual field names from Meta
@@ -204,11 +211,11 @@ class MetaIntegrationService:
             raise Exception(f"Failed to get lead data: {str(e)}")
     
     def get_form_questions(self, form_id: str, access_token: str) -> List[Dict]:
-        """Get questions/fields for a specific Meta lead form"""
+        """Get questions/fields for a specific Meta lead form with field types"""
         url = f"{self.base_url}/{form_id}"
         params = {
             'access_token': access_token,
-            'fields': 'id,name,questions'
+            'fields': 'id,name,questions{key,type}'
         }
         
         try:
@@ -232,13 +239,6 @@ class MetaIntegrationService:
     
     def process_form_questions(self, questions: List[Dict]) -> List[str]:
         """Process Meta form questions into list of custom variable names, excluding core Lead model fields by type"""
-        # Core field types that map to Lead model fields
-        CORE_FIELD_TYPES = {
-            'FULL_NAME', 'FIRST_NAME', 'LAST_NAME',  # Name fields
-            'EMAIL',                                  # Email field
-            'PHONE'                                   # Phone field
-        }
-        
         custom_variables = []
         
         for question in questions:
@@ -246,7 +246,7 @@ class MetaIntegrationService:
             field_type = question.get('type', '').upper()
             
             # Only include if key exists and it's not a core field type
-            if key and field_type not in CORE_FIELD_TYPES:
+            if key and field_type not in self.CORE_FIELD_TYPES:
                 custom_variables.append(_normalize_key(key))
         
         return custom_variables
