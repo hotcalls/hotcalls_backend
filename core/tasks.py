@@ -182,6 +182,7 @@ def trigger_call(self, call_task_id):
         # DYNAMIC TEMPLATE RENDERING: Render script_template and greeting_outbound with target_ref data
         raw_script_template = getattr(agent, "script_template", "")
         raw_greeting_outbound = getattr(agent, "greeting_outbound", "")
+        raw_greeting_inbound = getattr(agent, "greeting_inbound", "")
         from core.services.script_template_service import script_template_service
         
         rendered_script = script_template_service.render_script_for_target_ref(
@@ -191,11 +192,13 @@ def trigger_call(self, call_task_id):
             raw_greeting_outbound, call_task.target_ref
         )
         
-        logger.info(
-            f"Templates rendered for target_ref '{call_task.target_ref}': "
-            f"script {len(raw_script_template)}→{len(rendered_script)}, "
-            f"greeting_outbound {len(raw_greeting_outbound)}→{len(rendered_greeting_outbound)} chars"
-        )
+        logger.info(f"🎨 TEMPLATE RENDERING DEBUG for target_ref '{call_task.target_ref}':")
+        logger.info(f"📝 RAW script_template ({len(raw_script_template)} chars): {raw_script_template[:200]}...")
+        logger.info(f"✨ RENDERED script ({len(rendered_script)} chars): {rendered_script[:200]}...")
+        logger.info(f"📝 RAW greeting_outbound ({len(raw_greeting_outbound)} chars): {raw_greeting_outbound}")
+        logger.info(f"✨ RENDERED greeting_outbound ({len(rendered_greeting_outbound)} chars): {rendered_greeting_outbound}")
+        logger.info(f"🔍 Rendering changed script: {raw_script_template != rendered_script}")
+        logger.info(f"🔍 Rendering changed greeting: {raw_greeting_outbound != rendered_greeting_outbound}")
 
         agent_config = {
             "name": agent.name,
@@ -204,7 +207,7 @@ def trigger_call(self, call_task_id):
             # RENDERED script template (dynamically generated with lead data)
             "script_template": rendered_script,
             "greeting_outbound": rendered_greeting_outbound,
-            "greeting_inbound": rendered_greeting_outbound,
+            "greeting_inbound": raw_greeting_inbound,
             "character": agent.character,
             # Provide max duration to agent runtime; convert minutes→seconds downstream
             "max_call_duration_minutes": agent.max_call_duration_minutes,
@@ -214,6 +217,10 @@ def trigger_call(self, call_task_id):
             "workspace_id": str(workspace.id),
             "event_type_id": (str(agent.event_type_id) if getattr(agent, 'event_type_id', None) else None),
         }
+        
+        # DEBUG: Log what we're passing to the dialer service
+        logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config script_template: {agent_config['script_template'][:200]}...")
+        logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config greeting_outbound: {agent_config['greeting_outbound'][:100]}...")
         if lead is not None:
             lead_data = {
                 "id": str(lead.id),

@@ -49,6 +49,12 @@ async def _make_call_async(
     callee_phone = (lead_data.get("phone") or "").strip()
     callee_identity = f"phone_{callee_phone.replace('+', '')}"
 
+    # DEBUG: Log what we received from tasks.py
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"📥 DIALER RECEIVED FROM TASKS - script_template: {agent_config.get('script_template', '')[:200]}...")
+    logger.info(f"📥 DIALER RECEIVED FROM TASKS - greeting_outbound: {agent_config.get('greeting_outbound', '')}")
+
     # Build agent_config payload using model-grounded required fields
     agent_cfg_payload: Dict[str, Any] = {
         "voice_external_id": agent_config.get("voice_external_id"),
@@ -65,6 +71,11 @@ async def _make_call_async(
         "workspace_id": agent_config.get("workspace_id"),
         "event_type_id": agent_config.get("event_type_id"),
     }
+    
+    # DEBUG: Log the transformation from script_template -> script
+    logger.info(f"🔄 DIALER TRANSFORMATION - script_template -> script: {agent_cfg_payload['script'][:200]}...")
+    logger.info(f"🔄 DIALER TRANSFORMATION - greeting_outbound: {agent_cfg_payload['greeting_outbound']}")
+    logger.info(f"🚀 DIALER SENDING TO LIVEKIT - Full agent_cfg_payload: {agent_cfg_payload}")
 
     # --- Job metadata sent to the agent process ---
     hotcalls_metadata = {
