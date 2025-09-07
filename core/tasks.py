@@ -204,7 +204,7 @@ def trigger_call(self, call_task_id):
             # RENDERED script template (dynamically generated with lead data)
             "script_template": rendered_script,
             "greeting_outbound": rendered_greeting_outbound,
-            "greeting_inbound": agent.greeting_inbound,
+            "greeting_inbound": rendered_greeting_outbound,
             "character": agent.character,
             # Provide max duration to agent runtime; convert minutes→seconds downstream
             "max_call_duration_minutes": agent.max_call_duration_minutes,
