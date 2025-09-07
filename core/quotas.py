@@ -147,7 +147,7 @@ def enforce_and_record(
     """
     # Convert to Decimal and validate
     amount = Decimal(str(amount))
-    if amount <= 0:
+    if amount < 0:
         raise ValueError(f"Usage amount must be positive, got {amount}")
     
     from core.models import EndpointFeature, FeatureUsage

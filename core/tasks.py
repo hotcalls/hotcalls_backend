@@ -192,13 +192,8 @@ def trigger_call(self, call_task_id):
             raw_greeting_outbound, call_task.target_ref
         )
         
-        logger.info(f"🎨 TEMPLATE RENDERING DEBUG for target_ref '{call_task.target_ref}':")
-        logger.info(f"📝 RAW script_template ({len(raw_script_template)} chars): {raw_script_template[:200]}...")
-        logger.info(f"✨ RENDERED script ({len(rendered_script)} chars): {rendered_script[:200]}...")
-        logger.info(f"📝 RAW greeting_outbound ({len(raw_greeting_outbound)} chars): {raw_greeting_outbound}")
-        logger.info(f"✨ RENDERED greeting_outbound ({len(rendered_greeting_outbound)} chars): {rendered_greeting_outbound}")
-        logger.info(f"🔍 Rendering changed script: {raw_script_template != rendered_script}")
-        logger.info(f"🔍 Rendering changed greeting: {raw_greeting_outbound != rendered_greeting_outbound}")
+        logger.info(f" rendered script and greeting outbound': {raw_script_template} \n {raw_greeting_outbound}")
+       
 
         agent_config = {
             "name": agent.name,

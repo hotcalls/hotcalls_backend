@@ -7,9 +7,7 @@ from the lead.variables JSONField to create a comprehensive template context.
 """
 import logging
 from typing import Dict, Any, Optional
-from jinja2 import Environment, Template, TemplateSyntaxError, UndefinedError, StrictUndefined
-from jinja2.exceptions import SecurityError
-from jinja2.sandbox import SandboxedEnvironment
+from jinja2 import Environment, Template
 
 logger = logging.getLogger(__name__)
 
@@ -26,14 +24,10 @@ class ScriptTemplateService:
     """
     
     def __init__(self):
-        """Initialize the sandboxed Jinja2 environment."""
-        # Use SandboxedEnvironment for security - prevents code execution
-        self.jinja_env = SandboxedEnvironment(
-            # Configure for security and usability
+        """Initialize the Jinja2 environment."""
+        # Use basic Environment with default undefined behavior
+        self.jinja_env = Environment(
             autoescape=False,  # Don't HTML-escape since this is for voice scripts
-            undefined=StrictUndefined,  # Raise errors for undefined variables (we'll catch them)
-            trim_blocks=True,    # Clean up template formatting
-            lstrip_blocks=True,  # Clean up template formatting
         )
     
     def render_script_template(
@@ -43,85 +37,16 @@ class ScriptTemplateService:
     ) -> str:
         """
         Render a script template with lead data using Jinja2.
-        
-        Args:
-            script_template (str): The Jinja2 template string from agent.script_template
-            lead_data (dict, optional): Lead context data. If None, returns original template.
-            
-        Returns:
-            str: Rendered template string, or original template on error
-            
-        Example:
-            >>> service = ScriptTemplateService()
-            >>> template = "Hello {{ name }}! Your email is {{ email }}."
-            >>> context = {"name": "John", "email": "john@example.com", "budget": "5000"}
-            >>> result = service.render_script_template(template, context)
-            >>> print(result)  # "Hello John! Your email is john@example.com."
+        Missing variables will render as empty strings (default Jinja2 behavior).
         """
-        if not script_template or not isinstance(script_template, str):
-            logger.warning("Empty or invalid script_template provided")
-            return script_template or ""
+        if not script_template:
+            return ""
         
-        # If no lead data, return original template
         if not lead_data:
-            logger.debug("No lead data provided, returning original template")
             return script_template
         
-        try:
-            # Compile the template
-            template = self.jinja_env.from_string(script_template)
-            
-            # Render with lead context
-            rendered = template.render(**lead_data)
-            
-            logger.info(
-                "Script template rendered successfully",
-                extra={
-                    "template_length": len(script_template),
-                    "rendered_length": len(rendered),
-                    "context_keys": list(lead_data.keys()),
-                    "template_preview": script_template[:100] + "..." if len(script_template) > 100 else script_template
-                }
-            )
-            
-            return rendered
-            
-        except TemplateSyntaxError as e:
-            logger.error(
-                "Jinja2 template syntax error",
-                extra={
-                    "error": str(e),
-                    "template": script_template,
-                    "line": e.lineno,
-                    "context_keys": list(lead_data.keys()) if lead_data else []
-                }
-            )
-            return script_template  # Fallback to original
-            
-        except (UndefinedError, SecurityError) as e:
-            logger.error(
-                "Template rendering error",
-                extra={
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "template_preview": script_template[:200],
-                    "context_keys": list(lead_data.keys()) if lead_data else []
-                }
-            )
-            return script_template  # Fallback to original
-            
-        except Exception as e:
-            logger.error(
-                "Unexpected error during template rendering",
-                extra={
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "template_length": len(script_template),
-                    "context_keys": list(lead_data.keys()) if lead_data else []
-                },
-                exc_info=True
-            )
-            return script_template  # Fallback to original
+        template = self.jinja_env.from_string(script_template)
+        return template.render(**lead_data)
     
     def merge_lead_context(self, lead) -> Dict[str, Any]:
         """

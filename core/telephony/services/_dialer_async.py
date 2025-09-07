@@ -65,18 +65,11 @@ async def _make_call_async(
         "greeting_inbound": agent_config.get("greeting_inbound"),
         "greeting_outbound": agent_config.get("greeting_outbound"),
         "max_call_duration_s": max(1, 60 * int(agent_config["max_call_duration_minutes"])),
-        # Script passed to agent runtime (derived from backend script_template)
         "script": agent_config.get("script_template", ""),
-        # Booking identifiers
         "workspace_id": agent_config.get("workspace_id"),
         "event_type_id": agent_config.get("event_type_id"),
     }
     
-    # DEBUG: Log the transformation from script_template -> script
-    logger.info(f"🔄 DIALER TRANSFORMATION - script_template -> script: {agent_cfg_payload['script'][:200]}...")
-    logger.info(f"🔄 DIALER TRANSFORMATION - greeting_outbound: {agent_cfg_payload['greeting_outbound']}")
-    logger.info(f"🚀 DIALER SENDING TO LIVEKIT - Full agent_cfg_payload: {agent_cfg_payload}")
-
     # --- Job metadata sent to the agent process ---
     hotcalls_metadata = {
         "agent": agent_name,
