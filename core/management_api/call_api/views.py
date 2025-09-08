@@ -8,11 +8,12 @@ from django.utils import timezone
 from django.core.exceptions import PermissionDenied
 import logging
 
-from core.models import CallLog, Agent, Lead, CallTask, CallStatus
+from core.models import CallLog, Agent, Lead, CallTask, CallStatus, LeadFunnel
 from .serializers import (
     CallLogSerializer, CallLogCreateSerializer, CallLogAnalyticsSerializer, 
     CallLogStatusAnalyticsSerializer, CallLogAgentPerformanceSerializer,
-    CallLogAppointmentStatsSerializer, TestCallSerializer, CallTaskSerializer, CallTaskTriggerSerializer
+    CallLogAppointmentStatsSerializer, TestCallSerializer, CallTaskSerializer, CallTaskTriggerSerializer,
+    BulkScheduleSerializer, BulkScheduleResponseSerializer
 )
 from .filters import CallLogFilter, CallTaskFilter
 from .permissions import CallLogPermission, CallLogAnalyticsPermission
@@ -1203,6 +1204,131 @@ class CallTaskViewSet(viewsets.ModelViewSet):
                 {'error': 'CallTask not found'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
+
+    @extend_schema(
+        summary="Bulk schedule calls for all leads in a LeadFunnel",
+        description="""
+        Schedule calls for all leads associated with a specific LeadFunnel.
+        
+        **Permission Requirements**:
+        - **All Authenticated Users**: Can schedule calls for LeadFunnels in their workspaces
+        - **Superusers**: Can schedule calls for any LeadFunnel
+        
+        **Prerequisites**:
+        - LeadFunnel must exist and have an assigned agent
+        - Agent must have a valid phone number
+        - Schedule datetime cannot be in the past
+        
+        **What happens**:
+        - Finds all leads associated with the LeadFunnel
+        - Creates CallTasks for leads that don't already have pending tasks
+        - Skips leads without phone numbers or with existing tasks
+        - Returns detailed statistics about the operation
+        """,
+        request=BulkScheduleSerializer,
+        responses={
+            201: OpenApiResponse(
+                response=BulkScheduleResponseSerializer,
+                description="Bulk scheduling completed successfully"
+            ),
+            400: OpenApiResponse(description="Validation error"),
+            403: OpenApiResponse(description="Permission denied"),
+            404: OpenApiResponse(description="LeadFunnel not found")
+        },
+        tags=["Call Management"]
+    )
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def bulk_schedule(self, request):
+        """Bulk schedule calls for all leads in a LeadFunnel"""
+        serializer = BulkScheduleSerializer(data=request.data, context={'request': request})
+        
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        validated_data = serializer.validated_data
+        lead_funnel_id = validated_data['lead_funnel_id']
+        schedule_datetime = validated_data['schedule_datetime']
+        
+        # Get LeadFunnel with related agent (already validated in serializer)
+        lead_funnel = LeadFunnel.objects.select_related('agent').get(id=lead_funnel_id)
+        agent = lead_funnel.agent
+        
+        # Get all leads from this LeadFunnel
+        leads = Lead.objects.filter(lead_funnel=lead_funnel)
+        
+        # Track statistics
+        leads_processed = 0
+        call_tasks_created = 0
+        skipped_leads = 0
+        created_task_ids = []
+        skipped_reasons = []
+        
+        from core.utils.calltask_utils import create_call_task_safely
+        
+        for lead in leads:
+            leads_processed += 1
+            
+            # Skip leads without phone numbers
+            if not lead.phone:
+                skipped_leads += 1
+                skipped_reasons.append({
+                    "lead_id": str(lead.id),
+                    "reason": "no_phone_number"
+                })
+                continue
+            
+            # Check if lead already has a pending CallTask (prevent duplicates)
+            existing_task = CallTask.objects.filter(
+                lead=lead,
+                status__in=[CallStatus.SCHEDULED, CallStatus.RETRY, CallStatus.IN_PROGRESS]
+            ).first()
+            
+            if existing_task:
+                skipped_leads += 1
+                skipped_reasons.append({
+                    "lead_id": str(lead.id),
+                    "reason": "already_scheduled"
+                })
+                continue
+            
+            try:
+                # Create CallTask using the unified helper
+                target_ref = f"lead:{lead.id}"
+                call_task = create_call_task_safely(
+                    agent=agent,
+                    workspace=agent.workspace,
+                    target_ref=target_ref,
+                    next_call=schedule_datetime
+                )
+                
+                call_tasks_created += 1
+                created_task_ids.append(str(call_task.id))
+                
+            except Exception as e:
+                # Handle individual task creation failures
+                skipped_leads += 1
+                skipped_reasons.append({
+                    "lead_id": str(lead.id),
+                    "reason": f"creation_failed: {str(e)}"
+                })
+                logger.error(f"Failed to create CallTask for lead {lead.id}: {e}")
+        
+        # Prepare response data
+        response_data = {
+            "success": True,
+            "lead_funnel_id": str(lead_funnel_id),
+            "agent_id": str(agent.agent_id),
+            "scheduled_datetime": schedule_datetime,
+            "leads_processed": leads_processed,
+            "call_tasks_created": call_tasks_created,
+            "skipped_leads": skipped_leads,
+            "details": {
+                "created_task_ids": created_task_ids,
+                "skipped_reasons": skipped_reasons
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 @extend_schema(

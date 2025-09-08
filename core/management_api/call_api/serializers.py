@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field
-from core.models import CallLog, Lead, Agent, CallTask
+from core.models import CallLog, Lead, Agent, CallTask, LeadFunnel
 from django.utils import timezone
 
 
@@ -389,4 +389,66 @@ class CallTaskTriggerSerializer(serializers.Serializer):
     """Serializer for triggering a call task"""
     task_id = serializers.UUIDField(read_only=True)
     status = serializers.CharField(read_only=True)
-    message = serializers.CharField(read_only=True) 
+    message = serializers.CharField(read_only=True)
+
+
+class BulkScheduleSerializer(serializers.Serializer):
+    """Serializer for bulk scheduling calls for all leads in a LeadFunnel"""
+    
+    lead_funnel_id = serializers.UUIDField(
+        required=True,
+        help_text="UUID of the LeadFunnel to schedule calls for"
+    )
+    
+    schedule_datetime = serializers.DateTimeField(
+        required=True,
+        help_text="Datetime to schedule all calls for (cannot be in the past)"
+    )
+    
+    def validate_lead_funnel_id(self, value):
+        """Validate LeadFunnel exists and has an assigned agent with phone number"""
+        try:
+            lead_funnel = LeadFunnel.objects.select_related('agent', 'agent__phone_number').get(id=value)
+        except LeadFunnel.DoesNotExist:
+            raise serializers.ValidationError("LeadFunnel not found")
+        
+        # Check if funnel has an assigned agent
+        if not hasattr(lead_funnel, 'agent') or not lead_funnel.agent:
+            raise serializers.ValidationError("LeadFunnel has no assigned agent")
+        
+        agent = lead_funnel.agent
+        
+        # Check if agent has a phone number
+        if not hasattr(agent, 'phone_number') or not agent.phone_number:
+            raise serializers.ValidationError("Agent has no assigned phone number")
+        
+        if not getattr(agent.phone_number, 'phonenumber', None):
+            raise serializers.ValidationError("Agent's phone number is invalid")
+        
+        # Check workspace access for non-superusers
+        request = self.context.get('request')
+        if request and request.user and not request.user.is_superuser:
+            user_workspaces = request.user.mapping_user_workspaces.all()
+            if agent.workspace not in user_workspaces:
+                raise serializers.ValidationError("You don't have access to this LeadFunnel's agent workspace")
+        
+        return value
+    
+    def validate_schedule_datetime(self, value):
+        """Validate datetime is not in the past"""
+        now = timezone.now()
+        if value < now:
+            raise serializers.ValidationError("Schedule datetime cannot be in the past")
+        return value
+
+
+class BulkScheduleResponseSerializer(serializers.Serializer):
+    """Serializer for bulk schedule response"""
+    success = serializers.BooleanField(read_only=True)
+    lead_funnel_id = serializers.UUIDField(read_only=True)
+    agent_id = serializers.UUIDField(read_only=True)
+    scheduled_datetime = serializers.DateTimeField(read_only=True)
+    leads_processed = serializers.IntegerField(read_only=True)
+    call_tasks_created = serializers.IntegerField(read_only=True)
+    skipped_leads = serializers.IntegerField(read_only=True)
+    details = serializers.DictField(read_only=True) 
