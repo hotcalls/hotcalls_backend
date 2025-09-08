@@ -407,16 +407,18 @@ class BulkScheduleSerializer(serializers.Serializer):
     
     def validate_lead_funnel_id(self, value):
         """Validate LeadFunnel exists and has an assigned agent with phone number"""
+        from core.models import Agent
+        
         try:
-            lead_funnel = LeadFunnel.objects.select_related('agent', 'agent__phone_number').get(id=value)
+            lead_funnel = LeadFunnel.objects.get(id=value)
         except LeadFunnel.DoesNotExist:
             raise serializers.ValidationError("LeadFunnel not found")
         
-        # Check if funnel has an assigned agent
-        if not hasattr(lead_funnel, 'agent') or not lead_funnel.agent:
+        # Find the agent that has this lead_funnel assigned
+        try:
+            agent = Agent.objects.select_related('phone_number', 'workspace').get(lead_funnel=lead_funnel)
+        except Agent.DoesNotExist:
             raise serializers.ValidationError("LeadFunnel has no assigned agent")
-        
-        agent = lead_funnel.agent
         
         # Check if agent has a phone number
         if not hasattr(agent, 'phone_number') or not agent.phone_number:

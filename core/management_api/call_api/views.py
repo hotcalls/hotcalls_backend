@@ -1249,9 +1249,9 @@ class CallTaskViewSet(viewsets.ModelViewSet):
         lead_funnel_id = validated_data['lead_funnel_id']
         schedule_datetime = validated_data['schedule_datetime']
         
-        # Get LeadFunnel with related agent (already validated in serializer)
-        lead_funnel = LeadFunnel.objects.select_related('agent').get(id=lead_funnel_id)
-        agent = lead_funnel.agent
+        # Get LeadFunnel and find its assigned agent (already validated in serializer)
+        lead_funnel = LeadFunnel.objects.get(id=lead_funnel_id)
+        agent = Agent.objects.select_related('phone_number', 'workspace').get(lead_funnel=lead_funnel)
         
         # Get all leads from this LeadFunnel
         leads = Lead.objects.filter(lead_funnel=lead_funnel)
