@@ -1344,6 +1344,11 @@ class CallLog(models.Model):
         blank=True,
         help_text="Scheduled appointment datetime when status is 'appointment_scheduled'"
     )
+    transcript = models.JSONField(
+        null=True, 
+        blank=True,
+        help_text="Complete conversation transcript as JSON array of messages"
+    )
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:

@@ -21,7 +21,7 @@ class CallLogSerializer(serializers.ModelSerializer):
             'agent', 'agent_workspace_name',
             'timestamp', 'from_number', 'to_number', 'duration', 
             'duration_formatted', 'disconnection_reason', 'direction', 
-            'appointment_datetime', 'call_task_id', 'target_ref', 'updated_at'
+            'appointment_datetime', 'call_task_id', 'target_ref', 'transcript', 'updated_at'
         ]
         read_only_fields = ['id', 'timestamp', 'updated_at']
     
@@ -64,6 +64,8 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             'target_ref',
             # Idempotency
             'event_id',
+            # Conversation transcript
+            'transcript',
         ]
         extra_kwargs = {
             'lead': {'required': False, 'allow_null': True},
@@ -79,6 +81,20 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Duration cannot be negative")
         return value
     
+    def validate_transcript(self, value):
+        """Validate transcript JSON structure"""
+        if value is not None:
+            if not isinstance(value, list):
+                raise serializers.ValidationError("Transcript must be a list")
+            
+            for message in value:
+                if not isinstance(message, dict):
+                    raise serializers.ValidationError("Each transcript message must be an object")
+                if not all(key in message for key in ['role', 'content', 'timestamp']):
+                    raise serializers.ValidationError("Messages must have role, content, and timestamp")
+        
+        return value
+
     def validate(self, attrs):
         """No cross-field validation needed for appointment datetime."""
         return attrs
@@ -123,6 +139,7 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
         # Optional fields and overrides (only allow explicit override for direction per spec)
         disconnection_reason = validated_data.get('disconnection_reason')
         appointment_dt = validated_data.get('appointment_datetime')
+        transcript = validated_data.get('transcript')
 
         # Build instance data
         instance_data = {
@@ -136,6 +153,7 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             'duration': duration_seconds,
             'disconnection_reason': disconnection_reason,
             'appointment_datetime': appointment_dt,
+            'transcript': transcript,
         }
 
         # Create CallLog directly using model manager to avoid required field enforcement on missing inputs
