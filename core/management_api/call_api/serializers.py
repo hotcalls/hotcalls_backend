@@ -453,14 +453,6 @@ class BulkScheduleSerializer(serializers.Serializer):
                 raise serializers.ValidationError("You don't have access to this LeadFunnel's agent workspace")
         
         return value
-    
-    def validate_schedule_datetime(self, value):
-        """Validate datetime is not in the past"""
-        now = timezone.now()
-        if value < now:
-            raise serializers.ValidationError("Schedule datetime cannot be in the past")
-        return value
-
 
 class BulkScheduleResponseSerializer(serializers.Serializer):
     """Serializer for bulk schedule response"""
