@@ -15,9 +15,9 @@ class LeadSerializer(serializers.ModelSerializer):
             'id', 'name', 'surname', 'full_name', 'email', 'phone', 
             'workspace', 'workspace_name', 'integration_provider', 
             'integration_provider_display', 'variables', 'meta_data', 
-            'created_at', 'updated_at'
+            'lead_funnel', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'full_name', 'workspace_name', 'integration_provider_display']
+        read_only_fields = ['id', 'lead_funnel', 'created_at', 'updated_at', 'full_name', 'workspace_name', 'integration_provider_display']
     
     @extend_schema_field(serializers.CharField)
     def get_full_name(self, obj) -> str:
