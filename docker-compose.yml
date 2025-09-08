@@ -104,6 +104,11 @@ services:
       - AGENT_DB_PASSWORD=${AGENT_DB_PASSWORD}  # Read-only password from .env
       - MCP_SERVER_URL=http://mcp:8000
       - CALL_EVENT_ENDPOINT_URL=http://backend:8000/api/calls/end-of-call/
+      # Knowledge Base Configuration
+      - KNOWLEDGE_BASE_URL=http://backend:8000  # Use internal Docker network URL
+      - KNOWLEDGE_DEFAULT_AGENT_ID=${KNOWLEDGE_DEFAULT_AGENT_ID}
+      - KNOWLEDGE_VERIFY_SSL=${KNOWLEDGE_VERIFY_SSL}
+      - KNOWLEDGE_REQUEST_TIMEOUT=${KNOWLEDGE_REQUEST_TIMEOUT}
     depends_on:
       db:
         condition: service_healthy

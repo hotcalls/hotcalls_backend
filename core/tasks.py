@@ -213,6 +213,15 @@ def trigger_call(self, call_task_id):
             "event_type_id": (str(agent.event_type_id) if getattr(agent, 'event_type_id', None) else None),
         }
         
+        # Add knowledge document ID if agent has kb_pdf
+        if agent.kb_pdf:
+            import os
+            import uuid
+            kb_filename = os.path.basename(agent.kb_pdf.name)
+            doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent.agent_id}/{kb_filename}"))
+            agent_config["knowledge_documents"] = [doc_id]
+            logger.info(f"🧠 KNOWLEDGE DOCUMENT AVAILABLE - doc_id: {doc_id}, filename: {kb_filename}")
+        
         # DEBUG: Log what we're passing to the dialer service
         logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config script_template: {agent_config['script_template'][:200]}...")
         logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config greeting_outbound: {agent_config['greeting_outbound'][:100]}...")

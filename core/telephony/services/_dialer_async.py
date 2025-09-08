@@ -68,6 +68,7 @@ async def _make_call_async(
         "script": agent_config.get("script_template", ""),
         "workspace_id": agent_config.get("workspace_id"),
         "event_type_id": agent_config.get("event_type_id"),
+        "knowledge_documents": agent_config.get("knowledge_documents"),
     }
     
     # --- Job metadata sent to the agent process ---
