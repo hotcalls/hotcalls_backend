@@ -320,13 +320,13 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
         data = request.data if isinstance(request.data, dict) else {}
         start_str = (data.get('start') or '').strip()
-        lead_data = (data.get('lead_id') or '')
+        lead_id = (data.get('lead_id') or '').strip()
 
         if not start_str:
             return Response({"error": "start is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check if lead data exists
-        if not lead_data:
+        # Check if lead ID exists
+        if not lead_id:
             return Response({"error": "lead id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
@@ -359,7 +359,7 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         # Get lead from database using lead_id
         try:
             from core.models import Lead
-            lead = Lead.objects.get(id=lead_data)
+            lead = Lead.objects.get(id=lead_id)
         except Lead.DoesNotExist:
             return Response({"error": "lead not found"}, status=status.HTTP_404_NOT_FOUND)
 
