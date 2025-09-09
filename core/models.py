@@ -1349,6 +1349,11 @@ class CallLog(models.Model):
         blank=True,
         help_text="Complete conversation transcript as JSON array of messages"
     )
+    summary = models.TextField(
+        null=True, 
+        blank=True, 
+        help_text="AI-generated summary of the call transcript"
+    )
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
