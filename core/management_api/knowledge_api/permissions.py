@@ -40,4 +40,18 @@ class AgentKnowledgePermission(permissions.BasePermission):
         return request.user in obj.workspace.users.all()
 
 
+class PublicAgentKnowledgePermission(permissions.BasePermission):
+    """
+    Public permission class for presign URLs - allows unauthenticated access.
+    """
+
+    def has_permission(self, request, view):
+        # Allow all requests (no authentication required)
+        return True
+
+    def has_object_permission(self, request, view, obj: Agent):
+        # Allow all requests (no authentication required)
+        return True
+
+
 

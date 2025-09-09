@@ -26,7 +26,7 @@ try:
     from hotcalls.storage_backends import AzureMediaStorage  # type: ignore
 except Exception:  # pragma: no cover - fallback used in tests without Azure deps
     from django.core.files.storage import FileSystemStorage as AzureMediaStorage  # type: ignore
-from .permissions import AgentKnowledgePermission
+from .permissions import AgentKnowledgePermission, PublicAgentKnowledgePermission
 from .serializers import (
     DocumentUploadSerializer,
     PresignRequestSerializer,
@@ -427,7 +427,7 @@ class AgentKnowledgeDocumentDetailView(APIView):
 
 
 class AgentKnowledgeDocumentPresignView(APIView):
-    permission_classes = [AgentKnowledgePermission]
+    permission_classes = []
 
     @extend_schema(
         request=PresignRequestSerializer,
@@ -441,7 +441,6 @@ class AgentKnowledgeDocumentPresignView(APIView):
     )
     def post(self, request, agent_id, filename):
         agent = _get_agent_or_404(agent_id)
-        self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)
@@ -529,7 +528,7 @@ class AgentKnowledgeDocumentDetailByIdView(APIView):
 
 
 class AgentKnowledgeDocumentPresignByIdView(APIView):
-    permission_classes = [AgentKnowledgePermission]
+    permission_classes = []
 
     @extend_schema(
         summary="🔗 Presign URLs for a document",
@@ -553,7 +552,6 @@ class AgentKnowledgeDocumentPresignByIdView(APIView):
     )
     def post(self, request, agent_id, doc_id):
         agent = _get_agent_or_404(agent_id)
-        self.check_object_permissions(request, agent)
 
         storage = AzureMediaStorage()
         manifest = _load_manifest(storage, agent_id)

@@ -13,8 +13,13 @@ class OpenAIService:
     """
     
     def __init__(self):
+        # Get API key with fallback to environment variable
+        api_key = getattr(settings, 'OPENAI_API_KEY', None) or os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in Django settings or environment variables")
+        
         self.client = openai.OpenAI(
-            api_key=settings.OPENAI_API_KEY
+            api_key=api_key
         )
         self.model = "gpt-4o-mini"  # Cost-effective model for summarization
     
