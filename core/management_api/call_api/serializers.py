@@ -21,9 +21,9 @@ class CallLogSerializer(serializers.ModelSerializer):
             'agent', 'agent_workspace_name',
             'timestamp', 'from_number', 'to_number', 'duration', 
             'duration_formatted', 'disconnection_reason', 'direction', 
-            'appointment_datetime', 'call_task_id', 'target_ref', 'transcript', 'updated_at'
+            'appointment_datetime', 'call_task_id', 'target_ref', 'transcript', 'summary', 'updated_at'
         ]
-        read_only_fields = ['id', 'timestamp', 'updated_at']
+        read_only_fields = ['id', 'timestamp', 'updated_at', 'summary']
     
     def validate_duration(self, value):
         """Validate duration is not negative"""
