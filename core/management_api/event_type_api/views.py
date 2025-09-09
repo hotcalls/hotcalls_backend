@@ -320,14 +320,14 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
         data = request.data if isinstance(request.data, dict) else {}
         start_str = (data.get('start') or '').strip()
-        lead_data = (data.get('lead') or '')
+        lead_data = (data.get('lead_id') or '')
 
         if not start_str:
             return Response({"error": "start is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         # Check if lead data exists
-        if not lead_data or not isinstance(lead_data, dict):
-            return Response({"error": "lead data is required as a dict"}, status=status.HTTP_400_BAD_REQUEST)
+        if not lead_data:
+            return Response({"error": "lead id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Parse start in event type timezone if naive
@@ -356,10 +356,17 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                 # Be conservative on provider errors: treat as conflict
                 return Response({"error": "slot check failed"}, status=status.HTTP_409_CONFLICT)
 
-        # Generate event details using the lead data
-        title = f"{event_type.name} mit {lead_data.get('name')} {lead_data.get('surname')}"
-        description = f"Kontaktdaten: {lead_data.get('phone_number')}, {lead_data.get('email')}"
-        attendees = [{'name': lead_data.get('name'), 'email': lead_data.get('email')}]
+        # Get lead from database using lead_id
+        try:
+            from core.models import Lead
+            lead = Lead.objects.get(id=lead_data)
+        except Lead.DoesNotExist:
+            return Response({"error": "lead not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Generate event details using the lead data from database
+        title = f"{event_type.name} mit {lead.name} {lead.surname}"
+        description = f"Kontaktdaten: {lead.phone}, {lead.email}"
+        attendees = [{'name': lead.name, 'email': lead.email}]
 
         created_events: List[Tuple[SubAccount, dict]] = []
         try:
