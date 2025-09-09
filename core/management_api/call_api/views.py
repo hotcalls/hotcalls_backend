@@ -429,6 +429,17 @@ def end_of_call(request):
     except Exception as feedback_err:
         logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id} (end_of_call): {feedback_err}")
 
+    # Trigger transcript summarization (async, non-blocking)
+    try:
+        from core.tasks import generate_call_summary
+        if call_log.transcript:
+            generate_call_summary.delay(str(call_log.id))
+            logger.info(f"Triggered transcript summarization for CallLog {call_log.id}")
+        else:
+            logger.info(f"No transcript found for CallLog {call_log.id}, skipping summarization")
+    except Exception as summary_err:
+        logger.error(f"Failed to trigger transcript summarization for call log {call_log.id} (end_of_call): {summary_err}")
+
     return Response(CallLogSerializer(call_log).data, status=status.HTTP_201_CREATED)
 
 def _record_usage_minutes(call_log: CallLog):
