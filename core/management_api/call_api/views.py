@@ -350,6 +350,7 @@ def end_of_call(request):
         'direction',
         'appointment_datetime',
         'event_id',
+        'transcript'
     }
     incoming = request.data.copy()
     filtered = {k: incoming.get(k) for k in allowed_keys if k in incoming}
