@@ -202,4 +202,7 @@ LOGGING = {
 
 # LiveKit Concurrency Control for Staging
 # Medium concurrency for staging environment
-# LiveKit Agent Configuration: Managed via database (LiveKitAgent model) 
+# LiveKit Agent Configuration: Managed via database (LiveKitAgent model)
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')

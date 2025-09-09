@@ -122,4 +122,7 @@ REST_FRAMEWORK['DEFAULT_RENDERER_CLASSES'] += [
     'rest_framework.renderers.BrowsableAPIRenderer',
 ]
 
-# Use PostgreSQL and Redis from .env configuration (Docker setup) 
+# Use PostgreSQL and Redis from .env configuration (Docker setup)
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')

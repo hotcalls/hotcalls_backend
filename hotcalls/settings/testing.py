@@ -98,4 +98,7 @@ HEALTH_CHECK = {}
 # REST Framework settings for tests
 REST_FRAMEWORK['DEFAULT_AUTHENTICATION_CLASSES'] = [
     'rest_framework.authentication.SessionAuthentication',
-] 
+]
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')

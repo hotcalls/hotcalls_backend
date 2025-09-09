@@ -224,4 +224,7 @@ INSTALLED_APPS += [
 
 # LiveKit Concurrency Control for Production
 # Higher concurrency for production environment
-# LiveKit Agent Configuration: Managed via database (LiveKitAgent model) 
+# LiveKit Agent Configuration: Managed via database (LiveKitAgent model)
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
