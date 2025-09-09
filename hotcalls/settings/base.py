@@ -558,3 +558,6 @@ MS_SCOPES = [
     'OnlineMeetings.Read',
     # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
 ]
+
+# OpenAI Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
