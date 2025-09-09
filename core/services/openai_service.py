@@ -52,9 +52,9 @@ Beschränke dich dabei auf maximal 750 Zeichen."""
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                max_tokens=300,  # Allow for 750 characters in German
-                temperature=0.3,  # Low temperature for consistent, factual summaries
-                timeout=30  # 30 second timeout
+                max_tokens=300,
+                temperature=0.3,
+                timeout=30
             )
             
             summary = response.choices[0].message.content.strip()
