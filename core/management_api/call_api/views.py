@@ -315,6 +315,21 @@ class CallLogViewSet(viewsets.ModelViewSet):
             # Log error but don't fail call log creation
             logger.error(f"⚠️ Failed to trigger CallTask feedback for call log {call_log.id}: {feedback_err}")
             # Call log creation succeeds regardless of feedback trigger errors
+        
+        # Trigger transcript summarization (async, non-blocking)
+        try:
+            from core.tasks import generate_call_summary
+            # Only trigger if transcript exists
+            if call_log.transcript:
+                generate_call_summary.delay(str(call_log.id))
+                logger.info(f"Triggered transcript summarization for CallLog {call_log.id}")
+            else:
+                logger.info(f"No transcript found for CallLog {call_log.id}, skipping summarization")
+            
+        except Exception as summary_err:
+            # Log error but don't fail call log creation
+            logger.error(f"Failed to trigger transcript summarization for call log {call_log.id}: {summary_err}")
+            # Call log creation succeeds regardless of summary trigger errors
     
     # ===============================
     # New function-based endpoint
