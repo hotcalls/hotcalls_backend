@@ -1428,3 +1428,110 @@ def daily_meta_sync(self):
         f"{results['total_variables_extracted']} variable extractions"
     )
     return results
+
+
+# ─────────────────────────────
+# Transcript Summarization Task
+# ─────────────────────────────
+@shared_task(bind=True, name="core.tasks.generate_call_summary", max_retries=3)
+def generate_call_summary(self, call_log_id):
+    """
+    Generate AI summary for a call transcript using OpenAI.
+    
+    This task:
+    1. Retrieves the CallLog with transcript
+    2. Uses OpenAI service to generate a summary
+    3. Stores the result in CallLog.summary field
+    4. Handles failures with exponential backoff retry
+    
+    Args:
+        call_log_id (str): UUID of the CallLog to summarize
+        
+    Returns:
+        dict: Result with success status and details
+    """
+    from core.models import CallLog
+    from core.services.openai_service import OpenAIService
+    from django.db import transaction
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Get the CallLog
+        try:
+            call_log = CallLog.objects.get(id=call_log_id)
+        except CallLog.DoesNotExist:
+            logger.error(f"CallLog {call_log_id} not found for summary generation")
+            return {
+                "success": False,
+                "error": "call_log_not_found",
+                "call_log_id": call_log_id
+            }
+        
+        # Check if transcript exists and is not empty
+        if not call_log.transcript:
+            logger.warning(f"CallLog {call_log_id} has no transcript, skipping summary")
+            return {
+                "success": False,
+                "error": "no_transcript",
+                "call_log_id": call_log_id
+            }
+        
+        # Check if summary already exists
+        if call_log.summary:
+            logger.info(f"CallLog {call_log_id} already has summary, skipping")
+            return {
+                "success": True,
+                "message": "summary_already_exists",
+                "call_log_id": call_log_id,
+            }
+        
+        # Generate summary using OpenAI service
+        openai_service = OpenAIService()
+        summary = openai_service.summarize_transcript(call_log.transcript)
+        
+        if not summary:
+            logger.error(f"OpenAI service failed to generate summary for CallLog {call_log_id}")
+            return {
+                "success": False,
+                "error": "openai_service_failed",
+                "call_log_id": call_log_id
+            }
+        
+        # Store summary in database
+        with transaction.atomic():
+            call_log = CallLog.objects.select_for_update().get(id=call_log_id)
+            call_log.summary = summary
+            call_log.save(update_fields=['summary', 'updated_at'])
+        
+        logger.info(f"Successfully generated summary for CallLog {call_log_id} ({len(summary)} characters)")
+        return {
+            "success": True,
+            "call_log_id": call_log_id,
+            "message": "summary_generated_successfully"
+        }
+        
+    except Exception as exc:
+        logger.error(f"Unexpected error generating summary for CallLog {call_log_id}: {exc}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            retry_delay = 60 * (2 ** self.request.retries)  # 60s, 120s, 240s
+            logger.info(
+                f"Retrying summary generation for CallLog {call_log_id} in {retry_delay}s "
+                f"(attempt {self.request.retries + 1}/{self.max_retries})"
+            )
+            raise self.retry(exc=exc, countdown=retry_delay)
+        else:
+            # Max retries reached
+            logger.error(
+                f"Summary generation failed permanently for CallLog {call_log_id} "
+                f"after {self.max_retries} retries"
+            )
+            return {
+                "success": False,
+                "error": "max_retries_exceeded",
+                "call_log_id": call_log_id,
+                "exception": str(exc)
+            }
