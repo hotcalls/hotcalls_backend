@@ -197,6 +197,7 @@ def trigger_call(self, call_task_id):
 
         agent_config = {
             "name": agent.name,
+            "agent_id": str(agent.agent_id),
             "voice_external_id": (agent.voice.voice_external_id if agent.voice else None),
             "language": agent.language,
             # RENDERED script template (dynamically generated with lead data)

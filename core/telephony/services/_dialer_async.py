@@ -15,6 +15,47 @@ from livekit.protocol.sip import CreateSIPParticipantRequest
 load_dotenv()
 
 
+def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
+    """
+    Fetch full knowledge document content using the actual knowledge API function logic.
+    
+    Args:
+        agent_id: Agent UUID  
+        doc_ids: List of document IDs (currently only supports single doc)
+        
+    Returns:
+        Combined full text content of all documents
+    """
+    if not doc_ids:
+        return ""
+    
+    try:
+        from core.management_api.knowledge_api.views import _get_agent_or_404, AzureMediaStorage
+        
+        agent = _get_agent_or_404(agent_id)
+        storage = AzureMediaStorage()
+        
+        if agent.kb_pdf:
+            # Use exact same logic as AgentKnowledgeDocumentPresignByIdView
+            current_name = os.path.basename(agent.kb_pdf.name)
+            base_no_ext = os.path.splitext(current_name)[0]
+            path = agent.kb_pdf.name
+            dir_path = os.path.dirname(path)
+            txt_path = f"{dir_path}/{base_no_ext}.txt"
+            
+            if storage.exists(txt_path):
+                with storage.open(txt_path, "rb") as fh:
+                    content = fh.read().decode("utf-8")
+                    return content.strip()
+                    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Failed to fetch knowledge content for agent {agent_id}: {e}")
+        
+    return ""
+
+
 async def _make_call_async(
     sip_trunk_id: str,
     agent_config: Dict[str, Any],
@@ -55,6 +96,22 @@ async def _make_call_async(
     logger.info(f"📥 DIALER RECEIVED FROM TASKS - script_template: {agent_config.get('script_template', '')[:200]}...")
     logger.info(f"📥 DIALER RECEIVED FROM TASKS - greeting_outbound: {agent_config.get('greeting_outbound', '')}")
 
+    # Fetch full knowledge document content using doc_ids from agent_config
+    knowledge_content = ""
+    knowledge_documents = agent_config.get("knowledge_documents", [])
+    if knowledge_documents:
+        try:
+            # Use the agent_id directly from agent_config (added in tasks.py)
+            agent_id = agent_config.get("agent_id")
+            if agent_id:
+                knowledge_content = _fetch_knowledge_content(agent_id, knowledge_documents)
+                if knowledge_content:
+                    logger.info(f"🧠 FETCHED KNOWLEDGE CONTENT - {len(knowledge_content)} characters")
+                else:
+                    logger.warning("🧠 NO KNOWLEDGE CONTENT RETRIEVED")
+        except Exception as e:
+            logger.warning(f"🧠 FAILED TO FETCH KNOWLEDGE CONTENT: {e}")
+
     # Build agent_config payload using model-grounded required fields
     agent_cfg_payload: Dict[str, Any] = {
         "voice_external_id": agent_config.get("voice_external_id"),
@@ -69,6 +126,7 @@ async def _make_call_async(
         "workspace_id": agent_config.get("workspace_id"),
         "event_type_id": agent_config.get("event_type_id"),
         "knowledge_documents": agent_config.get("knowledge_documents"),
+        "knowledge_content": knowledge_content,
     }
     
     # --- Job metadata sent to the agent process ---
