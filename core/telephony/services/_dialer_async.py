@@ -26,8 +26,14 @@ def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
     Returns:
         Combined full text content of all documents
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if not doc_ids:
+        logger.info(f"KNOWLEDGE FETCH ABORTED: no doc_ids")
         return ""
+    
+    logger.info(f"KNOWLEDGE FETCH STARTED")
     
     try:
         from core.management_api.knowledge_api.views import _get_agent_or_404, AzureMediaStorage
@@ -46,10 +52,14 @@ def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
             if storage.exists(txt_path):
                 with storage.open(txt_path, "rb") as fh:
                     content = fh.read().decode("utf-8")
+                    logger.info(f"KNOWLEDGE FETCH COMPLETE")
                     return content.strip()
+            else:
+                logger.warning(f"KNOWLEDGE FETCH FAILED: no txt file at {txt_path}")
+        else:
+            logger.warning(f"KNOWLEDGE FETCH FAILED: agent {agent_id} has no kb_pdf")
                     
     except Exception as e:
-        import logging
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to fetch knowledge content for agent {agent_id}: {e}")
         
