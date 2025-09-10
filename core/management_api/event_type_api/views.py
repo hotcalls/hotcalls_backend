@@ -9,7 +9,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view, OpenApiResp
 from rest_framework import serializers
 import logging
 
-from core.models import EventType, Workspace, SubAccount
+from core.models import EventType, Workspace, SubAccount, Lead
 from core.management_api.payment_api.permissions import IsWorkspaceMember
 from core.services.calendar_provider import CalendarProviderFacade
 from .serializers import (
@@ -309,7 +309,6 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         })
 
 
-
     @extend_schema(
         summary="Book a slot",
         description="Create events on all target calendars for this EventType. Body requires only 'start' (ISO) in EventType.timezone.",
@@ -321,15 +320,15 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         tz = ZoneInfo(event_type.timezone or 'UTC')
 
         data = request.data if isinstance(request.data, dict) else {}
+
+        if not data:
+            return Response({"error": "No data"}, status=status.HTTP_400_BAD_REQUEST)
+
         start_str = (data.get('start') or '').strip()
         lead_id = (data.get('lead_id') or '').strip()
 
         if not start_str:
             return Response({"error": "start is required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check if lead ID exists
-        if not lead_id:
-            return Response({"error": "lead id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             # Parse start in event type timezone if naive
@@ -341,29 +340,31 @@ class EventTypeViewSet(viewsets.ModelViewSet):
         except Exception:
             return Response({"error": "invalid start format; expected ISO8601"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not lead_id:
+            return Response({"error": "lead id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            lead = Lead.objects.get(id=lead_id)
+        except Lead.DoesNotExist:
+            return Response({"error": "lead not found"}, status=status.HTTP_404_NOT_FOUND)
+
         end_dt = start_dt + timedelta(minutes=event_type.duration)
 
-        # Final conflict check across all calendars with pre-buffers
-        before_minutes = (event_type.buffer_time or 0) * 60 + (event_type.prep_time or 0)
-        check_start = start_dt - timedelta(minutes=before_minutes)
+        # Final conflict check across all calendars with prep time
+        if event_type.prep_time > 0:
+            check_start = start_dt - timedelta(minutes=event_type.prep_time)
+        else:
+            check_start = start_dt
         check_end = end_dt
 
         mappings = list(event_type.calendar_mappings.select_related('sub_account').all())
         for m in mappings:
             sub = m.sub_account
             try:
-                if CalendarProviderFacade.is_busy(sub, check_start, check_end, event_type.timezone):
+                if not CalendarProviderFacade.is_free(sub, check_start, check_end, event_type.timezone):
                     return Response({"error": "slot no longer available"}, status=status.HTTP_409_CONFLICT)
             except Exception:
-                # Be conservative on provider errors: treat as conflict
                 return Response({"error": "slot check failed"}, status=status.HTTP_409_CONFLICT)
-
-        # Get lead from database using lead_id
-        try:
-            from core.models import Lead
-            lead = Lead.objects.get(id=lead_id)
-        except Lead.DoesNotExist:
-            return Response({"error": "lead not found"}, status=status.HTTP_404_NOT_FOUND)
 
         # Generate event details using the lead data from database
         title = f"{event_type.name} mit {lead.name} {lead.surname}"
@@ -386,7 +387,6 @@ class EventTypeViewSet(viewsets.ModelViewSet):
                 )
                 created_events.append((sub, ev))
         except Exception as exc:
-            # Rollback already created
             for sub, ev in created_events:
                 try:
                     CalendarProviderFacade.delete_event(sub, (ev or {}).get('id'))
