@@ -222,6 +222,8 @@ def trigger_call(self, call_task_id):
             doc_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"kb/{agent.agent_id}/{kb_filename}"))
             agent_config["knowledge_documents"] = [doc_id]
             logger.info(f"🧠 KNOWLEDGE DOCUMENT AVAILABLE - doc_id: {doc_id}, filename: {kb_filename}")
+        else:
+            logger.info(f"TASKS NO AGENT KB_PDF")
         
         # DEBUG: Log what we're passing to the dialer service
         logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config script_template: {agent_config['script_template'][:200]}...")

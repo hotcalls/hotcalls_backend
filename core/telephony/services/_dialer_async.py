@@ -100,6 +100,7 @@ async def _make_call_async(
     knowledge_content = ""
     knowledge_documents = agent_config.get("knowledge_documents", [])
     if knowledge_documents:
+        logger.info(f"THERE ARE KNOWLEDGE DOCUMENTS IN AGENT CONFIG")
         try:
             # Use the agent_id directly from agent_config (added in tasks.py)
             agent_id = agent_config.get("agent_id")
@@ -111,6 +112,8 @@ async def _make_call_async(
                     logger.warning("🧠 NO KNOWLEDGE CONTENT RETRIEVED")
         except Exception as e:
             logger.warning(f"🧠 FAILED TO FETCH KNOWLEDGE CONTENT: {e}")
+    else:
+        logger.info(f"THERE ARE NO KNOWLEDGE DOCUMENTS IN AGENT CONFIG")
 
     # Build agent_config payload using model-grounded required fields
     agent_cfg_payload: Dict[str, Any] = {
