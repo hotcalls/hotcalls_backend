@@ -290,15 +290,16 @@ class EventTypeViewSet(viewsets.ModelViewSet):
 
         free_slots = self.merge_intervals(free_slots)
 
-        total_duration = event_type.prep_time + event_type.duration
+        total_duration_timedelta = timedelta(minutes=event_type.prep_time + event_type.duration)
+        prep_time_timedelta = timedelta(minutes=event_type.prep_time)
 
         possible_slots = []
         for start, end in free_slots:
             tmp = start
-            while tmp + total_duration <= end:
+            while tmp + total_duration_timedelta <= end:
                 # Take prep time into account cause prep_time needs to be free from other events. but event start has to be after prep_time
-                possible_slots.append((tmp + event_type.prep_time, tmp + total_duration))
-                tmp += total_duration
+                possible_slots.append((tmp + prep_time_timedelta, tmp + total_duration_timedelta))
+                tmp += total_duration_timedelta
 
         slot_starts = [start.isoformat() for (start, _) in possible_slots]
         return Response({
