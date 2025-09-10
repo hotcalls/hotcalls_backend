@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class BusyInterval:
+class TimeInterval:
     start: datetime
     end: datetime
 
@@ -62,12 +62,12 @@ class CalendarProviderFacade:
     """Facade that routes operations based on SubAccount.provider."""
 
     @staticmethod
-    def free_busy(
+    def get_free_slots(
         sub_account: SubAccount,
         start: datetime,
         end: datetime,
         timezone_name: str,
-    ) -> List[BusyInterval]:
+    ) -> List[TimeInterval]:
         tz = ZoneInfo(timezone_name)
         provider = (sub_account.provider or '').lower()
         if provider == 'google':
@@ -78,13 +78,16 @@ class CalendarProviderFacade:
             gcal_service = GoogleCalendarService(gsub.google_calendar)
             calendar_id = 'primary' if getattr(gsub, 'relationship', 'self') == 'self' else gsub.act_as_email
             items = gcal_service.check_availability(calendar_id, start, end)
-            intervals: List[BusyInterval] = []
+            intervals: List[TimeInterval] = []
             for it in items:
                 s = _parse_iso_datetime(it.get('start'), tz)
                 e = _parse_iso_datetime(it.get('end'), tz)
                 if s < e:
-                    intervals.append(BusyInterval(s, e))
-            return intervals
+                    intervals.append(TimeInterval(s, e))
+
+            # Transform busy slots to free slots
+            free_intervals = CalendarProviderFacade.busy_slots_to_free_slots(start, end, intervals)
+            return free_intervals
 
         if provider == 'outlook':
             from core.models import OutlookSubAccount
@@ -94,26 +97,95 @@ class CalendarProviderFacade:
             ms = MicrosoftGraphService(osub.outlook_calendar)
             calendar_id = osub.calendar_id
             items = ms.check_availability(calendar_id, start, end)
-            intervals = []
+            intervals: List[TimeInterval] = []
+            # Duplicate with Google at the moment, should be changed when certainty on how outlook works
             for it in items:
                 s = _parse_iso_datetime(it.get('start'), tz)
                 e = _parse_iso_datetime(it.get('end'), tz)
                 if s < e:
-                    intervals.append(BusyInterval(s, e))
-            return intervals
+                    intervals.append(TimeInterval(s, e))
+
+            # Transform busy slots to free slots
+            free_intervals = CalendarProviderFacade.busy_slots_to_free_slots(start, end, intervals)
+            return free_intervals
 
         return []
 
     @staticmethod
-    def is_busy(
+    def busy_slots_to_free_slots(
+        start: datetime,
+        end: datetime,
+        busy_intervals: List[TimeInterval]
+    ) -> List[TimeInterval]:
+        """Convert busy intervals to free intervals within the given time range.
+        
+        Args:
+            start: Start of the time range to check
+            end: End of the time range to check  
+            busy_intervals: List of busy intervals
+            
+        Returns:
+            List of free intervals between busy periods
+        """
+        if start >= end:
+            return []
+        
+        if not busy_intervals:
+            return [TimeInterval(start, end)]
+        
+        # Sort busy intervals by start time and merge overlapping ones
+        sorted_busy = sorted(busy_intervals, key=lambda x: x.start)
+        merged_busy = []
+        
+        for interval in sorted_busy:
+            # Skip intervals outside our range
+            if interval.end <= start or interval.start >= end:
+                continue
+                
+            # Clip interval to our range
+            clipped_start = max(interval.start, start)
+            clipped_end = min(interval.end, end)
+            
+            if not merged_busy or merged_busy[-1].end < clipped_start:
+                merged_busy.append(TimeInterval(clipped_start, clipped_end))
+            else:
+                # Merge with previous interval
+                merged_busy[-1].end = max(merged_busy[-1].end, clipped_end)
+        
+        # Generate free slots
+        free_slots = []
+        
+        # Free slot before first busy interval
+        if merged_busy and start < merged_busy[0].start:
+            free_slots.append(TimeInterval(start, merged_busy[0].start))
+        
+        # Free slots between busy intervals
+        for i in range(len(merged_busy) - 1):
+            gap_start = merged_busy[i].end
+            gap_end = merged_busy[i + 1].start
+            if gap_start < gap_end:
+                free_slots.append(TimeInterval(gap_start, gap_end))
+        
+        # Free slot after last busy interval
+        if merged_busy and merged_busy[-1].end < end:
+            free_slots.append(TimeInterval(merged_busy[-1].end, end))
+        
+        # If no busy intervals after filtering, return entire range as free
+        if not merged_busy:
+            free_slots.append(TimeInterval(start, end))
+            
+        return free_slots
+
+    @staticmethod
+    def is_free(
         sub_account: SubAccount,
         check_start: datetime,
         check_end: datetime,
         timezone_name: str,
     ) -> bool:
-        intervals = CalendarProviderFacade.free_busy(sub_account, check_start, check_end, timezone_name)
-        for it in intervals:
-            if it.start < check_end and it.end > check_start:
+        free_slots = CalendarProviderFacade.get_free_slots(sub_account, check_start, check_end, timezone_name)
+        for free_slot in free_slots:
+            if free_slot.start <= check_start and free_slot.end >= check_end:
                 return True
         return False
 
