@@ -1264,7 +1264,7 @@ class CallTaskViewSet(viewsets.ModelViewSet):
         },
         tags=["Call Management"]
     )
-    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def bulk_schedule(self, request):
         """Bulk schedule calls for all leads in a LeadFunnel"""
         serializer = BulkScheduleSerializer(data=request.data, context={'request': request})
