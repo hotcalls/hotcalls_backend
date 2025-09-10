@@ -62,7 +62,7 @@ class CalendarProviderFacade:
     """Facade that routes operations based on SubAccount.provider."""
 
     @staticmethod
-    def get_free_slots(
+    def get_busy_slots(
         sub_account: SubAccount,
         start: datetime,
         end: datetime,
@@ -85,9 +85,7 @@ class CalendarProviderFacade:
                 if s < e:
                     intervals.append(TimeInterval(s, e))
 
-            # Transform busy slots to free slots
-            free_intervals = CalendarProviderFacade.busy_slots_to_free_slots(start, end, intervals)
-            return free_intervals
+            return intervals
 
         if provider == 'outlook':
             from core.models import OutlookSubAccount
@@ -105,9 +103,7 @@ class CalendarProviderFacade:
                 if s < e:
                     intervals.append(TimeInterval(s, e))
 
-            # Transform busy slots to free slots
-            free_intervals = CalendarProviderFacade.busy_slots_to_free_slots(start, end, intervals)
-            return free_intervals
+            return intervals
 
         return []
 
@@ -183,7 +179,8 @@ class CalendarProviderFacade:
         check_end: datetime,
         timezone_name: str,
     ) -> bool:
-        free_slots = CalendarProviderFacade.get_free_slots(sub_account, check_start, check_end, timezone_name)
+        busy_slots = CalendarProviderFacade.get_busy_slots(sub_account, check_start, check_end, timezone_name)
+        free_slots = CalendarProviderFacade.busy_slots_to_free_slots(check_start, check_end, busy_slots)
         for free_slot in free_slots:
             if free_slot.start <= check_start and free_slot.end >= check_end:
                 return True
