@@ -548,6 +548,46 @@ class AgentViewSet(viewsets.ModelViewSet):
             'email_default_body': agent.email_default_body,
         }).data
         return Response(data)
+
+    @extend_schema(
+        summary="📧 Update agent send document defaults",
+        description="Update default email subject and body for agent document sending (no file upload).",
+        tags=["Agent Management"],
+        request={
+            'application/json': {
+                'type': 'object',
+                'properties': {
+                    'email_default_subject': {'type': 'string', 'nullable': True},
+                    'email_default_body': {'type': 'string', 'nullable': True}
+                }
+            }
+        },
+        responses={200: AgentSendDocumentInfoSerializer}
+    )
+    @action(detail=True, methods=['patch'], url_path='send_document_update_defaults')
+    def send_document_update_defaults(self, request, pk=None):
+        agent = self.get_object()
+        
+        email_default_subject = request.data.get('email_default_subject')
+        email_default_body = request.data.get('email_default_body')
+        
+        if email_default_subject is not None:
+            agent.email_default_subject = email_default_subject
+        if email_default_body is not None:
+            agent.email_default_body = email_default_body
+        
+        agent.save(update_fields=['email_default_subject', 'email_default_body', 'updated_at'])
+
+        file_name = agent.send_document.name.split('/')[-1] if agent.send_document else None
+        file_url = agent.send_document.url if agent.send_document and hasattr(agent.send_document, 'url') else None
+        out = AgentSendDocumentInfoSerializer({
+            'has_document': bool(agent.send_document),
+            'filename': file_name,
+            'url': file_url,
+            'email_default_subject': agent.email_default_subject,
+            'email_default_body': agent.email_default_body,
+        })
+        return Response(out.data)
     
     @extend_schema(
         summary="⚙️ Get agent configuration",
