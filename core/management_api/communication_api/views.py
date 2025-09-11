@@ -9,6 +9,10 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from core.models import Agent, Lead
 from core.management_api.communication_api.permissions import LiveKitOrAuthenticatedWorkspaceUser
+from core.management_api.communication_api.serializers import (
+    SendDocumentRequestSerializer,
+    SendDocumentResponseSerializer
+)
 from core.utils.crypto import decrypt_text
 
 
@@ -17,9 +21,33 @@ class CommunicationViewSet(viewsets.ViewSet):
 
     @extend_schema(
         summary="📄 Send agent document to lead",
-        description="Send the configured agent PDF to the lead's email using the workspace SMTP settings.",
+        description="""
+        Send the configured agent PDF document to a lead's email using the workspace SMTP settings.
+        
+        **Requirements:**
+        - Agent must have a PDF document configured
+        - Lead must have a valid email address
+        - Agent and lead must belong to the same workspace
+        - Workspace must have SMTP enabled and configured
+        
+        **Email Content:**
+        - Subject and body can be overridden via request parameters
+        - Falls back to agent's default email settings
+        - Supports placeholders in body: {current_date}, {lead_name}
+        
+        **Authentication:** None required (AllowAny)
+        """,
         tags=["Communication"],
-        responses={200: OpenApiResponse(description="✅ Document sent")},
+        request=SendDocumentRequestSerializer,
+        responses={
+            200: OpenApiResponse(
+                response=SendDocumentResponseSerializer,
+                description="✅ Document sent successfully"
+            ),
+            400: OpenApiResponse(description="❌ Bad request - missing parameters or configuration issues"),
+            403: OpenApiResponse(description="❌ Forbidden - agent and lead not in same workspace"),
+            404: OpenApiResponse(description="❌ Agent or lead not found")
+        },
         auth=[]
     )
     @action(detail=False, methods=['post'], url_path='send-document', permission_classes=[AllowAny])
