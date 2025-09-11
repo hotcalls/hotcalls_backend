@@ -51,8 +51,15 @@ class CommunicationViewSet(viewsets.ViewSet):
     )
     @action(detail=False, methods=['post'], url_path='send-document', permission_classes=[AllowAny])
     def send_document(self, request):
-        agent_id = request.data.get('agent_id')
-        lead_id = request.data.get('lead_id')
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            agent_id = request.data.get('agent_id')
+            lead_id = request.data.get('lead_id')
+        except Exception as e:
+            logger.error(f"Error in retrieving agent_id or lead_id: {e}")
+            return Response({'error': 'fatal error accessing agent_id or lead_id'}, status=status.HTTP_400_BAD_REQUEST)
 
         if not agent_id or not lead_id:
             return Response({'error': 'agent_id and lead_id are required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -60,11 +67,13 @@ class CommunicationViewSet(viewsets.ViewSet):
         try:
             agent = Agent.objects.select_related('workspace').get(agent_id=agent_id)
         except Agent.DoesNotExist:
+            logger.error(f"SEND DOCUMENT AGENT DOES NOT EXIST: {agent_id}")
             return Response({'error': 'Agent not found'}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             lead = Lead.objects.select_related('workspace').get(id=lead_id)
         except Lead.DoesNotExist:
+            logger.error(f"SEND DOCUMENT LEAD DOES NOT EXIST: {lead_id}")
             return Response({'error': 'Lead not found'}, status=status.HTTP_404_NOT_FOUND)
 
         # Ensure same workspace and email present
