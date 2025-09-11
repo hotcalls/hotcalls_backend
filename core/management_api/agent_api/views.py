@@ -481,14 +481,14 @@ class AgentViewSet(viewsets.ModelViewSet):
         })
 
     @extend_schema(
-        summary="📄 Upload agent send-document (PDF)",
+        summary="Upload agent send document",
         description="Upload the single PDF the agent may send via email, and optionally set default subject/body.",
         tags=["Agent Management"],
         request=AgentSendDocumentUploadSerializer,
         responses={200: AgentSendDocumentInfoSerializer}
     )
-    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
-    def send_document(self, request, pk=None):
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser], url_path='send_document_upload')
+    def send_document_upload(self, request, pk=None):
         agent = self.get_object()
         serializer = AgentSendDocumentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -522,8 +522,8 @@ class AgentViewSet(viewsets.ModelViewSet):
         tags=["Agent Management"],
         responses={200: AgentSendDocumentInfoSerializer}
     )
-    @action(detail=True, methods=['get', 'delete'], url_path='send-document')
-    def send_document_status(self, request, pk=None):
+    @action(detail=True, methods=['get', 'delete'], url_path='send_document_status')
+    def send_document_get_or_delete(self, request, pk=None):
         agent = self.get_object()
         if request.method == 'DELETE':
             if agent.send_document:
