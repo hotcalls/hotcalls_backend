@@ -10,14 +10,16 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from livekit import api
 from livekit.protocol.sip import CreateSIPParticipantRequest
+from asgiref.sync import sync_to_async
 
 
 load_dotenv()
 
 
-def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
+@sync_to_async
+def _fetch_knowledge_content_sync(agent_id: str, doc_ids: list) -> str:
     """
-    Fetch full knowledge document content using the actual knowledge API function logic.
+    Synchronous knowledge content fetch wrapped for async compatibility.
     
     Args:
         agent_id: Agent UUID  
@@ -64,6 +66,41 @@ def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
         logger.warning(f"Failed to fetch knowledge content for agent {agent_id}: {e}")
         
     return ""
+
+
+def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
+    """
+    Fetch full knowledge document content using the actual knowledge API function logic.
+    
+    This function automatically detects if it's being called from an async context
+    and handles it appropriately.
+    
+    Args:
+        agent_id: Agent UUID  
+        doc_ids: List of document IDs (currently only supports single doc)
+        
+    Returns:
+        Combined full text content of all documents
+    """
+    import asyncio
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        # Check if we're in an async context
+        loop = asyncio.get_running_loop()
+        if loop is not None:
+            # We're in an async context, need to run the sync version in executor
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(_fetch_knowledge_content_sync.func, agent_id, doc_ids)
+                return future.result()
+    except RuntimeError:
+        # No running event loop, we're in sync context
+        pass
+    
+    # Fallback to direct sync call
+    return _fetch_knowledge_content_sync.func(agent_id, doc_ids)
 
 
 async def _make_call_async(

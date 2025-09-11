@@ -54,14 +54,11 @@ class DialerService:
 
         # 2) Execute async low-level path
         from ._dialer_async import _make_call_async as low_level
-        knowledge_content = "Bitcoins cost 200$"
-        try:
-            from ._dialer_async import _fetch_knowledge_content
-            knowledge_content = _fetch_knowledge_content(agent_id=agent_config.get("agent_id"), doc_ids=agent_config.get("knowledge_documents", []))
-        except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"DIALER SERVICE FAILED fetch_knowledge {agent_config.get("agent_id")}: {e}")
+        from ._dialer_async import _fetch_knowledge_content
+
+        knowledge_content = _fetch_knowledge_content(agent_id=agent_config.get("agent_id"), doc_ids=agent_config.get("knowledge_documents", []))
+        if knowledge_content is "":
+            knowledge_content = "Der Mac Mini Pro kostet 130$. Ein Stehtisch der Marke Messner kostet 400$"
 
         result = async_to_sync(low_level)(
             sip_trunk_id,
