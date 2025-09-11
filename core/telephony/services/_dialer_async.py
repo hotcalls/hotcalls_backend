@@ -40,7 +40,7 @@ def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
         
         agent = _get_agent_or_404(agent_id)
         storage = AzureMediaStorage()
-        
+
         if agent.kb_pdf:
             # Use exact same logic as AgentKnowledgeDocumentPresignByIdView
             current_name = os.path.basename(agent.kb_pdf.name)
@@ -58,7 +58,7 @@ def _fetch_knowledge_content(agent_id: str, doc_ids: list) -> str:
                 logger.warning(f"KNOWLEDGE FETCH FAILED: no txt file at {txt_path}")
         else:
             logger.warning(f"KNOWLEDGE FETCH FAILED: agent {agent_id} has no kb_pdf")
-                    
+
     except Exception as e:
         logger = logging.getLogger(__name__)
         logger.warning(f"Failed to fetch knowledge content for agent {agent_id}: {e}")
@@ -75,6 +75,7 @@ async def _make_call_async(
     call_task_id: Optional[str] = None,
     room_name: Optional[str] = None,
     answer_timeout_s: Optional[float] = None,
+    knowledge_content,
 ) -> Dict[str, Any]:
     """
     Place an outbound call via LiveKit and return identifiers.
@@ -105,25 +106,6 @@ async def _make_call_async(
     logger = logging.getLogger(__name__)
     logger.info(f"📥 DIALER RECEIVED FROM TASKS - script_template: {agent_config.get('script_template', '')[:200]}...")
     logger.info(f"📥 DIALER RECEIVED FROM TASKS - greeting_outbound: {agent_config.get('greeting_outbound', '')}")
-
-    # Fetch full knowledge document content using doc_ids from agent_config
-    knowledge_content = ""
-    knowledge_documents = agent_config.get("knowledge_documents", [])
-    if knowledge_documents:
-        logger.info(f"THERE ARE KNOWLEDGE DOCUMENTS IN AGENT CONFIG")
-        try:
-            # Use the agent_id directly from agent_config (added in tasks.py)
-            agent_id = agent_config.get("agent_id")
-            if agent_id:
-                knowledge_content = _fetch_knowledge_content(agent_id, knowledge_documents)
-                if knowledge_content:
-                    logger.info(f"🧠 FETCHED KNOWLEDGE CONTENT - {len(knowledge_content)} characters")
-                else:
-                    logger.warning("🧠 NO KNOWLEDGE CONTENT RETRIEVED")
-        except Exception as e:
-            logger.warning(f"🧠 FAILED TO FETCH KNOWLEDGE CONTENT: {e}")
-    else:
-        logger.info(f"THERE ARE NO KNOWLEDGE DOCUMENTS IN AGENT CONFIG")
 
     # Build agent_config payload using model-grounded required fields
     agent_cfg_payload: Dict[str, Any] = {
