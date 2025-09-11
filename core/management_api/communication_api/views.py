@@ -31,8 +31,7 @@ class CommunicationViewSet(viewsets.ViewSet):
         - Workspace must have SMTP enabled and configured
         
         **Email Content:**
-        - Subject and body can be overridden via request parameters
-        - Falls back to agent's default email settings
+        - Uses agent's configured email_default_subject and email_default_body
         - Supports placeholders in body: {current_date}, {lead_name}
         
         **Authentication:** None required (AllowAny)
@@ -54,8 +53,6 @@ class CommunicationViewSet(viewsets.ViewSet):
     def send_document(self, request):
         agent_id = request.data.get('agent_id')
         lead_id = request.data.get('lead_id')
-        subject_override = request.data.get('subject')
-        body_override = request.data.get('body')
 
         if not agent_id or not lead_id:
             return Response({'error': 'agent_id and lead_id are required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -87,12 +84,12 @@ class CommunicationViewSet(viewsets.ViewSet):
         if not (workspace.smtp_host and workspace.smtp_from_email):
             return Response({'error': 'Incomplete workspace SMTP configuration'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Build subject/body with priority: override > defaults > fallback
-        subject = (subject_override or agent.email_default_subject or f"Ihre Informationen von {workspace.workspace_name}")
+        # Build subject/body from agent defaults with workspace fallbacks
+        subject = (agent.email_default_subject or f"Ihre Informationen von {workspace.workspace_name}")
         # Allowed placeholders: {current_date}, {lead_name}
         lead_name = (lead.name or '').strip()
         current_date = datetime.now().strftime('%Y-%m-%d')
-        body_base = (body_override or agent.email_default_body or f"Hallo {lead_name}, anbei die Unterlagen. Viele Grüße")
+        body_base = (agent.email_default_body or f"Hallo {lead_name}, anbei die Unterlagen. Viele Grüße")
         body = body_base.replace('{current_date}', current_date).replace('{lead_name}', lead_name)
 
         # Build SMTP connection

@@ -21,6 +21,7 @@ mcp = FastMCP(
     to a lead via the backend's communication API.
 
     Use send_document_to_lead to trigger the email delivery.
+    Email subject and body are automatically taken from the agent's email_default_subject and email_default_body configuration.
     Always obtain user confirmation before sending documents.
     Authentication: pass the LiveKit token via tool arg; MCP forwards it in X-LiveKit-Token header.
     """,
@@ -33,18 +34,14 @@ mcp = FastMCP(
 def send_document_to_lead(
     agent_id: str,
     lead_id: str,
-    subject: str | None = None,
-    body: str | None = None
 ) -> SendDocumentResponse:
     """
     Send the configured agent PDF to the given lead using workspace SMTP settings.
+    Uses the agent's configured email_default_subject and email_default_body.
 
     Args:
         agent_id: Agent identifier
         lead_id: Lead identifier
-        subject: Optional subject override
-        body: Optional body override
-
 
     Returns:
         SendDocumentResponse with success flag and optional error
@@ -59,11 +56,7 @@ def send_document_to_lead(
         data = {
             'agent_id': agent_id,
             'lead_id': lead_id,
-            'subject': subject,
-            'body': body,
         }
-        # Remove None values
-        data = {k: v for k, v in data.items() if v is not None}
 
         response = requests.post(url, json=data, headers=headers, timeout=30)
 

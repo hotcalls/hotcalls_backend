@@ -6,7 +6,7 @@ class SendDocumentRequestSerializer(serializers.Serializer):
     Request serializer for sending agent document to lead via email.
     
     This endpoint sends a configured PDF document from an agent to a lead's email
-    using the workspace SMTP settings.
+    using the workspace SMTP settings and agent's configured email defaults.
     """
     agent_id = serializers.CharField(
         required=True,
@@ -15,16 +15,6 @@ class SendDocumentRequestSerializer(serializers.Serializer):
     lead_id = serializers.CharField(
         required=True,
         help_text="The ID of the lead who will receive the document"
-    )
-    subject = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="Optional email subject override. If not provided, uses agent's default or workspace default"
-    )
-    body = serializers.CharField(
-        required=False,
-        allow_blank=True,
-        help_text="Optional email body override. Supports placeholders: {current_date}, {lead_name}"
     )
 
 
