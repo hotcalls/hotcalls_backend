@@ -148,6 +148,7 @@ async def _make_call_async(
     agent_cfg_payload: Dict[str, Any] = {
         "voice_external_id": agent_config.get("voice_external_id"),
         "name": agent_config.get("name"),
+        "agent_id": agent_config.get("agent_id"),
         "language": agent_config.get("language"),
         "workspace_name": agent_config.get("workspace_name"),
         "character": agent_config.get("character"),
