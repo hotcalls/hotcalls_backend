@@ -57,8 +57,6 @@ class DialerService:
         from ._dialer_async import _fetch_knowledge_content
 
         knowledge_content = _fetch_knowledge_content(agent_id=agent_config.get("agent_id"), doc_ids=agent_config.get("knowledge_documents", []))
-        if knowledge_content is "":
-            knowledge_content = "Der Mac Mini Pro kostet 130$. Ein Stehtisch der Marke Messner kostet 400$"
 
         result = async_to_sync(low_level)(
             sip_trunk_id,
