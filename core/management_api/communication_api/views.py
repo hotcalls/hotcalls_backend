@@ -68,7 +68,7 @@ class CommunicationViewSet(viewsets.ViewSet):
             return Response({'error': 'Lead not found'}, status=status.HTTP_404_NOT_FOUND)
 
         # Ensure same workspace and email present
-        if not (lead.workspace_id and agent.workspace_id and lead.workspace_id == agent.workspace_id):
+        if not (lead.workspace and agent.workspace and lead.workspace == agent.workspace):
             return Response({'error': 'Agent and Lead must belong to the same workspace'}, status=status.HTTP_403_FORBIDDEN)
         if not lead.email:
             return Response({'error': 'Lead has no email address'}, status=status.HTTP_400_BAD_REQUEST)
