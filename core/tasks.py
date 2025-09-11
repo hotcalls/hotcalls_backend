@@ -224,6 +224,10 @@ def trigger_call(self, call_task_id):
             logger.info(f"🧠 KNOWLEDGE DOCUMENT AVAILABLE - doc_id: {doc_id}, filename: {kb_filename}")
         else:
             logger.info(f"TASKS NO AGENT KB_PDF")
+
+        if agent.send_document:
+            agent_config["send_document"] = True
+            logger.info("SEND DOCUMENT AVAILABLE")
         
         # DEBUG: Log what we're passing to the dialer service
         logger.info(f"🚀 PASSING TO DIALER SERVICE - agent_config script_template: {agent_config['script_template'][:200]}...")

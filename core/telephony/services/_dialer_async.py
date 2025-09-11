@@ -160,6 +160,7 @@ async def _make_call_async(
         "event_type_id": agent_config.get("event_type_id"),
         "knowledge_documents": agent_config.get("knowledge_documents"),
         "knowledge_content": knowledge_content,
+        "send_document": agent_config.get("send_document"),
     }
     
     # --- Job metadata sent to the agent process ---
