@@ -1,9 +1,6 @@
 [submodule "outboundagent"]
 	path = outboundagent
 	url = git@github.com:hotcalls/outboundagent.git
-[submodule "google-calendar-mcp"]
-	path = google-calendar-mcp
-	url = git@github.com:hotcalls/google-calender-mcp.git
 [submodule "frontend"]
 	path = frontend
 	url = git@github.com:malmachengbr/hotcalls-visual-prototype.git
