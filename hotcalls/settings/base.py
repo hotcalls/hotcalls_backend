@@ -113,6 +113,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'hotcalls.context_processors.base_url',
             ],
         },
     },
@@ -430,8 +431,10 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 
-# Base URL for generating absolute URLs
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
+# Base URL for generating absolute URLs - REQUIRED
+BASE_URL = os.environ.get("BASE_URL")
+if not BASE_URL:
+    raise ValueError("BASE_URL environment variable is required but not set")
 
 # Logging configuration
 LOGGING = {
@@ -526,7 +529,9 @@ NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
 CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
 
 # Site URL for absolute URL generation (used by multiple services)
-SITE_URL = os.getenv('BASE_URL', 'http://localhost:8000')
+SITE_URL = os.getenv('BASE_URL')
+if not SITE_URL:
+    raise ValueError("BASE_URL environment variable is required but not set")
 
 # Google Calendar OAuth Configuration - UNIFIED NAMING
 GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')

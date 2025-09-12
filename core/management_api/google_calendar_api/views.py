@@ -280,7 +280,8 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
             logger.info(f"Successfully connected Google Calendar for {user.email}")
             
             # Redirect to frontend with success
-            frontend_url = "https://app.hotcalls.de/dashboard/calendars?connected=true"
+            from django.conf import settings
+            frontend_url = f"{settings.BASE_URL}/dashboard/calendars?connected=true"
             return redirect(frontend_url)
             
         except Exception as e:

@@ -18,10 +18,10 @@ To enable HTTPS with the `--domain` parameter, place the following files in this
 
 ```bash
 # Deploy with HTTPS enabled
-./deploy.sh --project-name=staging-new --environment=staging --domain=app.hotcalls.de
+./deploy.sh --project-name=staging-new --environment=staging --domain=app.messecaller.ai
 
 # Update only (including certificate updates)
-./deploy.sh --project-name=staging-new --environment=staging --domain=app.hotcalls.de --update-only
+./deploy.sh --project-name=staging-new --environment=staging --domain=app.messecaller.ai --update-only
 ```
 
 ## Security Notes

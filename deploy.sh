@@ -821,11 +821,11 @@ get_infrastructure_outputs() {
     
     # Configure CORS for Azure Storage to allow frontend audio playback
     log_info "Configuring CORS for Azure Storage..."
-    if [[ -n "$DOMAIN" ]]; then
-        CORS_ORIGINS="https://$DOMAIN"
-    else
-        CORS_ORIGINS="https://app.hotcalls.de"
+    if [[ -z "$DOMAIN" ]]; then
+        log_error "DOMAIN environment variable is required but not set"
+        exit 1
     fi
+    CORS_ORIGINS="https://$DOMAIN"
     
     # Add CORS configuration for blob storage
     az storage cors add \
@@ -884,11 +884,11 @@ get_infrastructure_outputs_update_only() {
     
     # Configure CORS for Azure Storage to allow frontend audio playback
     log_info "Configuring CORS for Azure Storage..."
-    if [[ -n "$DOMAIN" ]]; then
-        CORS_ORIGINS="https://$DOMAIN"
-    else
-        CORS_ORIGINS="https://app.hotcalls.de"
+    if [[ -z "$DOMAIN" ]]; then
+        log_error "DOMAIN environment variable is required but not set"
+        exit 1
     fi
+    CORS_ORIGINS="https://$DOMAIN"
     
     # Add CORS configuration for blob storage
     az storage cors add \

@@ -52,8 +52,10 @@ SECURE_BROWSER_XSS_FILTER = os.environ.get("SECURE_BROWSER_XSS_FILTER", "True").
 SECURE_CONTENT_TYPE_NOSNIFF = os.environ.get("SECURE_CONTENT_TYPE_NOSNIFF", "True").lower() == "true"
 X_FRAME_OPTIONS = os.environ.get("X_FRAME_OPTIONS", "DENY")
 
-# CSRF Configuration for staging - same as production
-csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "https://app.hotcalls.de,https://*.hotcalls.de")
+# CSRF Configuration for staging - MUST come from environment
+csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS")
+if not csrf_trusted_origins:
+    raise ValueError("CSRF_TRUSTED_ORIGINS environment variable is required but not set")
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
 
 # CORS - COMPLETELY OPEN FOR STAGING

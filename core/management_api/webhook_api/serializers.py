@@ -41,7 +41,8 @@ class WebhookLeadSourceSerializer(serializers.ModelSerializer):
             base = base.rstrip('/')
         else:
             # Fallback if no request context
-            base = 'https://app.hotcalls.de'
+            from django.conf import settings
+            base = settings.BASE_URL
         return f"{base}/api/webhooks/leads/{obj.public_key}/"
 
     def get_required_headers(self, obj: WebhookLeadSource):
