@@ -15,17 +15,18 @@ resource "azurerm_kubernetes_cluster" "main" {
   kubernetes_version  = var.kubernetes_version
   tags               = var.tags
 
-  # Default node pool
+  # Default node pool (system only)
   default_node_pool {
-    name                = "default"
-    node_count          = var.node_count
-    vm_size            = var.node_size
-    vnet_subnet_id     = var.vnet_subnet_id
+    name                         = "system"
+    node_count                   = 2
+    vm_size                     = "Standard_D2as_v5"
+    vnet_subnet_id              = var.vnet_subnet_id
+    only_critical_addons_enabled = true
     
     # Enable auto-scaling
     enable_auto_scaling = true
-    min_count          = var.min_node_count
-    max_count          = var.max_node_count
+    min_count          = 1
+    max_count          = 2
     
     # Node configuration
     os_disk_size_gb    = 50
@@ -34,6 +35,10 @@ resource "azurerm_kubernetes_cluster" "main" {
     # Upgrade settings
     upgrade_settings {
       max_surge = "10%"
+    }
+    
+    node_labels = {
+      "workload" = "system"
     }
     
     tags = var.tags
@@ -93,33 +98,95 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
   principal_id         = azurerm_user_assigned_identity.aks.principal_id
 }
 
-# Additional node pool for workloads (optional)
-resource "azurerm_kubernetes_cluster_node_pool" "workload" {
-  count                 = var.enable_workload_node_pool ? 1 : 0
-  name                  = "workload"
+# Web node pool (Django backend + frontend)
+resource "azurerm_kubernetes_cluster_node_pool" "web" {
+  name                  = "web"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size              = var.workload_node_size
-  node_count           = var.workload_node_count
+  vm_size              = "Standard_D4as_v5"
+  node_count           = 1
   vnet_subnet_id       = var.vnet_subnet_id
   
   # Enable auto-scaling
   enable_auto_scaling = true
   min_count          = 1
-  max_count          = var.workload_max_node_count
+  max_count          = 3
   
   # Node configuration
   os_disk_size_gb = 50
   os_disk_type    = "Managed"
   
-  # Node labels and taints for workload separation
   node_labels = {
-    "nodepool-type" = "workload"
-    "environment"   = var.environment
+    "workload" = "web"
   }
   
-  node_taints = [
-    "workload=true:NoSchedule"
-  ]
+  tags = var.tags
+}
+
+# Workers node pool (Celery workers - compute optimized)
+resource "azurerm_kubernetes_cluster_node_pool" "workers" {
+  name                  = "workers"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  vm_size              = "Standard_F4s_v2"
+  node_count           = 1
+  vnet_subnet_id       = var.vnet_subnet_id
+  
+  # Enable auto-scaling
+  enable_auto_scaling = true
+  min_count          = 1
+  max_count          = 2
+  
+  # Node configuration
+  os_disk_size_gb = 50
+  os_disk_type    = "Managed"
+  
+  node_labels = {
+    "workload" = "workers"
+  }
+  
+  tags = var.tags
+}
+
+# Scheduler node pool (Celery Beat + Redis)
+resource "azurerm_kubernetes_cluster_node_pool" "scheduler" {
+  name                  = "scheduler"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  vm_size              = "Standard_D2as_v5"
+  node_count           = 1
+  vnet_subnet_id       = var.vnet_subnet_id
+  
+  # No auto-scaling for scheduler (fixed single node)
+  enable_auto_scaling = false
+  
+  # Node configuration
+  os_disk_size_gb = 50
+  os_disk_type    = "Managed"
+  
+  node_labels = {
+    "workload" = "scheduler"
+  }
+  
+  tags = var.tags
+}
+
+# Realtime node pool (LiveKit agent - high performance)
+resource "azurerm_kubernetes_cluster_node_pool" "realtime" {
+  name                  = "realtime"
+  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
+  vm_size              = "Standard_F16s_v2"
+  node_count           = 1
+  vnet_subnet_id       = var.vnet_subnet_id
+  
+  # No auto-scaling for realtime (fixed single node for now)
+  enable_auto_scaling = false
+  
+  # Node configuration
+  os_disk_size_gb       = 50
+  os_disk_type         = "Managed"
+  enable_node_public_ip = false
+  
+  node_labels = {
+    "workload" = "realtime"
+  }
   
   tags = var.tags
 } 

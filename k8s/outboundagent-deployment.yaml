@@ -31,6 +31,8 @@ spec:
     spec:
       serviceAccountName: ${PROJECT_PREFIX}-sa
       priorityClassName: outboundagent-critical
+      nodeSelector:
+        workload: realtime
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

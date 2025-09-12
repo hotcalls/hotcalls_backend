@@ -35,6 +35,8 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: ${PROJECT_PREFIX}-sa
+      nodeSelector:
+        workload: web
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000

@@ -25,6 +25,8 @@ spec:
         app.kubernetes.io/component: cache
         app.kubernetes.io/part-of: ${PROJECT_PREFIX}
     spec:
+      nodeSelector:
+        workload: scheduler
       securityContext:
         runAsNonRoot: true
         runAsUser: 999  # Redis user

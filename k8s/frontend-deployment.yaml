@@ -34,11 +34,13 @@ spec:
         prometheus.io/port: "3000"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: ${PROJECT_PREFIX}-sa
+      nodeSelector:
+        workload: web
       securityContext:
         runAsNonRoot: true
         runAsUser: 101  # nginx user
         fsGroup: 101
-      serviceAccountName: ${PROJECT_PREFIX}-sa
       containers:
       - name: frontend
         image: ${ACR_LOGIN_SERVER}/${PROJECT_PREFIX}-frontend:${IMAGE_TAG}

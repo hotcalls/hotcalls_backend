@@ -29,6 +29,8 @@ spec:
         app.kubernetes.io/version: "1.0.0"
     spec:
       serviceAccountName: ${PROJECT_PREFIX}-sa
+      nodeSelector:
+        workload: workers
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
