@@ -444,14 +444,7 @@ class BulkScheduleSerializer(serializers.Serializer):
         
         if not getattr(agent.phone_number, 'phonenumber', None):
             raise serializers.ValidationError("Agent's phone number is invalid")
-        
-        # Check workspace access for non-superusers
-        request = self.context.get('request')
-        if request and request.user and not request.user.is_superuser:
-            user_workspaces = request.user.mapping_user_workspaces.all()
-            if agent.workspace not in user_workspaces:
-                raise serializers.ValidationError("You don't have access to this LeadFunnel's agent workspace")
-        
+
         return value
 
 class BulkScheduleResponseSerializer(serializers.Serializer):
