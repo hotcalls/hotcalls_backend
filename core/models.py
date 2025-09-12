@@ -1310,6 +1310,12 @@ class CallLog(models.Model):
         related_name='mapping_agent_calllogs',
         help_text="Agent who made/received the call"
     )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name='call_logs',
+        help_text="Workspace this call log belongs to"
+    )
     # Persist the originating CallTask identifier without FK to allow dangling reference
     call_task_id = models.UUIDField(default=uuid.uuid4, help_text="ID of originating CallTask (not a foreign key, may be dangling)")
     # Persist canonical target reference from CallTask (e.g., 'lead:<uuid>')

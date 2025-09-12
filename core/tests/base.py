@@ -155,6 +155,7 @@ class BaseAPITestCase(TestCase):
         call_data = {
             'lead': lead,
             'agent': agent,
+            'workspace': agent.workspace,  # Add workspace from agent
             'from_number': kwargs.get('from_number', "+15551234567"),
             'to_number': kwargs.get('to_number', lead.phone),
             'duration': duration,

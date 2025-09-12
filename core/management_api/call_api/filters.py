@@ -17,8 +17,15 @@ class CallLogFilter(django_filters.FilterSet):
     
     # Agent filters
     agent = django_filters.UUIDFilter(field_name='agent__agent_id')
-    agent__workspace = django_filters.UUIDFilter(field_name='agent__workspace__id')
-    agent__workspace__workspace_name = django_filters.CharFilter(field_name='agent__workspace__workspace_name', lookup_expr='icontains')
+    
+    # Workspace filters - direct relationship for better performance
+    workspace = django_filters.UUIDFilter(field_name='workspace__id')
+    workspace__id = django_filters.UUIDFilter(field_name='workspace__id')
+    workspace__workspace_name = django_filters.CharFilter(field_name='workspace__workspace_name', lookup_expr='icontains')
+    
+    # Legacy agent workspace filters - kept for backward compatibility
+    agent__workspace = django_filters.UUIDFilter(field_name='workspace__id')  # Maps to direct workspace
+    agent__workspace__workspace_name = django_filters.CharFilter(field_name='workspace__workspace_name', lookup_expr='icontains')
     
     # Lead filters
     lead__name = django_filters.CharFilter(lookup_expr='icontains')
@@ -55,7 +62,7 @@ class CallLogFilter(django_filters.FilterSet):
             models.Q(lead__name__icontains=value) |
             models.Q(lead__email__icontains=value) |
             models.Q(disconnection_reason__icontains=value) |
-            models.Q(agent__workspace__workspace_name__icontains=value)
+            models.Q(workspace__workspace_name__icontains=value)  # Use direct workspace relationship
         )
     
     def filter_successful(self, queryset, name, value):

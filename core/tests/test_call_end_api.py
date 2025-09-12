@@ -226,6 +226,7 @@ class EndOfCallEndpointTests(TestCase):
         CallLog.objects.create(
             call_task_id=self.call_task.id,
             agent=self.agent,
+            workspace=self.agent.workspace,  # Add workspace from agent
             lead=self.lead,
             from_number="+491234",
             to_number=self.call_task.phone,

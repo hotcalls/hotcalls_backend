@@ -146,6 +146,7 @@ class CallLogCreateSerializer(serializers.ModelSerializer):
             'call_task_id': call_task.id,
             'target_ref': call_task.target_ref,
             'agent': agent,
+            'workspace': agent.workspace,  # Add workspace from agent
             'lead': call_task.lead,  # may be None
             'from_number': from_number,
             'to_number': to_number,

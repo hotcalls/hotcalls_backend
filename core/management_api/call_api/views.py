@@ -227,10 +227,11 @@ logger = logging.getLogger(__name__)
 )
 class CallLogViewSet(viewsets.ModelViewSet):
     """
-    📱 **Call Log Management with Universal Read Access**
+    📱 **Call Log Management with Mandatory Workspace Filtering**
     
-    Manages call logs with role-based write permissions:
-    - **👤 All Users**: Can view all call logs (universal read access)
+    Manages call logs with role-based write permissions and workspace security:
+    - **👤 All Users**: Can view call logs from specified workspace only
+    - **🔒 Security**: No workspace parameter = empty results (secure default)
     - **👔 Staff**: Can create and modify call logs (data management)
     - **🔧 Superusers**: Can delete call logs (compliance/cleanup)
     """
@@ -241,10 +242,33 @@ class CallLogViewSet(viewsets.ModelViewSet):
     filterset_class = CallLogFilter
     search_fields = [
         'lead__name', 'lead__surname', 'from_number', 'to_number', 
-        'disconnection_reason', 'agent__workspace__workspace_name', 'status'
+        'disconnection_reason', 'workspace__workspace_name', 'status'
     ]
     ordering_fields = ['timestamp', 'duration', 'direction', 'status', 'appointment_datetime']
     ordering = ['-timestamp']
+    
+    def get_queryset(self):
+        """
+        MANDATORY WORKSPACE FILTERING - Security Implementation
+        
+        Returns call logs only when a workspace is explicitly specified.
+        If no workspace parameter is provided, returns empty results.
+        This prevents accidental data leaks and ensures users must explicitly
+        request call logs for a specific workspace.
+        """
+        # Check if workspace filter is provided via multiple possible parameter names
+        workspace_id = (
+            self.request.query_params.get('workspace') or
+            self.request.query_params.get('agent__workspace') or
+            self.request.query_params.get('workspace__id')
+        )
+        
+        if not workspace_id:
+            # NO workspace specified = return EMPTY queryset (secure default)
+            return CallLog.objects.none()
+        
+        # Return only logs from specified workspace
+        return CallLog.objects.filter(workspace_id=workspace_id)
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
