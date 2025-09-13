@@ -1,3 +1,6 @@
+# Data sources
+data "azurerm_client_config" "current" {}
+
 # AKS Managed Identity
 resource "azurerm_user_assigned_identity" "aks" {
   name                = "${var.name}-identity"
@@ -19,7 +22,7 @@ resource "azurerm_kubernetes_cluster" "main" {
   default_node_pool {
     name                         = "system"
     node_count                   = 2
-    vm_size                     = "Standard_D2as_v5"
+    vm_size                     = "Standard_D2s_v4"
     vnet_subnet_id              = var.vnet_subnet_id
     only_critical_addons_enabled = true
     
@@ -63,11 +66,15 @@ resource "azurerm_kubernetes_cluster" "main" {
   azure_policy_enabled             = true
   http_application_routing_enabled  = false
   role_based_access_control_enabled = true
+  oidc_issuer_enabled              = true
+  workload_identity_enabled        = true
 
   # Azure Active Directory integration
   azure_active_directory_role_based_access_control {
-    managed            = true
-    azure_rbac_enabled = true
+    managed                = true
+    tenant_id              = data.azurerm_client_config.current.tenant_id
+    admin_group_object_ids = var.aad_admin_group_object_ids
+    azure_rbac_enabled     = true
   }
 
 # Add-ons (OMS agent removed – will be added later when workspace is available)
@@ -102,7 +109,7 @@ resource "azurerm_role_assignment" "aks_acr_pull" {
 resource "azurerm_kubernetes_cluster_node_pool" "web" {
   name                  = "web"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size              = "Standard_D4as_v5"
+  vm_size              = "Standard_D4s_v4"
   node_count           = 1
   vnet_subnet_id       = var.vnet_subnet_id
   
@@ -126,7 +133,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "web" {
 resource "azurerm_kubernetes_cluster_node_pool" "workers" {
   name                  = "workers"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size              = "Standard_F4s_v2"
+  vm_size              = "Standard_D4s_v4"
   node_count           = 1
   vnet_subnet_id       = var.vnet_subnet_id
   
@@ -150,7 +157,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "workers" {
 resource "azurerm_kubernetes_cluster_node_pool" "scheduler" {
   name                  = "scheduler"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size              = "Standard_D2as_v5"
+  vm_size              = "Standard_D2s_v4"
   node_count           = 1
   vnet_subnet_id       = var.vnet_subnet_id
   
@@ -172,7 +179,7 @@ resource "azurerm_kubernetes_cluster_node_pool" "scheduler" {
 resource "azurerm_kubernetes_cluster_node_pool" "realtime" {
   name                  = "realtime"
   kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size              = "Standard_F16s_v2"
+  vm_size              = "Standard_D8s_v4"
   node_count           = 1
   vnet_subnet_id       = var.vnet_subnet_id
   

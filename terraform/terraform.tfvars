@@ -1,14 +1,14 @@
-# Staging Environment Configuration - Using existing resource group
-# This configuration uses the existing "staging-new" resource group
+# Production Environment Configuration
+# This configuration creates new production resources
 
 # Project Configuration
-project_name    = "hotcalls"
-environment     = "staging"
+project_name    = "messecaller"
+environment     = "production"
 location        = "North Europe"
 location_short  = "ne"
 
-# Specify the existing resource group name
-resource_group_name = "staging-new"
+# Resource group will be created by Terraform
+resource_group_name = ""
 
 # Your email for alerts and API Management
 alert_email_addresses = ["einfach@malmachen.com"]
@@ -20,14 +20,14 @@ aks_subnet_address_prefix             = "10.0.1.0/24"
 app_gateway_subnet_address_prefix     = "10.0.2.0/24"
 private_endpoint_subnet_address_prefix = "10.0.3.0/24"
 
-# AKS Configuration (small for staging)
-aks_node_count         = 1
-aks_node_size          = "Standard_B2s_v2"
-aks_max_node_count     = 2
+# AKS Configuration (production ready)
+aks_node_count         = 2
+aks_node_size          = "Standard_D2as_v5"
+aks_max_node_count     = 3
 aks_min_node_count     = 1
 kubernetes_version     = "1.28"
 
-# Database Configuration (minimal for staging)
+# Database Configuration (production ready)
 postgres_version       = "14"
 postgres_sku_name     = "GP_Standard_D2s_v3"
 postgres_storage_mb   = 32768
@@ -59,7 +59,7 @@ app_redis_password = "3E1_mH8bD9Rp5GQKpOUv5A"
 # Application settings
 app_debug = "False"
 app_cors_allow_all = "False"
-app_base_url = "https://staging.hotcalls.com"
+app_base_url = "https://app.messecaller.ai"
 
 # Email configuration (update with your SMTP settings)
 app_email_host = "smtp.gmail.com"
@@ -73,9 +73,9 @@ app_server_email = "einfach@malmachen.com"
 
 # Tags
 tags = {
-  Project     = "HotCalls"
-  Environment = "Staging"
+  Project     = "MesseCaller"
+  Environment = "Production"
   Owner       = "einfach@malmachen.com"
   ManagedBy   = "Terraform"
-  Purpose     = "Staging"
+  Purpose     = "Production"
 } 

@@ -93,4 +93,10 @@ variable "tags" {
   description = "Tags to apply to resources"
   type        = map(string)
   default     = {}
+}
+
+variable "aad_admin_group_object_ids" {
+  description = "List of Azure AD group object IDs for AKS admin access"
+  type        = list(string)
+  default     = null
 } 

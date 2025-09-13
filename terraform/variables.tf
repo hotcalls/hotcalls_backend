@@ -14,7 +14,7 @@ variable "storage_account_prefix" {
 variable "project_name" {
   description = "Name of the project, used as prefix for resource names"
   type        = string
-  default     = "hotcalls"
+  default     = "messecaller"
   
   validation {
     condition     = can(regex("^[a-zA-Z0-9-]+$", var.project_name))
@@ -25,7 +25,7 @@ variable "project_name" {
 variable "environment" {
   description = "Environment name (development, staging, production)"
   type        = string
-  default     = "development"
+  default     = "production"
   
   validation {
     condition     = can(regex("^(development|staging|production)(-index-[0-9]+)?$", var.environment))
@@ -42,7 +42,7 @@ variable "location" {
 variable "location_short" {
   description = "Short name for Azure region (used in resource naming)"
   type        = string
-  default     = "we"
+  default     = "ne"
 }
 
 # Network variables

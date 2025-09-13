@@ -118,7 +118,7 @@ resource "azurerm_postgresql_flexible_server_database" "main" {
 module "storage" {
   source = "./modules/storage"
   
-  storage_account_name = "stagingnewstagingnest5fz" # Using existing storage account
+  storage_account_name = lower(substr(replace("${local.resource_prefix}st${local.unique_suffix}", "-", ""), 0, 24))
   resource_group_name  = azurerm_resource_group.main.name
   location            = var.location
   
