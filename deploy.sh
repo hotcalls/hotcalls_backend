@@ -1561,8 +1561,9 @@ deploy_kubernetes() {
         envsubst < outboundagent-secrets.yaml | kubectl apply -f - &
         envsubst < outboundagent-configmap.yaml | kubectl apply -f - &
         envsubst < outboundagent-pdb.yaml | kubectl apply -f - &
-        envsubst < outboundagent-singleton-enforcer.yaml | kubectl apply -f - &
-        envsubst < outboundagent-singleton-enforcer-deploy.yaml | kubectl apply -f - &
+        # Singleton enforcer files disabled as requested
+        # envsubst < outboundagent-singleton-enforcer.yaml | kubectl apply -f - &
+        # envsubst < outboundagent-singleton-enforcer-deploy.yaml | kubectl apply -f - &
         envsubst < outboundagent-deployment.yaml | kubectl apply -f - &
         envsubst < outboundagent-service.yaml | kubectl apply -f - &
         wait  # Wait for parallel deployments to complete

@@ -50,10 +50,9 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 # Switch to the non-root user
 USER django
 
-# Collect static files - using build arg to determine environment
-ARG DJANGO_SETTINGS_MODULE=hotcalls.settings.production
-ENV DJANGO_SETTINGS_MODULE=${DJANGO_SETTINGS_MODULE}
-RUN ALLOWED_HOSTS=localhost python manage.py collectstatic --noinput
+# Collect static files - provide minimal required environment variables for build
+# Full production environment variables will be provided at runtime
+RUN DJANGO_SETTINGS_MODULE=hotcalls.settings.production ALLOWED_HOSTS=localhost BASE_URL=http://localhost CSRF_TRUSTED_ORIGINS=http://localhost python manage.py collectstatic --noinput
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
