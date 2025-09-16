@@ -14,7 +14,7 @@ variable "storage_account_prefix" {
 variable "project_name" {
   description = "Name of the project, used as prefix for resource names"
   type        = string
-  default     = "messecaller"
+  default     = "hotcalls"
   
   validation {
     condition     = can(regex("^[a-zA-Z0-9-]+$", var.project_name))

@@ -677,6 +677,7 @@ deploy_infrastructure() {
     export BASE_URL
     export API_BASE_URL="${BASE_URL}"
     export CALENDAR_API_URL="${BASE_URL}"  # Alternative name for same thing
+    export CSRF_TRUSTED_ORIGINS
     export LIVEKIT_URL
     export LIVEKIT_API_KEY
     export LIVEKIT_API_SECRET
@@ -1228,6 +1229,7 @@ setup_kubernetes_environment() {
     export OPENAI_API_KEY_B64="$(echo -n "${OPENAI_API_KEY}" | base64)"
     export DEEPGRAM_API_KEY_B64="$(echo -n "${DEEPGRAM_API_KEY}" | base64)"
     export ELEVEN_API_KEY_B64="$(echo -n "${ELEVEN_API_KEY}" | base64)"
+    export API_BASE_URL_B64="$(echo -n "${API_BASE_URL}" | base64)"
     
     # Outbound agent requires DB access (read-only recommended). Provide Base64 for secrets.
     # Prefer AGENT_DB_* if set; otherwise fall back to DB_*.
@@ -1273,6 +1275,7 @@ setup_kubernetes_environment() {
     export CALL_LOG_TIMEOUT_B64="$(echo -n "${CALL_LOG_TIMEOUT:-10.0}" | base64)"
     export CALL_LOG_MAX_RETRIES_B64="$(echo -n "${CALL_LOG_MAX_RETRIES:-3}" | base64)"
     export ELEVEN_VOICE_ID_B64="$(echo -n "${ELEVEN_VOICE_ID:-}" | base64)"
+    export MCP_SERVER_URL_B64="$(echo -n "${MCP_SERVER_URL:-}" | base64)"
     
     log_success "Kubernetes environment variables configured!"
 }

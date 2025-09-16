@@ -566,3 +566,8 @@ MS_SCOPES = [
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
+csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS")
+if not csrf_trusted_origins:
+    raise ValueError("CSRF_TRUSTED_ORIGINS environment variable is required but not set")
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]

@@ -2,7 +2,7 @@
 # Copy this file and update values for your Azure environment
 
 # Project Configuration
-project_name    = "hotcalls"
+project_name    = "hotcalls staging"
 environment     = "staging"
 location        = "North Europe"
 

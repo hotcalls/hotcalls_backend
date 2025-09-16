@@ -2,7 +2,7 @@
 # This configuration creates new production resources
 
 # Project Configuration
-project_name    = "messecaller"
+project_name    = "hotcalls"
 environment     = "production"
 location        = "North Europe"
 location_short  = "ne"
@@ -59,7 +59,7 @@ app_redis_password = "3E1_mH8bD9Rp5GQKpOUv5A"
 # Application settings
 app_debug = "False"
 app_cors_allow_all = "False"
-app_base_url = "https://app.messecaller.ai"
+app_base_url = "https://app.hotcalls.ai"
 
 # Email configuration (update with your SMTP settings)
 app_email_host = "smtp.gmail.com"
@@ -73,7 +73,7 @@ app_server_email = "einfach@malmachen.com"
 
 # Tags
 tags = {
-  Project     = "MesseCaller"
+  Project     = "Hotcalls"
   Environment = "Production"
   Owner       = "einfach@malmachen.com"
   ManagedBy   = "Terraform"
