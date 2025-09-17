@@ -99,5 +99,5 @@ temp/
 
 # Docker files (don't include these in the build context)
 Dockerfile*
-docker-compose*.yml
+../docker-compose.yml
 .dockerignore 
