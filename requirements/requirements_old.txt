@@ -40,12 +40,11 @@ azure-identity>=1.15.0          # Azure authentication
 azure-keyvault-secrets>=4.7.0   # Key Vault integration
 azure-storage-blob>=12.19.0     # Direct blob operations
 azure-monitor-opentelemetry>=1.1.0  # Application Insights integration
-azure-communication-phonenumbers  # Azure Communication Services
 
 # Security and monitoring
 django-health-check>=3.17.0     # Health check endpoints for K8s
 whitenoise>=6.6.0               # Static file serving fallback
-django-extensions>=3.2.0        # Useful Django extensions
+django-extensions>=3.2.0        # Useful Django extensions 
 
 # Encryption
 cryptography>=41.0.0
@@ -56,40 +55,3 @@ openai>=1.40.0
 
 # Template rendering
 jinja2>=3.1.0
-
-# Additional dependencies from original requirements.txt
-djangorestframework-simplejwt
-boto3
-faker
-
-# Development tools
-django-debug-toolbar>=4.2.0     # Debug toolbar for development
-ipython>=8.10.0                 # Enhanced Python shell
-ipdb>=0.13.0                    # Enhanced debugger
-
-# Code quality and formatting
-black>=23.0.0                   # Code formatter
-isort>=5.12.0                   # Import sorter
-flake8>=6.0.0                   # Linting
-flake8-django>=1.4.0            # Django-specific linting
-bandit>=1.7.0                   # Security linting
-pre-commit>=3.0.0               # Git hooks for code quality
-
-# Testing framework and tools
-pytest>=7.4.0                   # Testing framework
-pytest-django>=4.5.0            # Django integration for pytest
-pytest-cov>=4.1.0               # Coverage reporting
-pytest-xdist>=3.3.0             # Parallel test execution
-pytest-mock>=3.11.0             # Mocking utilities
-factory-boy>=3.3.0              # Test data factories
-requests>=2.31.0                # HTTP library for API testing
-responses>=0.23.0               # Mock HTTP responses
-locust>=2.17.0                  # Load testing
-coverage>=7.3.0                 # Code coverage measurement
-pytest-html>=3.2.0              # HTML test reports
-pytest-postgresql>=5.0.0        # PostgreSQL testing utilities
-
-# Documentation
-Sphinx>=7.0.0                   # Documentation generator
-sphinx-rtd-theme>=1.3.0         # Read the Docs theme
-python-decouple>=3.8.0          # Enhanced environment variable handling
