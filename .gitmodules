@@ -4,3 +4,4 @@
 [submodule "frontend"]
 	path = frontend
 	url = git@github.com:malmachengbr/hotcalls-visual-prototype.git
+	branch = hotcalls-after-messecaller-frontend
