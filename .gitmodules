@@ -1,7 +1,0 @@
-[submodule "outboundagent"]
-	path = outboundagent
-	url = git@github.com:hotcalls/outboundagent.git
-[submodule "frontend"]
-	path = frontend
-	url = git@github.com:malmachengbr/hotcalls-visual-prototype.git
-	branch = hotcalls-after-messecaller-frontend
