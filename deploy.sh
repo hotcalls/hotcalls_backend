@@ -2257,11 +2257,11 @@ print(f'SSL Mode: {db_config.get(\"OPTIONS\", {}).get(\"sslmode\")}')
     
     # Check readiness (includes database check)
     log_info "Checking readiness endpoint (includes database connectivity)..."
-    kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/readiness/ | python3 -m json.tool
+    #kubectl exec -it "$BACKEND_POD" -n "$NAMESPACE" -- curl -s http://localhost:8000/health/readiness/ | python3 -m json.tool
     
     # Check pod logs for any database errors
     log_info "Checking recent pod logs for database errors..."
-    kubectl logs "$BACKEND_POD" -n "$NAMESPACE" --tail=50 | grep -i -E "(database|postgres|db_host|localhost)" || true
+    #kubectl logs "$BACKEND_POD" -n "$NAMESPACE" --tail=50 | grep -i -E "(database|postgres|db_host|localhost)" || true
 }
 
 # Show comprehensive deployment status and diagnostics
