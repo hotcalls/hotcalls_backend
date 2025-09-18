@@ -141,3 +141,12 @@ if settings.DEBUG:
     urlpatterns += [
         re_path(r'^media/(?P<path>.*)$', CORSMediaView.as_view(), name='media'),
     ]
+
+    # Debug toolbar URLs (only in development)
+    try:
+        import debug_toolbar
+        urlpatterns += [
+            path('__debug__/', include(debug_toolbar.urls)),
+        ]
+    except ImportError:
+        pass
