@@ -2275,4 +2275,31 @@ class CallTask(models.Model):
     def can_retry(self, max_retries=3):
         """Check if the task can be retried"""
         return self.attempts < max_retries and self.status in [CallStatus.SCHEDULED, CallStatus.RETRY]
+
+
+# Signal handlers for eager FeatureUsage initialization
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+
+@receiver(post_save, sender=WorkspaceSubscription)
+def initialize_subscription_usage(sender, instance, created, **kwargs):
+    """
+    Auto-initialize FeatureUsage records when WorkspaceSubscription is created or activated.
+    This ensures all features in the plan have usage records from the start.
+    """
+    # Only initialize if subscription is newly created or becoming active
+    if (created and instance.is_active) or (not created and instance.is_active):
+        # Avoid circular imports by importing here
+        from core.quotas import initialize_feature_usage_for_subscription
+
+        try:
+            initialize_feature_usage_for_subscription(instance)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info("Initialized FeatureUsage records for subscription: %s", instance)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error("Failed to initialize FeatureUsage for subscription %s: %s", instance, str(e))
     

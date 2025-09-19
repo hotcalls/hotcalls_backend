@@ -70,38 +70,99 @@ def current_billing_window(subscription) -> Tuple[datetime.datetime, datetime.da
     return period_start, period_end
 
 
-def get_usage_container(workspace):
+def initialize_feature_usage_for_subscription(subscription):
     """
-    Get or create the WorkspaceUsage container for the current billing period.
-    
+    Create FeatureUsage records for all features in the plan
+    for the current billing period (eager initialization).
+
     Args:
-        workspace: Workspace instance
-        
+        subscription: WorkspaceSubscription instance
+
     Returns:
         WorkspaceUsage instance for current billing period
-        
-    Raises:
-        WorkspaceSubscription.DoesNotExist: If no active subscription found
     """
-    from core.models import WorkspaceSubscription, WorkspaceUsage
-    
-    # Get active subscription
-    subscription = WorkspaceSubscription.objects.select_related("plan").get(
-        workspace=workspace, 
-        is_active=True
-    )
-    
-    # Calculate current billing window
+    from core.models import WorkspaceUsage, FeatureUsage, PlanFeature
+    from decimal import Decimal
+
+    # Get current billing period
     period_start, period_end = current_billing_window(subscription)
-    
-    # Get or create usage container for this period
-    usage, created = WorkspaceUsage.objects.select_for_update().get_or_create(
-        workspace=workspace,
+
+    # Get or create WorkspaceUsage container
+    usage_container, created = WorkspaceUsage.objects.get_or_create(
+        workspace=subscription.workspace,
         subscription=subscription,
         period_start=period_start,
         period_end=period_end,
     )
-    
+
+    # Create FeatureUsage records for all features in the plan
+    plan_features = PlanFeature.objects.filter(plan=subscription.plan).select_related('feature')
+
+    for plan_feature in plan_features:
+        FeatureUsage.objects.get_or_create(
+            usage_record=usage_container,
+            feature=plan_feature.feature,
+            defaults={'used_amount': Decimal('0')}
+        )
+
+    return usage_container
+
+
+def ensure_current_period_initialized(subscription):
+    """
+    Ensure current billing period has all FeatureUsage records.
+    Handles billing period transitions automatically.
+
+    Args:
+        subscription: WorkspaceSubscription instance
+
+    Returns:
+        WorkspaceUsage instance for current billing period
+    """
+    from core.models import WorkspaceUsage
+
+    period_start, period_end = current_billing_window(subscription)
+
+    # Check if current period container exists
+    usage_container = WorkspaceUsage.objects.filter(
+        workspace=subscription.workspace,
+        subscription=subscription,
+        period_start=period_start,
+        period_end=period_end,
+    ).first()
+
+    if not usage_container:
+        # New billing period - create container and all feature records
+        usage_container = initialize_feature_usage_for_subscription(subscription)
+
+    return usage_container
+
+
+def get_usage_container(workspace):
+    """
+    Get or create the WorkspaceUsage container for the current billing period.
+    Now includes eager FeatureUsage initialization.
+
+    Args:
+        workspace: Workspace instance
+
+    Returns:
+        WorkspaceUsage instance for current billing period
+
+    Raises:
+        WorkspaceSubscription.DoesNotExist: If no active subscription found
+    """
+    from core.models import WorkspaceSubscription
+
+    # Get active subscription
+    subscription = WorkspaceSubscription.objects.select_related("plan").get(
+        workspace=workspace,
+        is_active=True
+    )
+
+    # Ensure current billing period is initialized with all FeatureUsage records
+    usage = ensure_current_period_initialized(subscription)
+
     return usage
 
 
