@@ -183,92 +183,24 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
                 }
             )
             
-            # Discover and create sub-accounts for shared/delegated calendars
+            # Discover and create sub-accounts for shared/delegated calendars using the existing task logic
             try:
-                # Get calendar list from Google
-                from googleapiclient.discovery import build
-                from google.oauth2.credentials import Credentials
-                
-                creds = Credentials(
-                    token=tokens['access_token'],
-                    refresh_token=tokens['refresh_token'],
-                    token_uri='https://oauth2.googleapis.com/token',
-                    client_id=settings.GOOGLE_OAUTH_CLIENT_ID,
-                    client_secret=settings.GOOGLE_OAUTH_CLIENT_SECRET,
-                    scopes=tokens.get('scope', '').split()
-                )
-                
-                calendar_service = build('calendar', 'v3', credentials=creds)
-                
-                # Fetch ALL calendars with pagination
-                calendars_fetched = 0
-                page_token = None
-                
-                while True:
-                    # Request calendar list with pagination
-                    request_params = {
-                        'showDeleted': False,
-                        'showHidden': False,
-                        'minAccessRole': 'reader'  # Get all calendars where user has at least read access
-                    }
-                    if page_token:
-                        request_params['pageToken'] = page_token
-                    
-                    calendar_list = calendar_service.calendarList().list(**request_params).execute()
-                    
-                    for cal_entry in calendar_list.get('items', []):
-                        # Skip if this is the primary calendar (already handled as 'self')
-                        if cal_entry.get('primary'):
-                            logger.info(f"Skipping primary calendar: {cal_entry.get('summary', '')}")
-                            continue
-                        
-                        # Determine relationship type
-                        access_role = cal_entry.get('accessRole', 'reader')
-                        cal_id = cal_entry.get('id', '')
-                        summary = cal_entry.get('summary', '')
-                        
-                        # Determine relationship based on calendar ID and access role
-                        if '@group.calendar.google.com' in cal_id:
-                            relationship = 'shared'
-                        elif '@resource.calendar.google.com' in cal_id:
-                            relationship = 'resource'
-                        elif access_role in ['owner', 'writer']:
-                            relationship = 'delegate'
-                        else:
-                            relationship = 'shared'
-                        
-                        # Create sub-account for this calendar
-                        sub_account, created = GoogleSubAccount.objects.get_or_create(
-                            google_calendar=google_calendar,
-                            act_as_email=cal_id,
-                            defaults={
-                                'act_as_user_id': '',  # Will be populated if needed
-                                'relationship': relationship,
-                                'active': True,
-                                'calendar_name': summary  # Store the human-readable name!
-                            }
-                        )
-                        
-                        # Update calendar name if it changed
-                        if not created and sub_account.calendar_name != summary:
-                            sub_account.calendar_name = summary
-                            sub_account.save(update_fields=['calendar_name'])
-                        
-                        calendars_fetched += 1
-                        if created:
-                            logger.info(f"Created {relationship} sub-account for calendar: {summary} ({cal_id})")
-                        else:
-                            logger.info(f"Sub-account already exists for calendar: {summary} ({cal_id})")
-                    
-                    # Check if there are more pages
-                    page_token = calendar_list.get('nextPageToken')
-                    if not page_token:
-                        break
-                
-                logger.info(f"Total calendars fetched from Google: {calendars_fetched}")
-                    
+                from core.tasks import refresh_calendar_subaccounts
+
+                # Call the existing task synchronously to discover subcalendars immediately
+                task_result = refresh_calendar_subaccounts.apply()
+
+                if task_result.successful():
+                    result_data = task_result.result
+                    if result_data.get('google', {}).get('new_subaccounts', 0) > 0:
+                        logger.info(f"Discovered {result_data['google']['new_subaccounts']} new Google subcalendars via task")
+                    else:
+                        logger.info("No new Google subcalendars discovered")
+                else:
+                    logger.warning("Subcalendar discovery task failed, but continuing with OAuth")
+
             except Exception as e:
-                logger.error(f"Error discovering shared calendars: {str(e)}", exc_info=True)
+                logger.error(f"Error calling subcalendar discovery task: {str(e)}", exc_info=True)
                 # Continue anyway - at least we have the self account
             
             # Sync calendars from Google
