@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 logger.info(f"Loaded {__name__} settings module")
 
 # Staging environment identifier
-ENVIRONMENT = 'staging'
+ENVIRONMENT = 'production'
 
 # Debug should always be True for staging to help troubleshoot issues
 DEBUG = False  # Set to False for more production-like behavior
@@ -208,3 +208,8 @@ LOGGING = {
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
+
+# Minute-Pack configuration (one-time top-ups)
+STRIPE_MINUTE_PACK_PRICE_ID = os.getenv('STRIPE_MINUTE_PACK_PRICE_ID', '')
+STRIPE_MINUTE_PACK_PRODUCT_ID = os.getenv('STRIPE_MINUTE_PACK_PRODUCT_ID', '')

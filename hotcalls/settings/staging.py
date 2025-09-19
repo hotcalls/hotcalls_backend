@@ -208,3 +208,8 @@ LOGGING = {
 
 # OpenAI Configuration
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
+
+
+# Minute-Pack configuration (one-time top-ups)
+STRIPE_MINUTE_PACK_PRICE_ID = os.getenv('STRIPE_MINUTE_PACK_PRICE_ID', '')
+STRIPE_MINUTE_PACK_PRODUCT_ID = os.getenv('STRIPE_MINUTE_PACK_PRODUCT_ID', '')
