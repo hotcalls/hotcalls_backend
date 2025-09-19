@@ -1997,18 +1997,43 @@ def get_workspace_usage_status(request, workspace_id):
                         }
 
                 except Exception as e:
-                    logger.warning("Failed to get usage info for feature %s in workspace %s: %s",
+                    logger.error("Failed to get usage info for feature %s in workspace %s: %s",
                                  feature.feature_name, workspace_id, str(e))
-                    # Fallback for errors - show as unlimited to avoid blocking UI
-                    feature_usage[feature.feature_name] = {
-                        'used': 0.0,
-                        'limit': None,
-                        'remaining': None,
-                        'unlimited': True,
-                        'percentage_used': None,
-                        'unit': feature.unit,
-                        'error': str(e)
-                    }
+                    # For capacity features like max_agents, still show actual count even on errors
+                    if feature.feature_name == 'max_agents':
+                        from core.models import Agent
+                        actual_count = float(Agent.objects.filter(workspace=workspace).count())
+                        feature_usage[feature.feature_name] = {
+                            'used': actual_count,
+                            'limit': None,
+                            'remaining': None,
+                            'unlimited': True,
+                            'percentage_used': None,
+                            'unit': feature.unit,
+                            'error': str(e)
+                        }
+                    elif feature.feature_name == 'max_users':
+                        actual_count = float(workspace.users.count())
+                        feature_usage[feature.feature_name] = {
+                            'used': actual_count,
+                            'limit': None,
+                            'remaining': None,
+                            'unlimited': True,
+                            'percentage_used': None,
+                            'unit': feature.unit,
+                            'error': str(e)
+                        }
+                    else:
+                        # For other features, show error fallback
+                        feature_usage[feature.feature_name] = {
+                            'used': 0.0,
+                            'limit': None,
+                            'remaining': None,
+                            'unlimited': True,
+                            'percentage_used': None,
+                            'unit': feature.unit,
+                            'error': str(e)
+                        }
         
         # Build access status information
         access_status = {

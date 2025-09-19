@@ -2285,11 +2285,12 @@ from django.dispatch import receiver
 @receiver(post_save, sender=WorkspaceSubscription)
 def initialize_subscription_usage(sender, instance, created, **kwargs):
     """
-    Auto-initialize FeatureUsage records when WorkspaceSubscription is created or activated.
+    Auto-initialize FeatureUsage records when WorkspaceSubscription is created via Stripe.
     This ensures all features in the plan have usage records from the start.
     """
-    # Only initialize if subscription is newly created or becoming active
-    if (created and instance.is_active) or (not created and instance.is_active):
+    # Only initialize for Stripe-created subscriptions (not superuser Enterprise plans)
+    # We check if workspace has stripe_customer_id to distinguish Stripe vs manual subscriptions
+    if created and instance.is_active and instance.workspace.stripe_customer_id:
         # Avoid circular imports by importing here
         from core.quotas import initialize_feature_usage_for_subscription
 
@@ -2297,7 +2298,7 @@ def initialize_subscription_usage(sender, instance, created, **kwargs):
             initialize_feature_usage_for_subscription(instance)
             import logging
             logger = logging.getLogger(__name__)
-            logger.info("Initialized FeatureUsage records for subscription: %s", instance)
+            logger.info("Initialized FeatureUsage records for Stripe subscription: %s", instance)
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)

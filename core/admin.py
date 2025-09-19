@@ -583,16 +583,46 @@ class WorkspaceSubscriptionAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(WorkspaceUsage)
 class WorkspaceUsageAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('workspace', 'subscription', 'period_start', 'period_end', 'get_features_count')
-    list_filter = ('workspace', 'subscription__plan', 'period_start', 'period_end')
+    list_display = ('workspace', 'subscription', 'get_subscription_status', 'period_start', 'period_end', 'get_features_count')
+    list_filter = ('workspace', 'subscription__plan', 'subscription__is_active', 'period_start', 'period_end')
     search_fields = ('workspace__workspace_name', 'subscription__plan__plan_name')
-    ordering = ('-period_start',)
+    ordering = ('-period_start', 'workspace__workspace_name')
     readonly_fields = ('created_at', 'updated_at')
     inlines = [FeatureUsageInline]
-    
+
+    def get_queryset(self, request):
+        """Show only current period and active subscriptions by default"""
+        qs = super().get_queryset(request)
+
+        # If no specific filters applied, show only active subscriptions
+        if not request.GET:
+            qs = qs.filter(subscription__is_active=True)
+
+        return qs.select_related('workspace', 'subscription', 'subscription__plan')
+
     def get_features_count(self, obj):
         return obj.feature_usages.count()
     get_features_count.short_description = 'Features Used'
+
+    def get_subscription_status(self, obj):
+        status = "Active" if obj.subscription.is_active else "Inactive"
+        color = "green" if obj.subscription.is_active else "red"
+        return f'<span style="color: {color}; font-weight: bold;">{status}</span>'
+    get_subscription_status.short_description = 'Status'
+    get_subscription_status.admin_order_field = 'subscription__is_active'
+    get_subscription_status.allow_tags = True
+
+    def changelist_view(self, request, extra_context=None):
+        """Add context to show filter status"""
+        if extra_context is None:
+            extra_context = {}
+
+        # Check if showing filtered results
+        showing_all = bool(request.GET)
+        if not showing_all:
+            extra_context['title'] = 'Workspace usage (Active subscriptions only - use filters to see all)'
+
+        return super().changelist_view(request, extra_context)
 
 
 @admin.register(FeatureUsage)
