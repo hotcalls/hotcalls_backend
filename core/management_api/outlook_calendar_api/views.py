@@ -244,11 +244,11 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
                 # Continue anyway - at least we have the self account
             
             # Redirect to frontend with success
-            return redirect("/calendar")
+            return redirect("/dashboard/calendar")
             
         except Exception as e:
             logger.error(f"Outlook OAuth callback error: {str(e)}")
-            return redirect("/calendar")
+            return redirect("/dashboard/calendar")
 
 
 @extend_schema_view(
