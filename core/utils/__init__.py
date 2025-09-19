@@ -94,112 +94,169 @@ def send_email_verification(user, request=None):
         html_content = f"""
         <html>
         <head>
-            <style>
-                body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; background-color: #f5f5f5; }}
-                .container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
-                .header {{ background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%); padding: 40px 20px; text-align: center; }}
-                .logo {{ max-width: 180px; height: auto; margin-bottom: 20px; }}
-                .content {{ padding: 40px 30px; background-color: #ffffff; }}
-                .button {{ 
-                    display: inline-block; 
-                    padding: 14px 32px; 
-                    background: #ff6b35;
-                    color: white; 
-                    text-decoration: none; 
-                    border-radius: 6px; 
-                    margin: 30px 0; 
-                    font-weight: 600;
-                    font-size: 16px;
-                    transition: background 0.3s ease;
-                }}
-                .button:hover {{
-                    background: #ff8c42;
-                }}
-                .footer {{ 
-                    padding: 30px; 
-                    text-align: center; 
-                    color: #666; 
-                    font-size: 14px; 
-                    background-color: #f9f9f9;
-                    border-top: 1px solid #e9ecef;
-                }}
-                .link {{ color: #ff6b35; text-decoration: none; }}
-                .link:hover {{ text-decoration: underline; }}
-                h1 {{ color: white; margin: 0; font-size: 28px; font-weight: 600; letter-spacing: -0.5px; }}
-                h2 {{ color: #333; margin-top: 0; font-size: 24px; font-weight: 500; }}
-                .important {{ 
-                    background-color: #fff4f0; 
-                    border-left: 4px solid #ff6b35; 
-                    padding: 15px 20px; 
-                    margin: 25px 0;
-                    border-radius: 4px;
-                }}
-                .important p {{ margin: 0; }}
-                p {{ color: #555; line-height: 1.6; }}
-            </style>
+          <meta charset="UTF-8">
+          <style>
+            body {{
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              line-height: 1.6;
+              color: #333;
+              margin: 0;
+              padding: 0;
+              background-color: #f5f5f5;
+            }}
+            .container {{
+              max-width: 600px;
+              margin: 0 auto;
+              background-color: #ffffff;
+            }}
+            .header {{
+              background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+              padding: 40px 20px;
+              text-align: center;
+            }}
+            .logo {{
+              max-width: 180px;
+              height: auto;
+              margin-bottom: 20px;
+            }}
+            h1 {{
+              color: #fff;
+              margin: 0;
+              font-size: 28px;
+              font-weight: 600;
+              letter-spacing: -0.5px;
+            }}
+            .content {{
+              padding: 40px 30px;
+            }}
+            h2 {{
+              color: #333;
+              margin-top: 0;
+              font-size: 22px;
+              font-weight: 500;
+            }}
+            p {{
+              color: #555;
+              line-height: 1.6;
+            }}
+            .button {{
+              display: inline-block;
+              padding: 14px 32px;
+              background: #ff6b35;
+              color: #fff !important;
+              text-decoration: none;
+              border-radius: 6px;
+              margin: 30px 0;
+              font-weight: 600;
+              font-size: 16px;
+              transition: background 0.3s ease;
+            }}
+            .button:hover {{
+              background: #ff8c42;
+            }}
+            .important {{
+              background-color: #fff4f0;
+              border-left: 4px solid #ff6b35;
+              padding: 15px 20px;
+              margin: 25px 0;
+              border-radius: 4px;
+            }}
+            .footer {{
+              padding: 30px;
+              text-align: center;
+              color: #666;
+              font-size: 14px;
+              background-color: #f9f9f9;
+              border-top: 1px solid #e9ecef;
+            }}
+            .link {{
+              color: #ff6b35;
+              text-decoration: none;
+            }}
+            .link:hover {{
+              text-decoration: underline;
+            }}
+          </style>
         </head>
         <body>
-            <div class="container">
-                <div class="header">
-                    <img src="https://raw.githubusercontent.com/malmachengbr/hotcalls-visual-prototype/integration2/public/hotcalls-logo.png" alt="Hotcalls Logo" class="logo">
-                    <h1>Willkommen bei Hotcalls!</h1>
-                </div>
-                <div class="content">
-                    <h2>Hallo {user.first_name or 'dort'} 👋</h2>
-                    <p>schön, dass du dich bei Hotcalls registriert hast!</p>
-                    
-                    <p>Um deine Registrierung abzuschließen und direkt loszulegen, bestätige bitte deine E-Mail-Adresse:</p>
-                    
-                    <div style="text-align: center;">
-                        <a href="{verification_url}" class="button">E-Mail-Adresse bestätigen</a>
-                    </div>
-                    
-                    <p style="color: #999; font-size: 14px; text-align: center;">Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:</p>
-                    <p style="word-break: break-all; text-align: center;"><a href="{verification_url}" class="link" style="font-size: 14px;">{verification_url}</a></p>
-                    
-                    <div class="important">
-                        <p><strong>Wichtig:</strong> Du musst deine E-Mail-Adresse bestätigen, bevor du dich in dein Konto einloggen kannst.</p>
-                    </div>
-                    
-                    <p>Falls du kein Konto bei uns erstellt hast, kannst du diese E-Mail einfach ignorieren.</p>
-                    
-                    <p>Viel Erfolg mit Hotcalls!</p>
-                    
-                    <p style="margin-top: 30px;">Beste Grüße,<br>
-                    <strong>Dein Hotcalls Team</strong></p>
-                </div>
-                <div class="footer">
-                    <p>Diese E-Mail wurde von Hotcalls versendet</p>
-                    <p>Bei Fragen: <a href="mailto:support@hotcalls.com" class="link">support@hotcalls.com</a></p>
-                    <p style="margin-top: 20px; font-size: 12px; color: #999;">© 2024 Hotcalls. Alle Rechte vorbehalten.</p>
-                </div>
+          <div class="container">
+            <!-- Header -->
+            <div class="header">
+              <img src="https://github.com/hotcalls/hotcalls_frontend/blob/main/public/HC%20Logo.png?raw=true" alt="Hotcalls Logo" class="logo">
+              <h1>Willkommen bei Hotcalls!</h1>
             </div>
+        
+            <!-- Content -->
+            <div class="content">
+              <h2>Hallo {user.first_name or 'dort'} 👋</h2>
+              <p>Schön, dass du dich bei Hotcalls registriert hast!</p>
+        
+              <p>Um deine Registrierung abzuschließen und direkt loszulegen, bestätige bitte deine E-Mail-Adresse:</p>
+        
+              <div style="text-align: center;">
+                <a href="{verification_url}" class="button">E-Mail-Adresse bestätigen</a>
+              </div>
+        
+              <p style="color: #999; font-size: 14px; text-align: center;">
+                Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:
+              </p>
+              <p style="word-break: break-all; text-align: center;">
+                <a href="{verification_url}" class="link" style="font-size: 14px;">{verification_url}</a>
+              </p>
+        
+              <div class="important">
+                <p><strong>Wichtig:</strong> Ohne bestätigte E-Mail-Adresse kannst du dich nicht in dein Konto einloggen.</p>
+              </div>
+        
+              <p>Falls du kein Konto bei uns erstellt hast, kannst du diese Nachricht einfach ignorieren.</p>
+        
+              <p>Viel Erfolg mit Hotcalls!</p>
+        
+              <p style="margin-top: 30px;">
+                Beste Grüße,<br>
+                <strong>Dein Hotcalls Team</strong>
+              </p>
+            </div>
+        
+            <!-- Footer -->
+            <div class="footer">
+              <p>Diese E-Mail wurde automatisch von Hotcalls versendet.</p>
+              <p>Fragen? <a href="mailto:support@hotcalls.com" class="link">support@hotcalls.com</a></p>
+              <p style="margin-top: 20px; font-size: 12px; color: #999;">
+                © 2024 Hotcalls. Alle Rechte vorbehalten.
+              </p>
+            </div>
+          </div>
         </body>
         </html>
+
         """
         
         # Plain text version
         text_content = f"""
         Willkommen bei Hotcalls!
-        
+
         Hallo {user.first_name or 'dort'} 👋
         
-        schön, dass du dich bei Hotcalls registriert hast!
+        Schön, dass du dich bei Hotcalls registriert hast!
         
-        Um deine Registrierung abzuschließen und direkt loszulegen, bestätige bitte deine E-Mail-Adresse:
+        Um deine Registrierung abzuschließen, bestätige bitte deine E-Mail-Adresse über diesen Link:
         
         {verification_url}
         
-        Wichtig: Du musst deine E-Mail-Adresse bestätigen, bevor du dich in dein Konto einloggen kannst.
+        Wichtig: Ohne bestätigte E-Mail-Adresse kannst du dich nicht in dein Konto einloggen.
         
-        Falls du kein Konto bei uns erstellt hast, kannst du diese E-Mail einfach ignorieren.
+        Falls du kein Konto bei uns erstellt hast, kannst du diese Nachricht einfach ignorieren.
         
         Viel Erfolg mit Hotcalls!
         
-        Bei Fragen: support@hotcalls.com
-        
         Beste Grüße,
         Dein Hotcalls Team
+        
+        ---
+        Diese E-Mail wurde automatisch von Hotcalls versendet.
+        Bei Fragen: support@hotcalls.com
+        © 2024 Hotcalls. Alle Rechte vorbehalten.
         """
         
         # Send email
