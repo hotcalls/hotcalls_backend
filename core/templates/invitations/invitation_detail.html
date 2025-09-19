@@ -12,8 +12,8 @@
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: hsl(36, 29%, 95%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -34,7 +34,7 @@
         .invitation-icon {
             width: 80px;
             height: 80px;
-            background: #ff6b35;
+            background: hsl(16, 99%, 57%);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -44,7 +44,17 @@
         }
         
         .invitation-icon::after {
-            content: "🏢";
+            content: "";
+            width: 40px;
+            height: 40px;
+            background: hsl(16, 99%, 57%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
             font-size: 40px;
         }
         
@@ -57,20 +67,20 @@
         .logo {
             font-size: 32px;
             font-weight: bold;
-            color: #333;
+            color: hsl(16, 99%, 57%);
             margin-bottom: 10px;
         }
         
         h1 {
-            color: #1f2937;
+            color: hsl(222.2, 84%, 4.9%);
             font-size: 32px;
             font-weight: 700;
             margin-bottom: 16px;
         }
         
         .workspace-info {
-            background: #f8f9fa;
-            border: 2px solid #e9ecef;
+            background: hsl(210, 40%, 98%);
+            border: 2px solid hsl(214.3, 31.8%, 91.4%);
             border-radius: 15px;
             padding: 25px;
             margin: 25px 0;
@@ -80,33 +90,33 @@
         .workspace-name {
             font-size: 24px;
             font-weight: bold;
-            color: #ff6b35;
+            color: hsl(16, 99%, 57%);
             margin-bottom: 10px;
         }
         
         .invited-by {
-            color: #666;
+            color: hsl(215.4, 16.3%, 46.9%);
             font-size: 16px;
             margin-bottom: 15px;
         }
         
         .invitation-email {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
+            background: hsl(45, 100%, 95%);
+            border: 1px solid hsl(45, 100%, 85%);
             padding: 12px 20px;
             border-radius: 10px;
             font-family: monospace;
-            color: #856404;
+            color: hsl(45, 100%, 25%);
             margin: 20px 0;
             font-size: 16px;
         }
         
         .button {
-            background: linear-gradient(135deg, #ff6b35 0%, #ff8c42 100%);
+            background: hsl(16, 99%, 57%);
             color: white;
             padding: 16px 32px;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-size: 16px;
             font-weight: 600;
             text-decoration: none;
@@ -118,19 +128,19 @@
         
         .button:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
+            box-shadow: 0 8px 25px hsla(16, 99%, 57%, 0.3);
         }
         
         .button.secondary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: hsl(217, 91%, 60%);
         }
         
         .button.secondary:hover {
-            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+            box-shadow: 0 8px 25px hsla(217, 91%, 60%, 0.3);
         }
         
         .button:disabled {
-            background: #6c757d;
+            background: hsl(215.4, 16.3%, 46.9%);
             cursor: not-allowed;
             transform: none;
         }
@@ -148,41 +158,41 @@
         }
         
         .status-message.expired {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #991b1b;
+            background: hsl(0, 84.2%, 97%);
+            border: 1px solid hsl(0, 84.2%, 87%);
+            color: hsl(0, 84.2%, 40%);
         }
         
         .status-message.valid {
-            background: #f0f9ff;
-            border: 1px solid #bae6fd;
-            color: #0c4a6e;
+            background: hsl(204, 100%, 97%);
+            border: 1px solid hsl(204, 100%, 85%);
+            color: hsl(204, 100%, 25%);
         }
         
         .info-box {
-            background: #f8f9fa;
+            background: hsl(210, 40%, 98%);
             padding: 20px;
             border-radius: 10px;
             margin-top: 25px;
-            border-left: 4px solid #ff6b35;
+            border-left: 4px solid hsl(16, 99%, 57%);
             text-align: left;
         }
         
         .info-title {
             font-weight: 600;
-            color: #333;
+            color: hsl(222.2, 84%, 4.9%);
             margin-bottom: 10px;
         }
         
         .info-text {
-            color: #666;
+            color: hsl(215.4, 16.3%, 46.9%);
             font-size: 14px;
             line-height: 1.4;
         }
         
         .footer {
             margin-top: 40px;
-            color: #9ca3af;
+            color: hsl(215.4, 16.3%, 56.9%);
             font-size: 14px;
         }
         
@@ -204,7 +214,7 @@
 <body>
     <div class="container">
         <div class="invitation-icon"></div>
-        <div class="logo">🔥 HotCalls</div>
+        <div class="logo">HotCalls</div>
         <h1>Workspace-Einladung</h1>
         
         <div class="workspace-info">
@@ -218,7 +228,7 @@
         
         {% if invitation.is_valid %}
             <div class="status-message valid">
-                ✅ Diese Einladung ist gültig und kann angenommen werden
+                Diese Einladung ist gültig und kann angenommen werden
             </div>
             
             {% if user.is_authenticated %}
@@ -229,7 +239,7 @@
                     </form>
                 {% else %}
                     <div class="status-message expired">
-                        ❌ Diese Einladung wurde an {{ invitation.email }} gesendet, aber Sie sind als {{ user.email }} angemeldet.
+                        Diese Einladung wurde an {{ invitation.email }} gesendet, aber Sie sind als {{ user.email }} angemeldet.
                     </div>
                     <a href="/login?next=/invitations/{{ invitation.token }}/accept/" class="button secondary">Mit anderem Account anmelden</a>
                 {% endif %}
@@ -239,13 +249,13 @@
             {% endif %}
         {% else %}
             <div class="status-message expired">
-                ❌ Diese Einladung ist abgelaufen oder ungültig
+                Diese Einladung ist abgelaufen oder ungültig
             </div>
             <a href="/" class="button secondary">Zur Startseite</a>
         {% endif %}
         
         <div class="info-box">
-            <div class="info-title">🏢 Über Workspaces</div>
+            <div class="info-title">Über Workspaces</div>
             <div class="info-text">
                 Workspaces ermöglichen es Teams, gemeinsam an Projekten zu arbeiten und Ressourcen zu teilen. 
                 Als Workspace-Mitglied erhalten Sie Zugang zu gemeinsamen Agenten, Leads und Analysen.

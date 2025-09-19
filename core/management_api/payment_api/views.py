@@ -1590,6 +1590,46 @@ def stripe_webhook(request):
         # Update workspace subscription status
         try:
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
+
+            # CRITICAL FIX: Handle trial cancellations immediately when done via Stripe portal
+            cancel_at_period_end = subscription.get('cancel_at_period_end', False)
+            if cancel_at_period_end:
+                logger.info("🚨 Detected cancellation via Stripe portal for workspace=%s, cancel_at_period_end=%s", workspace.id, cancel_at_period_end)
+
+                # Check if this is a trial that should be cancelled immediately
+                trial_end_ts = subscription.get('trial_end')
+                created_ts = subscription.get('created')
+                now = timezone.now().timestamp()
+
+                is_trial_period = trial_end_ts and trial_end_ts > now
+                is_recent_subscription = created_ts and (now - created_ts) < (15 * 24 * 60 * 60)  # 15 days
+
+                # Check if subscription has any successful payments
+                try:
+                    invoices = stripe.Invoice.list(subscription=subscription['id'], limit=10)
+                    has_paid_invoices = any(inv.status == 'paid' and inv.amount_paid > 0 for inv in invoices.data)
+                except:
+                    has_paid_invoices = False
+
+                should_cancel_immediately = ((is_trial_period and not has_paid_invoices) or
+                                           (is_recent_subscription and not has_paid_invoices))
+
+                logger.info("🔍 Trial cancellation check: trial_period=%s, recent_sub=%s, has_paid=%s, should_cancel_immediately=%s",
+                           is_trial_period, is_recent_subscription, has_paid_invoices, should_cancel_immediately)
+
+                if should_cancel_immediately:
+                    logger.info("🚫 TRIAL CANCELLATION VIA PORTAL - Converting to immediate cancellation for workspace=%s", workspace.id)
+                    try:
+                        # Cancel the subscription immediately instead of at period end
+                        stripe.Subscription.delete(subscription['id'])
+                        workspace.subscription_status = 'cancelled'
+                        workspace.stripe_subscription_id = None
+                        workspace.save()
+                        logger.info("✅ Successfully converted portal trial cancellation to immediate for workspace=%s", workspace.id)
+                        return HttpResponse(status=200)
+                    except Exception as e:
+                        logger.error("❌ Failed to convert trial cancellation to immediate for workspace=%s: %s", workspace.id, str(e))
+
             workspace.subscription_status = subscription_status
             workspace.save()
             logger.info("Updated workspace subscription status to %s", subscription_status)
@@ -1803,16 +1843,16 @@ def get_workspace_usage_status(request, workspace_id):
     from core.quotas import get_feature_usage_status_readonly, current_billing_window
     from core.models import Feature
     from datetime import datetime, timezone
-    
+
     try:
         workspace = Workspace.objects.get(id=workspace_id)
-        
+
         # Get active subscription for billing period
         subscription = workspace.current_subscription
         if subscription:
             plan = subscription.plan
             period_start, period_end = current_billing_window(subscription)
-            
+
             # Calculate days remaining in billing period
             now = datetime.now(timezone.utc)
             days_remaining = max(0, (period_end - now).days)
@@ -1820,6 +1860,36 @@ def get_workspace_usage_status(request, workspace_id):
             plan = None
             period_start = period_end = None
             days_remaining = None
+
+        # Get Stripe subscription data for cancellation info
+        stripe_subscription_data = None
+        access_expires_at = None
+        days_until_expiry = None
+
+        if workspace.stripe_subscription_id:
+            try:
+                stripe_subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                stripe_subscription_data = {
+                    'id': stripe_subscription.id,
+                    'status': stripe_subscription.status,
+                    'cancel_at_period_end': getattr(stripe_subscription, 'cancel_at_period_end', False),
+                    'canceled_at': getattr(stripe_subscription, 'canceled_at', None),
+                    'current_period_end': getattr(stripe_subscription, 'current_period_end', None),
+                    'trial_end': getattr(stripe_subscription, 'trial_end', None),
+                    'created': getattr(stripe_subscription, 'created', None),
+                }
+
+                # Calculate access expiry
+                if stripe_subscription_data['cancel_at_period_end']:
+                    if stripe_subscription_data['current_period_end']:
+                        access_expires_at = datetime.fromtimestamp(stripe_subscription_data['current_period_end'], tz=timezone.utc)
+                        days_until_expiry = max(0, (access_expires_at - now).days)
+                elif stripe_subscription_data['trial_end'] and stripe_subscription.status == 'trialing':
+                    access_expires_at = datetime.fromtimestamp(stripe_subscription_data['trial_end'], tz=timezone.utc)
+                    days_until_expiry = max(0, (access_expires_at - now).days)
+
+            except stripe.error.StripeError as e:
+                logger.warning("Failed to fetch Stripe subscription for workspace %s: %s", workspace_id, str(e))
         
         # Get all measurable features (only those we support)
         features = Feature.objects.filter(feature_name__in=['call_minutes', 'max_users', 'max_agents'])
@@ -1877,23 +1947,105 @@ def get_workspace_usage_status(request, workspace_id):
                 }
             else:
                 # For other features (like call_minutes), use quota tracking system
-                usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
-                
-                # Calculate percentage used if not unlimited
-                percentage_used = None
-                if not usage_info['unlimited'] and usage_info['limit'] and usage_info['limit'] > 0:
-                    percentage_used = float((usage_info['used'] / usage_info['limit']) * 100)
-                    percentage_used = round(percentage_used, 2)
-                
-                feature_usage[feature.feature_name] = {
-                    'used': float(usage_info['used']),
-                    'limit': float(usage_info['limit']) if usage_info['limit'] else None,
-                    'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
-                    'unlimited': usage_info['unlimited'],
-                    'percentage_used': percentage_used,
-                    'unit': feature.unit
-                }
+                try:
+                    usage_info = get_feature_usage_status_readonly(workspace, feature.feature_name)
+
+                    # Calculate percentage used if not unlimited
+                    percentage_used = None
+                    if not usage_info['unlimited'] and usage_info['limit'] and usage_info['limit'] > 0:
+                        percentage_used = float((usage_info['used'] / usage_info['limit']) * 100)
+                        percentage_used = round(percentage_used, 2)
+
+                    # Enhanced call_minutes with extra minutes info
+                    if feature.feature_name == 'call_minutes':
+                        from core.quotas import get_usage_container
+
+                        # Get extra minutes purchased for this period
+                        extra_minutes = 0
+                        if subscription:
+                            try:
+                                usage_container = get_usage_container(workspace)
+                                extra_minutes = float(getattr(usage_container, 'extra_call_minutes', 0) or 0)
+                            except:
+                                extra_minutes = 0
+
+                        # Calculate base limit (from plan) vs effective limit (plan + extra)
+                        base_limit = None
+                        if subscription and usage_info['limit']:
+                            # Subtract extra minutes to get base plan limit
+                            base_limit = float(usage_info['limit']) - extra_minutes
+                            base_limit = max(base_limit, 0)  # Ensure non-negative
+
+                        feature_usage[feature.feature_name] = {
+                            'used': float(usage_info['used']),
+                            'base_limit': base_limit,
+                            'extra_minutes': extra_minutes,
+                            'limit': float(usage_info['limit']) if usage_info['limit'] else None,
+                            'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
+                            'unlimited': usage_info['unlimited'],
+                            'percentage_used': percentage_used,
+                            'unit': feature.unit
+                        }
+                    else:
+                        feature_usage[feature.feature_name] = {
+                            'used': float(usage_info['used']),
+                            'limit': float(usage_info['limit']) if usage_info['limit'] else None,
+                            'remaining': float(usage_info['remaining']) if usage_info['remaining'] else None,
+                            'unlimited': usage_info['unlimited'],
+                            'percentage_used': percentage_used,
+                            'unit': feature.unit
+                        }
+
+                except Exception as e:
+                    logger.warning("Failed to get usage info for feature %s in workspace %s: %s",
+                                 feature.feature_name, workspace_id, str(e))
+                    # Fallback for errors - show as unlimited to avoid blocking UI
+                    feature_usage[feature.feature_name] = {
+                        'used': 0.0,
+                        'limit': None,
+                        'remaining': None,
+                        'unlimited': True,
+                        'percentage_used': None,
+                        'unit': feature.unit,
+                        'error': str(e)
+                    }
         
+        # Build access status information
+        access_status = {
+            'features_available': True,
+            'expires_in_days': days_until_expiry,
+            'expiry_message': None
+        }
+
+        if days_until_expiry is not None:
+            if days_until_expiry == 0:
+                access_status['expiry_message'] = "Your subscription expires today"
+            elif days_until_expiry == 1:
+                access_status['expiry_message'] = "Your subscription expires tomorrow"
+            elif days_until_expiry <= 7:
+                access_status['expiry_message'] = f"Your subscription expires in {days_until_expiry} days"
+            elif stripe_subscription_data and stripe_subscription_data.get('cancel_at_period_end'):
+                access_status['expiry_message'] = f"Your subscription will end in {days_until_expiry} days"
+
+        # Build subscription information
+        subscription_info = {
+            'has_subscription': stripe_subscription_data is not None,
+            'workspace_subscription_status': workspace.subscription_status,
+            'stripe_customer_id': workspace.stripe_customer_id
+        }
+
+        if stripe_subscription_data:
+            subscription_info.update({
+                'id': stripe_subscription_data['id'],
+                'status': stripe_subscription_data['status'],
+                'cancel_at_period_end': stripe_subscription_data['cancel_at_period_end'],
+                'canceled_at': stripe_subscription_data['canceled_at'],
+                'current_period_end': stripe_subscription_data['current_period_end'],
+                'trial_end': stripe_subscription_data['trial_end'],
+                'created': stripe_subscription_data['created'],
+                'days_until_expiry': days_until_expiry
+            })
+
         # Build response
         response_data = {
             'workspace': {
@@ -1906,7 +2058,9 @@ def get_workspace_usage_status(request, workspace_id):
                 'end': period_end.isoformat() if period_end else None,
                 'days_remaining': days_remaining
             } if period_start and period_end else None,
-            'features': feature_usage
+            'features': feature_usage,
+            'subscription': subscription_info,
+            'access_status': access_status
         }
         
         return Response(response_data, status=status.HTTP_200_OK)

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Email Verified - HotCalls</title>
+    <title>E-Mail verifiziert - HotCalls</title>
     <style>
         * {
             margin: 0;
@@ -12,8 +12,8 @@
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: hsl(36, 29%, 95%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -34,7 +34,7 @@
         .success-icon {
             width: 80px;
             height: 80px;
-            background: #10b981;
+            background: hsl(142, 71%, 45%);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -57,35 +57,35 @@
         }
         
         h1 {
-            color: #1f2937;
+            color: hsl(222.2, 84%, 4.9%);
             font-size: 32px;
             font-weight: 700;
             margin-bottom: 16px;
         }
         
         .subtitle {
-            color: #6b7280;
+            color: hsl(215.4, 16.3%, 46.9%);
             font-size: 18px;
             margin-bottom: 30px;
             line-height: 1.6;
         }
         
         .email {
-            background: #f3f4f6;
+            background: hsl(210, 40%, 96.1%);
             padding: 12px 20px;
             border-radius: 10px;
             font-family: monospace;
-            color: #374151;
+            color: hsl(215.4, 16.3%, 46.9%);
             margin-bottom: 30px;
             font-size: 16px;
         }
         
         .button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: hsl(16, 99%, 57%);
             color: white;
             padding: 16px 32px;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-size: 16px;
             font-weight: 600;
             text-decoration: none;
@@ -100,7 +100,7 @@
         
         .footer {
             margin-top: 40px;
-            color: #9ca3af;
+            color: hsl(215.4, 16.3%, 56.9%);
             font-size: 14px;
         }
     </style>
@@ -108,15 +108,15 @@
 <body>
     <div class="container">
         <div class="success-icon"></div>
-        <h1>Email Verified Successfully!</h1>
+        <h1>E-Mail erfolgreich verifiziert!</h1>
         <p class="subtitle">
-            Your email address has been verified and your account is now active.
-            You can now access all features of HotCalls.
+            Ihre E-Mail-Adresse wurde verifiziert und Ihr Konto ist jetzt aktiv.
+            Sie können jetzt alle Funktionen von HotCalls nutzen.
         </p>
         <div class="email">{{ email }}</div>
-        <a href="{{ BASE_URL }}/login" class="button">Go to Login</a>
+        <a href="{{ BASE_URL }}/login" class="button">Zum Login</a>
         <div class="footer">
-            Welcome to HotCalls! 🔥
+            Willkommen bei HotCalls!
         </div>
     </div>
 </body>

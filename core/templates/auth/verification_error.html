@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Verification Error - HotCalls</title>
+    <title>Verifizierung fehlgeschlagen - HotCalls</title>
     <style>
         * {
             margin: 0;
@@ -12,8 +12,8 @@
         }
         
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            font-family: 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: hsl(36, 29%, 95%);
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -34,7 +34,7 @@
         .error-icon {
             width: 80px;
             height: 80px;
-            background: #ef4444;
+            background: hsl(0, 84.2%, 60.2%);
             border-radius: 50%;
             display: flex;
             align-items: center;
@@ -57,35 +57,35 @@
         }
         
         h1 {
-            color: #1f2937;
+            color: hsl(222.2, 84%, 4.9%);
             font-size: 32px;
             font-weight: 700;
             margin-bottom: 16px;
         }
         
         .subtitle {
-            color: #6b7280;
+            color: hsl(215.4, 16.3%, 46.9%);
             font-size: 18px;
             margin-bottom: 30px;
             line-height: 1.6;
         }
         
         .error-message {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
+            background: hsl(0, 84.2%, 97%);
+            border: 1px solid hsl(0, 84.2%, 87%);
             padding: 16px 20px;
             border-radius: 10px;
-            color: #991b1b;
+            color: hsl(0, 84.2%, 40%);
             margin-bottom: 30px;
             font-size: 16px;
         }
         
         .button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: hsl(16, 99%, 57%);
             color: white;
             padding: 16px 32px;
             border: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-size: 16px;
             font-weight: 600;
             text-decoration: none;
@@ -100,12 +100,12 @@
         }
         
         .button.secondary {
-            background: #6b7280;
+            background: hsl(215.4, 16.3%, 46.9%);
         }
         
         .footer {
             margin-top: 40px;
-            color: #9ca3af;
+            color: hsl(215.4, 16.3%, 56.9%);
             font-size: 14px;
         }
     </style>
@@ -113,15 +113,15 @@
 <body>
     <div class="container">
         <div class="error-icon"></div>
-        <h1>Verification Failed</h1>
+        <h1>Verifizierung fehlgeschlagen</h1>
         <p class="subtitle">
-            We couldn't verify your email address. This could be due to an invalid or expired verification link.
+            Wir konnten Ihre E-Mail-Adresse nicht verifizieren. Dies könnte an einem ungültigen oder abgelaufenen Verifizierungslink liegen.
         </p>
         <div class="error-message">{{ error_message }}</div>
-        <a href="{{ BASE_URL }}/signup" class="button">Sign Up Again</a>
-        <a href="{{ BASE_URL }}/login" class="button secondary">Go to Login</a>
+        <a href="{{ BASE_URL }}/signup" class="button">Erneut registrieren</a>
+        <a href="{{ BASE_URL }}/login" class="button secondary">Zum Login</a>
         <div class="footer">
-            Need help? Contact support 📧
+            Benötigen Sie Hilfe? Kontaktieren Sie den Support
         </div>
     </div>
 </body>
