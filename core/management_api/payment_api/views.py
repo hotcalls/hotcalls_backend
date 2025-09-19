@@ -609,18 +609,27 @@ def create_checkout_session(request):
 def create_minute_pack_checkout(request):
     """Create Stripe Checkout Session for one-time 100-minute pack purchase."""
     try:
+        logger.info("🧾 Creating minute pack checkout - request data: %s", request.data)
+
         workspace_id = request.data.get('workspace_id')
         if not workspace_id:
+            logger.error("❌ No workspace_id provided in request")
             return Response({"error": "workspace_id is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         price_id = getattr(settings, 'STRIPE_MINUTE_PACK_PRICE_ID', '')
+        logger.info("🔍 Using price_id: %s", price_id)
         if not price_id:
+            logger.error("❌ STRIPE_MINUTE_PACK_PRICE_ID not configured")
             return Response({"error": "STRIPE_MINUTE_PACK_PRICE_ID is not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         workspace = Workspace.objects.get(id=workspace_id)
+        logger.info("✅ Found workspace: %s", workspace.id)
 
-        success_url = f"{settings.SITE_URL}/dashboard/settings?tab=billing&topup=success&session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url = f"{settings.SITE_URL}/dashboard/settings?tab=billing&topup=cancelled"
+        site_url = getattr(settings, 'SITE_URL', 'https://app.hotcalls.ai')
+        success_url = f"{site_url}/dashboard/settings?tab=billing&topup=success&session_id=" + "{CHECKOUT_SESSION_ID}"
+        cancel_url = f"{site_url}/dashboard/settings?tab=billing&topup=cancelled"
+
+        logger.info("🔗 URLs - success: %s, cancel: %s", success_url, cancel_url)
 
         session_params = {
             'payment_method_types': ['card'],
@@ -641,16 +650,26 @@ def create_minute_pack_checkout(request):
 
         if workspace.stripe_customer_id:
             session_params['customer'] = workspace.stripe_customer_id
+            logger.info("🔗 Using existing customer: %s", workspace.stripe_customer_id)
 
+        logger.info("🚀 Creating Stripe session with params: %s", session_params)
         session = stripe.checkout.Session.create(**session_params)
+
+        logger.info("✅ Successfully created minute pack checkout session: %s", session.id)
+
         return Response({
             'checkout_url': session.url,
             'session_id': session.id,
         })
     except Workspace.DoesNotExist:
+        logger.error("❌ Workspace not found: %s", workspace_id)
         return Response({"error": "Workspace not found"}, status=status.HTTP_404_NOT_FOUND)
     except stripe.error.StripeError as e:
+        logger.error("🚨 Stripe error in minute pack checkout: %s", str(e))
         return Response({"error": f"Stripe error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    except Exception as e:
+        logger.error("🚨 Unexpected error in minute pack checkout: %s", str(e))
+        return Response({"error": f"Unexpected error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @extend_schema(
     summary="🔄 Change subscription plan (price)",
