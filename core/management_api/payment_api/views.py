@@ -721,6 +721,33 @@ def change_subscription_plan(request):
             }]
         )
 
+        # CRITICAL: Update WorkspaceSubscription immediately, don't rely only on webhooks
+        try:
+            price_id = updated['items']['data'][0]['price']['id'] if updated['items']['data'] else None
+            if price_id:
+                from core.models import Plan, WorkspaceSubscription
+                plan = Plan.objects.filter(
+                    stripe_price_id_monthly=price_id
+                ).first() or Plan.objects.filter(
+                    stripe_price_id_yearly=price_id
+                ).first()
+
+                if plan:
+                    # Find and update existing active subscription
+                    existing_subscription = WorkspaceSubscription.objects.filter(
+                        workspace=workspace,
+                        is_active=True
+                    ).first()
+
+                    if existing_subscription:
+                        existing_subscription.plan = plan
+                        existing_subscription.save()
+                        logger.info("Updated WorkspaceSubscription plan to %s for workspace %s", plan.plan_name, workspace.id)
+                    else:
+                        logger.warning("No active WorkspaceSubscription found to update for workspace %s", workspace.id)
+        except Exception as e:
+            logger.warning("Failed to update WorkspaceSubscription in change_subscription_plan: %s", e)
+
         # Return a concise status; webhook will reconcile DB records
         return Response({
             'id': updated['id'],
@@ -1634,7 +1661,7 @@ def stripe_webhook(request):
             workspace.save()
             logger.info("Updated workspace subscription status to %s", subscription_status)
 
-            # Sync WorkspaceSubscription plan mapping on price change
+            # Sync WorkspaceSubscription plan mapping on price change - UPDATE existing, don't create new
             try:
                 items = subscription['items']['data']
                 if items:
@@ -1646,20 +1673,19 @@ def stripe_webhook(request):
                         stripe_price_id_yearly=price_id
                     ).first()
                     if plan:
-                        # Deactivate existing active subscriptions
-                        WorkspaceSubscription.objects.filter(
+                        # Find existing active subscription and UPDATE it instead of creating new
+                        existing_subscription = WorkspaceSubscription.objects.filter(
                             workspace=workspace,
                             is_active=True
-                        ).update(is_active=False)
-                        # Create/activate new mapping
-                        from datetime import datetime, timezone
-                        WorkspaceSubscription.objects.create(
-                            workspace=workspace,
-                            plan=plan,
-                            started_at=datetime.now(timezone.utc),
-                            is_active=True
-                        )
-                        logger.info("Synchronized WorkspaceSubscription to plan %s via subscription.updated", plan.plan_name)
+                        ).first()
+
+                        if existing_subscription:
+                            # Update existing subscription's plan
+                            existing_subscription.plan = plan
+                            existing_subscription.save()
+                            logger.info("Updated existing WorkspaceSubscription to plan %s via subscription.updated", plan.plan_name)
+                        else:
+                            logger.warning("No existing WorkspaceSubscription found to update for workspace %s - plan change may have been handled by checkout.session.completed", workspace.id)
             except Exception as e:
                 logger.warning("Failed to sync WorkspaceSubscription on subscription.updated: %s", e)
         except Workspace.DoesNotExist:
