@@ -182,7 +182,7 @@ def send_email_verification(user, request=None):
           <div class="container">
             <!-- Header -->
             <div class="header">
-              <img src="https://github.com/hotcalls/hotcalls_frontend/blob/main/public/HC%20Logo.png?raw=true" alt="Hotcalls Logo" class="logo">
+              <img src="https://app.hotcalls.ai/HC%20Logo.png" alt="Hotcalls Logo" class="logo">
               <h1>Willkommen bei Hotcalls!</h1>
             </div>
         
