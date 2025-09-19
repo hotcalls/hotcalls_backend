@@ -13,6 +13,8 @@ from .views import (
     cancel_subscription,
     resume_subscription,
     check_workspace_subscription,
+    check_trial_eligibility,
+    debug_subscription_status,
     get_workspace_usage_status,
     purchase_minute_pack
 )
@@ -62,15 +64,23 @@ urlpatterns = [
          get_subscription_status, 
          name='get-subscription-status'),
     
-    path('workspaces/<uuid:workspace_id>/check-subscription/', 
-         check_workspace_subscription, 
+    path('workspaces/<uuid:workspace_id>/check-subscription/',
+         check_workspace_subscription,
          name='check-workspace-subscription'),
-    
-    path('workspaces/<uuid:workspace_id>/subscription/cancel/', 
-         cancel_subscription, 
+
+    path('workspaces/<uuid:workspace_id>/trial-eligibility/',
+         check_trial_eligibility,
+         name='check-trial-eligibility'),
+
+    path('workspaces/<uuid:workspace_id>/debug-subscription/',
+         debug_subscription_status,
+         name='debug-subscription-status'),
+
+    path('workspaces/<uuid:workspace_id>/subscription/cancel/',
+         cancel_subscription,
          name='cancel-subscription'),
-    path('workspaces/<uuid:workspace_id>/subscription/resume/', 
-         resume_subscription, 
+    path('workspaces/<uuid:workspace_id>/subscription/resume/',
+         resume_subscription,
          name='resume-subscription'),
     
     # Usage and quota management

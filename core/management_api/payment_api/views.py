@@ -538,9 +538,12 @@ def create_checkout_session(request):
     
     try:
         workspace = Workspace.objects.get(id=workspace_id)
-        
+
         # Do NOT cancel existing subscriptions here. Plan changes should be handled via the dedicated change-plan endpoint or the billing portal.
-        
+
+        # Check trial eligibility
+        is_trial_eligible = not workspace.has_used_trial
+
         # Create checkout session - customer will be created automatically if needed
         session_params = {
             'payment_method_types': ['card'],
@@ -556,20 +559,31 @@ def create_checkout_session(request):
                 'workspace_id': str(workspace.id),
                 'workspace_name': workspace.workspace_name,
                 'payer_user_id': str(getattr(request.user, 'id', '')),
-                'payer_email': getattr(request.user, 'email', '') or ''
+                'payer_email': getattr(request.user, 'email', '') or '',
+                'trial_eligible': str(is_trial_eligible)
             }
         }
-        
+
+        # Add 14-day trial if workspace is eligible
+        if is_trial_eligible:
+            session_params['subscription_data'] = {
+                'trial_period_days': 14
+            }
+            print(f"🎯 Adding 14-day trial for workspace {workspace.id}")
+        else:
+            print(f"❌ No trial for workspace {workspace.id} - already used")
+
         # If workspace already has a customer, use it
         if workspace.stripe_customer_id:
             session_params['customer'] = workspace.stripe_customer_id
-        
+
         session = stripe.checkout.Session.create(**session_params)
-        print(f"✅ Created checkout session {session.id} for price {price_id}")
-        
+        print(f"✅ Created checkout session {session.id} for price {price_id} (trial: {is_trial_eligible})")
+
         return Response({
             'checkout_url': session.url,
-            'session_id': session.id
+            'session_id': session.id,
+            'trial_applied': is_trial_eligible
         })
         
     except Workspace.DoesNotExist:
@@ -878,36 +892,151 @@ def cancel_subscription(request, workspace_id):
     """Cancel workspace subscription"""
     try:
         workspace = Workspace.objects.get(id=workspace_id)
-        
+
         if not workspace.stripe_subscription_id:
             return Response(
                 {"error": "No active subscription"},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Cancel at period end
-        subscription = stripe.Subscription.modify(
-            workspace.stripe_subscription_id,
-            cancel_at_period_end=True
-        )
-        
-        # Do not mark as cancelled immediately; final state will be reconciled via webhook.
-        # Keep DB status as-is; clients can read cancel_at_period_end from Stripe via status endpoint.
-        
-        return Response({
-            'message': 'Subscription will be cancelled at period end',
-            'cancel_at': subscription.current_period_end
-        })
-        
+
+        # Get current subscription to check if it's a trial
+        subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+
+        # Debug logging to understand what we're dealing with
+        logger.info("🔍 Cancellation check: stripe_status=%s, workspace_status=%s, workspace_id=%s",
+                   subscription.status, workspace.subscription_status, workspace.id)
+
+        # CRITICAL FIX: Check for trial status in multiple ways
+        # 1. Stripe status is 'trialing'
+        # 2. OR our workspace status is 'trial'
+        is_trial = (subscription.status == 'trialing' or workspace.subscription_status == 'trial')
+
+        if is_trial:
+            # IMMEDIATE cancellation for trials (no charge)
+            logger.info("🚫 TRIAL DETECTED - Performing immediate cancellation for workspace=%s", workspace.id)
+
+            cancelled_subscription = stripe.Subscription.delete(workspace.stripe_subscription_id)
+
+            # Update workspace status immediately for trials
+            workspace.subscription_status = 'cancelled'
+            workspace.stripe_subscription_id = None
+            workspace.save()
+
+            logger.info("✅ SUCCESSFULLY cancelled trial subscription immediately for workspace=%s", workspace.id)
+
+            return Response({
+                'message': 'Trial cancelled immediately (no charge)',
+                'immediate_cancellation': True,
+                'was_trial': True,
+                'original_stripe_status': subscription.status,
+                'original_workspace_status': workspace.subscription_status
+            })
+        else:
+            # Regular subscription - cancel at period end
+            logger.info("💳 REGULAR SUBSCRIPTION - Scheduling cancellation at period end for workspace=%s", workspace.id)
+
+            subscription = stripe.Subscription.modify(
+                workspace.stripe_subscription_id,
+                cancel_at_period_end=True
+            )
+
+            logger.info("✅ Successfully scheduled cancellation at period end for workspace=%s", workspace.id)
+
+            # Do not mark as cancelled immediately; final state will be reconciled via webhook.
+            # Keep DB status as-is; clients can read cancel_at_period_end from Stripe via status endpoint.
+
+            return Response({
+                'message': 'Subscription will be cancelled at period end',
+                'cancel_at': subscription.current_period_end,
+                'immediate_cancellation': False,
+                'was_trial': False,
+                'original_stripe_status': subscription.status,
+                'original_workspace_status': workspace.subscription_status
+            })
+
     except Workspace.DoesNotExist:
         return Response(
-            {"error": "Workspace not found"}, 
+            {"error": "Workspace not found"},
             status=status.HTTP_404_NOT_FOUND
         )
     except stripe.error.StripeError as e:
+        logger.error("🚨 Stripe error during cancellation for workspace=%s: %s", workspace_id, str(e))
         return Response(
             {"error": f"Stripe error: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+    except Exception as e:
+        logger.error("🚨 Unexpected error during cancellation for workspace=%s: %s", workspace_id, str(e))
+        return Response(
+            {"error": f"Unexpected error: {str(e)}"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="🔍 Debug subscription status",
+    description="""
+    Debug endpoint to check the current state of a workspace subscription.
+
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+
+    **📊 Returns detailed information about**:
+    - Workspace subscription status
+    - Stripe subscription details
+    - Trial eligibility and usage
+    - Current billing state
+    """,
+    responses={
+        200: OpenApiResponse(description="✅ Debug info retrieved"),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsWorkspaceMember])
+def debug_subscription_status(request, workspace_id):
+    """Debug subscription status for troubleshooting"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+
+        debug_info = {
+            'workspace_id': str(workspace.id),
+            'workspace_subscription_status': workspace.subscription_status,
+            'workspace_stripe_subscription_id': workspace.stripe_subscription_id,
+            'workspace_stripe_customer_id': workspace.stripe_customer_id,
+            'workspace_has_used_trial': workspace.has_used_trial,
+        }
+
+        # Get Stripe subscription details if available
+        if workspace.stripe_subscription_id:
+            try:
+                stripe_subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
+                debug_info['stripe_subscription'] = {
+                    'id': stripe_subscription.id,
+                    'status': stripe_subscription.status,
+                    'current_period_start': stripe_subscription.current_period_start,
+                    'current_period_end': stripe_subscription.current_period_end,
+                    'cancel_at_period_end': stripe_subscription.cancel_at_period_end,
+                    'canceled_at': getattr(stripe_subscription, 'canceled_at', None),
+                    'trial_start': getattr(stripe_subscription, 'trial_start', None),
+                    'trial_end': getattr(stripe_subscription, 'trial_end', None),
+                    'created': stripe_subscription.created,
+                }
+            except stripe.error.StripeError as e:
+                debug_info['stripe_error'] = str(e)
+        else:
+            debug_info['stripe_subscription'] = None
+
+        logger.info("🔍 Debug subscription for workspace=%s: %s", workspace.id, debug_info)
+
+        return Response(debug_info)
+
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"},
+            status=status.HTTP_404_NOT_FOUND
         )
 
 
@@ -965,6 +1094,78 @@ def resume_subscription(request, workspace_id):
         return Response(
             {"error": f"Stripe error: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@extend_schema(
+    summary="🔍 Check trial eligibility",
+    description="""
+    Check if a workspace is eligible for a 14-day trial.
+
+    **🔐 Permission Requirements**:
+    - User must be authenticated
+    - User must be a member of the workspace
+
+    **📊 Returns**:
+    - `eligible_for_trial`: Boolean indicating if workspace can start a trial
+    - `has_used_trial`: Boolean indicating if workspace has already used its trial
+    - `has_active_subscription`: Boolean indicating if workspace has active subscription
+    - `current_status`: Current subscription status (trial, active, cancelled, etc.)
+    """,
+    responses={
+        200: OpenApiResponse(
+            description="✅ Trial eligibility checked",
+            examples=[
+                OpenApiExample(
+                    'Trial Eligible',
+                    value={
+                        'eligible_for_trial': True,
+                        'has_used_trial': False,
+                        'has_active_subscription': False,
+                        'current_status': 'none'
+                    }
+                ),
+                OpenApiExample(
+                    'Trial Already Used',
+                    value={
+                        'eligible_for_trial': False,
+                        'has_used_trial': True,
+                        'has_active_subscription': False,
+                        'current_status': 'cancelled'
+                    }
+                )
+            ]
+        ),
+        404: OpenApiResponse(description="🚫 Workspace not found")
+    },
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([IsWorkspaceMember])
+def check_trial_eligibility(request, workspace_id):
+    """Check if workspace is eligible for a trial"""
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+
+        # Calculate eligibility
+        is_eligible = not workspace.has_used_trial
+        has_active = workspace.subscription_status in ['active', 'trial']
+
+        logger.info("Trial eligibility check for workspace=%s: eligible=%s, used_trial=%s, status=%s",
+                   workspace.id, is_eligible, workspace.has_used_trial, workspace.subscription_status)
+
+        return Response({
+            'eligible_for_trial': is_eligible,
+            'has_used_trial': workspace.has_used_trial,
+            'has_active_subscription': has_active,
+            'current_status': workspace.subscription_status or 'none',
+            'workspace_id': str(workspace.id)
+        })
+
+    except Workspace.DoesNotExist:
+        return Response(
+            {"error": "Workspace not found"},
+            status=status.HTTP_404_NOT_FOUND
         )
 
 
@@ -1213,6 +1414,11 @@ def stripe_webhook(request):
                 workspace.subscription_status = sub_status
                 logger.info("Setting subscription status=%s for workspace=%s", sub_status, workspace.id)
 
+                # CRITICAL: Mark trial as used when trial starts
+                if sub_status == 'trial' and not workspace.has_used_trial:
+                    workspace.has_used_trial = True
+                    logger.info("🎯 Marking trial as used for workspace=%s", workspace.id)
+
                 if subscription['items']['data']:
                     price_id = subscription['items']['data'][0]['price']['id']
                     print(f"💰 Price ID: {price_id}")
@@ -1288,6 +1494,12 @@ def stripe_webhook(request):
             workspace = Workspace.objects.get(stripe_customer_id=customer_id)
             workspace.stripe_subscription_id = subscription['id']
             workspace.subscription_status = subscription_status
+
+            # CRITICAL: Mark trial as used when trial starts (backup)
+            if subscription_status == 'trial' and not workspace.has_used_trial:
+                workspace.has_used_trial = True
+                logger.info("🎯 Marking trial as used for workspace=%s (backup)", workspace.id)
+
             # WorkspaceSubscription creation is handled by checkout.session.completed - don't duplicate here!
             workspace.save()
             logger.info("Subscription %s created for workspace %s – status=%s", subscription['id'], workspace.id, subscription_status)
