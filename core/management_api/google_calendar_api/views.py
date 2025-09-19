@@ -281,7 +281,7 @@ class GoogleCalendarAuthViewSet(viewsets.ViewSet):
             
             # Redirect to frontend with success
             from django.conf import settings
-            frontend_url = f"{settings.BASE_URL}/dashboard/calendars?connected=true"
+            frontend_url = f"{settings.BASE_URL}/dashboard/calendar"
             return redirect(frontend_url)
             
         except Exception as e:
