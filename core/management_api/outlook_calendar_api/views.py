@@ -149,10 +149,10 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
         if error:
             error_description = request.GET.get('error_description', 'Unknown error')
             logger.error(f"Outlook OAuth error: {error} - {error_description}")
-            return redirect(f"/calendar?error={error}&description={error_description}")
-        
+            return redirect(f"/dashboard/calendar?error={error}&description={error_description}")
+
         if not code or not state:
-            return redirect("/calendar?error=missing_parameters")
+            return redirect("/dashboard/calendar?error=missing_parameters")
         
         try:
             # Decode and validate state
@@ -165,16 +165,16 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             workspace_id = state_data.get('workspace_id')
             
             if not user_id or not workspace_id:
-                return redirect("/calendar?error=invalid_state")
-            
+                return redirect("/dashboard/calendar?error=invalid_state")
+
             # Validate state exists in session and retrieve code_verifier
             session_key = f'outlook_oauth_state_{state}'
             session_state = request.session.get(session_key)
             if not session_state:
-                return redirect("/calendar?error=invalid_or_expired_state")
+                return redirect("/dashboard/calendar?error=invalid_or_expired_state")
             code_verifier = session_state.get('code_verifier')
             if not code_verifier:
-                return redirect("/calendar?error=missing_code_verifier")
+                return redirect("/dashboard/calendar?error=missing_code_verifier")
 
             # One-time use: remove session entry
             try:
@@ -190,14 +190,14 @@ class OutlookCalendarAuthViewSet(viewsets.ViewSet):
             tokens = OutlookCalendarService.exchange_code_for_tokens(code, code_verifier)
             
             if not tokens or not isinstance(tokens, dict):
-                return redirect("/calendar?error=token_exchange_failed")
+                return redirect("/dashboard/calendar?error=token_exchange_failed")
 
             access_token = tokens.get('access_token')
             refresh_token = tokens.get('refresh_token')
             expires_in = int(tokens.get('expires_in', 3600))
             if not access_token or not refresh_token:
                 # Most likely missing offline_access or admin consent
-                return redirect("/calendar?error=missing_tokens&hint=consent_offline_access")
+                return redirect("/dashboard/calendar?error=missing_tokens&hint=consent_offline_access")
             
             # Get user info from tokens
             user_info = OutlookCalendarService.get_user_info(access_token)
