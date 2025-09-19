@@ -38,6 +38,11 @@ class DialerService:
         from_number: str,
         answer_timeout_s: float = 45.0,
     ) -> PlaceCallResult:
+        import logging
+        logger = logging.getLogger(__name__)
+
+        logger.info(f"DialerService.place_call_now {call_task_id}")
+
         # 1) Idempotency & status transitions
         try:
             with lock_call_task(call_task_id) as call_task:
@@ -70,6 +75,7 @@ class DialerService:
 
         # 3) Persist outcome & return
         if result.get("success"):
+            logger.info(f"DialerService.place_call_now {call_task_id} success")
             try:
                 with lock_call_task(call_task_id) as call_task:
                     call_task.status = CallStatus.IN_PROGRESS
@@ -83,6 +89,8 @@ class DialerService:
                 participant_id=result.get("participant_id"),
                 sip_call_id=result.get("sip_call_id"),
             )
+
+        logger.info(f"DialerService.place_call_now {call_task_id} failed")
 
         # Failure paths
         try:

@@ -219,6 +219,8 @@ async def _make_call_async(
                 "abort_reason": abort_reason,
             }
 
+        logger.info("Trying to dispatch agent to room")
+
         # 2) Dispatch agent to room with metadata (token can be added by caller if needed)
         try:
             dispatch = await livekit_api.agent_dispatch.create_dispatch(
@@ -229,6 +231,7 @@ async def _make_call_async(
                 )
             )
         except Exception as dispatch_error:
+            logger.error(f"Failed to dispatch agent to room: {dispatch_error}")
             return {
                 "success": False,
                 "error": f"Agent dispatch failed: {str(dispatch_error)}",
@@ -249,6 +252,8 @@ async def _make_call_async(
             participant_name=participant_name,
         )
 
+        logger.info(f"Creating SIP Participant to call {callee_phone}")
+
         # The client supports a timeout param when invoking the API call itself
         # Match previous behavior: no explicit timeout argument passed here
         participant = await livekit_api.sip.create_sip_participant(request)
@@ -264,6 +269,7 @@ async def _make_call_async(
         }
 
     except Exception as e:
+        logger.error(f"Failed to create SIP Participant: {e}")
         return {
             "success": False,
             "error": str(e),

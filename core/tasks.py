@@ -293,6 +293,8 @@ def trigger_call(self, call_task_id):
                 f"🧪 Test call detected (lead is null) - skipping quota enforcement for workspace {workspace.id}"
             )
 
+        logger.info("Placing Call now, tasks.py")
+
         # 🚀 Quota OK - Place the outbound call via DialerService
         from core.telephony.services.dialer_service import DialerService
         dialer_service = DialerService(logger)
