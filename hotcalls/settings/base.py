@@ -525,8 +525,10 @@ SIP_PROVIDER = os.getenv('SIP_PROVIDER', 'jambonz')
 # LiveKit Agent Concurrency: Managed via database (LiveKitAgent model)
 # Agent count and concurrency are now dynamic - configured via API
 # But keep environment fallbacks for backward compatibility
-NUMBER_OF_LIVEKIT_AGENTS = int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
-CONCURRENCY_PER_LIVEKIT_AGENT = int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
+
+# TODO Remove hardcoded shit
+NUMBER_OF_LIVEKIT_AGENTS = 1 #int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
+CONCURRENCY_PER_LIVEKIT_AGENT = 100 #int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
 
 # Site URL for absolute URL generation (used by multiple services)
 SITE_URL = os.getenv('BASE_URL')
