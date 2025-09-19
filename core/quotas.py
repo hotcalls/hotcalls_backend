@@ -103,15 +103,21 @@ def initialize_feature_usage_for_subscription(subscription):
         usage_container.subscription = subscription
         usage_container.save(update_fields=['subscription'])
 
-    # Create FeatureUsage records for all features in the plan
+    # Create FeatureUsage records for all features in the plan (IDEMPOTENT)
     plan_features = PlanFeature.objects.filter(plan=subscription.plan).select_related('feature')
 
+    # Get existing feature IDs to avoid duplicates
+    existing_feature_ids = set(
+        usage_container.feature_usages.values_list('feature_id', flat=True)
+    )
+
     for plan_feature in plan_features:
-        FeatureUsage.objects.get_or_create(
-            usage_record=usage_container,
-            feature=plan_feature.feature,
-            defaults={'used_amount': Decimal('0')}
-        )
+        if plan_feature.feature_id not in existing_feature_ids:
+            FeatureUsage.objects.create(
+                usage_record=usage_container,
+                feature=plan_feature.feature,
+                used_amount=Decimal('0')
+            )
 
     return usage_container
 
@@ -188,17 +194,23 @@ def get_usage_container(workspace):
         usage_container.subscription = subscription
         usage_container.save(update_fields=['subscription'])
 
-    # Ensure FeatureUsage records are initialized
-    if created:
-        from core.models import FeatureUsage, PlanFeature
-        from decimal import Decimal
+    # Ensure FeatureUsage records are initialized (IDEMPOTENT)
+    from core.models import FeatureUsage, PlanFeature
+    from decimal import Decimal
 
-        plan_features = PlanFeature.objects.filter(plan=subscription.plan).select_related('feature')
-        for plan_feature in plan_features:
-            FeatureUsage.objects.get_or_create(
+    plan_features = PlanFeature.objects.filter(plan=subscription.plan).select_related('feature')
+
+    # Get existing feature IDs to avoid duplicates
+    existing_feature_ids = set(
+        usage_container.feature_usages.values_list('feature_id', flat=True)
+    )
+
+    for plan_feature in plan_features:
+        if plan_feature.feature_id not in existing_feature_ids:
+            FeatureUsage.objects.create(
                 usage_record=usage_container,
                 feature=plan_feature.feature,
-                defaults={'used_amount': Decimal('0')}
+                used_amount=Decimal('0')
             )
 
     return usage_container

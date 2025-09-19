@@ -605,12 +605,12 @@ class WorkspaceUsageAdmin(ShowPkMixin, admin.ModelAdmin):
     get_features_count.short_description = 'Features Used'
 
     def get_subscription_status(self, obj):
+        from django.utils.html import format_html
         status = "Active" if obj.subscription.is_active else "Inactive"
         color = "green" if obj.subscription.is_active else "red"
-        return f'<span style="color: {color}; font-weight: bold;">{status}</span>'
+        return format_html('<span style="color: {}; font-weight: bold;">{}</span>', color, status)
     get_subscription_status.short_description = 'Status'
     get_subscription_status.admin_order_field = 'subscription__is_active'
-    get_subscription_status.allow_tags = True
 
     def changelist_view(self, request, extra_context=None):
         """Add context to show filter status"""
