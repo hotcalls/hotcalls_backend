@@ -19,17 +19,14 @@ ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
 # Log which settings module is being used
 logger.info(f"Loading {__name__} settings module for ENVIRONMENT={ENVIRONMENT}")
 
-# Only load .env file in development environment
-# In staging/production, Kubernetes provides all environment variables via secrets
-if ENVIRONMENT == 'development':
-    try:
-        load_dotenv()
-        logger.info("Development environment: Loaded .env file")
-    except Exception as e:
-        logger.warning(f"Failed to load .env file: {str(e)}")
-        logger.warning("Continuing with environment variables")
-else:
-    logger.info(f"{ENVIRONMENT.capitalize()} environment: Using environment variables from Kubernetes secrets, not .env file")
+# Load .env file in all environments as fallback
+# In staging/production, explicit environment variables will override .env
+try:
+    load_dotenv()
+    logger.info(f"{ENVIRONMENT} environment: Loaded .env file as fallback")
+except Exception as e:
+    logger.warning(f"Failed to load .env file: {str(e)}")
+    logger.warning("Continuing with environment variables only")
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
