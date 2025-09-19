@@ -1,5 +1,6 @@
 import stripe
 from django.db import transaction
+from django.utils import timezone
 import logging
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, authentication_classes
@@ -909,6 +910,8 @@ def get_subscription_status(request, workspace_id):
 @permission_classes([IsWorkspaceMember])
 def cancel_subscription(request, workspace_id):
     """Cancel workspace subscription"""
+    # 🚨 DEBUGGING: This proves our new code is loaded - Version 2025-09-19
+    logger.info("🚨 NEW CANCELLATION CODE LOADED - Version 2025-09-19 - workspace_id=%s", workspace_id)
     try:
         workspace = Workspace.objects.get(id=workspace_id)
 
@@ -990,6 +993,24 @@ def cancel_subscription(request, workspace_id):
             {"error": f"Unexpected error: {str(e)}"},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@extend_schema(
+    summary="🧪 Test backend deployment",
+    description="Simple test endpoint to verify backend code deployment and logging.",
+    responses={200: OpenApiResponse(description="✅ Backend is working")},
+    tags=["Payment Management"]
+)
+@api_view(['GET'])
+@permission_classes([])
+def test_backend_deployment(request):
+    """Test if backend code changes are deployed"""
+    logger.info("🧪 BACKEND TEST ENDPOINT HIT - Code version 2025-09-19")
+    return Response({
+        'message': 'Backend is working',
+        'version': '2025-09-19',
+        'timestamp': timezone.now().isoformat() if hasattr(timezone, 'now') else 'unknown'
+    })
 
 
 @extend_schema(

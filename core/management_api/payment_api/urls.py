@@ -15,6 +15,7 @@ from .views import (
     check_workspace_subscription,
     check_trial_eligibility,
     debug_subscription_status,
+    test_backend_deployment,
     get_workspace_usage_status,
     purchase_minute_pack
 )
@@ -38,9 +39,14 @@ urlpatterns = [
          name='retrieve-stripe-customer'),
     
     # Stripe webhook
-    path('stripe/webhook/', 
-         stripe_webhook, 
+    path('stripe/webhook/',
+         stripe_webhook,
          name='stripe-webhook'),
+
+    # Test endpoint
+    path('test-deployment/',
+         test_backend_deployment,
+         name='test-backend-deployment'),
 
     # Stripe products
     path('stripe/products/', 
