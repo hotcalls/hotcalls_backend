@@ -924,14 +924,48 @@ def cancel_subscription(request, workspace_id):
         # Get current subscription to check if it's a trial
         subscription = stripe.Subscription.retrieve(workspace.stripe_subscription_id)
 
+        # Check if already cancelled
+        if subscription.cancel_at_period_end:
+            logger.info("⚠️ Subscription already marked for cancellation at period end for workspace=%s", workspace.id)
+            return Response({
+                'message': 'Subscription already scheduled for cancellation',
+                'cancel_at': subscription.current_period_end,
+                'immediate_cancellation': False,
+                'was_trial': subscription.status == 'trialing',
+                'already_cancelled': True
+            })
+
         # Debug logging to understand what we're dealing with
-        logger.info("🔍 Cancellation check: stripe_status=%s, workspace_status=%s, workspace_id=%s",
-                   subscription.status, workspace.subscription_status, workspace.id)
+        logger.info("🔍 Cancellation check: stripe_status=%s, workspace_status=%s, workspace_id=%s, trial_end=%s, created=%s",
+                   subscription.status, workspace.subscription_status, workspace.id,
+                   getattr(subscription, 'trial_end', None), getattr(subscription, 'created', None))
 
         # CRITICAL FIX: Check for trial status in multiple ways
         # 1. Stripe status is 'trialing'
         # 2. OR our workspace status is 'trial'
-        is_trial = (subscription.status == 'trialing' or workspace.subscription_status == 'trial')
+        # Enhanced trial detection logic
+        now = timezone.now().timestamp()
+        trial_end_ts = getattr(subscription, 'trial_end', None)
+        created_ts = getattr(subscription, 'created', None)
+
+        is_currently_trialing = subscription.status == 'trialing'
+        is_workspace_trial = workspace.subscription_status == 'trial'
+        is_trial_period_active = trial_end_ts and trial_end_ts > now
+        is_recent_subscription = created_ts and (now - created_ts) < (15 * 24 * 60 * 60)  # 15 days
+
+        # Check if subscription has any successful payments (indicates it's not a trial)
+        try:
+            invoices = stripe.Invoice.list(subscription=subscription.id, limit=10)
+            has_paid_invoices = any(inv.status == 'paid' and inv.amount_paid > 0 for inv in invoices.data)
+        except:
+            has_paid_invoices = False
+
+        is_trial = (is_currently_trialing or is_workspace_trial or
+                   (is_trial_period_active and not has_paid_invoices) or
+                   (is_recent_subscription and not has_paid_invoices))
+
+        logger.info("🔍 Trial detection: currently_trialing=%s, workspace_trial=%s, trial_period_active=%s, recent_sub=%s, has_paid=%s, final_is_trial=%s",
+                   is_currently_trialing, is_workspace_trial, is_trial_period_active, is_recent_subscription, has_paid_invoices, is_trial)
 
         if is_trial:
             # IMMEDIATE cancellation for trials (no charge)
