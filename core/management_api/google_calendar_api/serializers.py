@@ -49,15 +49,20 @@ class GoogleSubAccountSerializer(serializers.ModelSerializer):
     """Serializer for GoogleSubAccount model"""
     main_account_email = serializers.CharField(source='google_calendar.account_email', read_only=True)
     calendar_id = serializers.UUIDField(source='google_calendar.calendar.id', read_only=True)
-    calendar_name = serializers.CharField(source='google_calendar.calendar.name', read_only=True)
+    main_calendar_name = serializers.CharField(source='google_calendar.calendar.name', read_only=True)
     workspace_id = serializers.UUIDField(source='google_calendar.calendar.workspace.id', read_only=True)
+    display_name = serializers.SerializerMethodField()
+
+    def get_display_name(self, obj):
+        """Return calendar_name if available, otherwise fall back to act_as_email"""
+        return obj.calendar_name or obj.act_as_email
     
     class Meta:
         model = GoogleSubAccount
         fields = [
             'id', 'google_calendar', 'act_as_email', 'act_as_user_id', 'relationship',
-            'active', 'main_account_email', 'calendar_id', 'calendar_name', 
-            'workspace_id', 'created_at', 'updated_at'
+            'active', 'main_account_email', 'calendar_id', 'calendar_name', 'main_calendar_name',
+            'display_name', 'workspace_id', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     

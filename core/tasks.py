@@ -825,6 +825,7 @@ def cleanup_orphan_router_subaccounts(self):
     )
     from django.db import transaction
 
+
     checked_subaccounts = 0
     deleted_subaccounts = 0
     deleted_event_types = 0
@@ -947,18 +948,30 @@ def refresh_calendar_subaccounts(self):
                 else:
                     relationship = 'shared'
                 
+                # Get calendar summary for human-readable name
+                cal_summary = cal_entry.get('summary', '')
+
                 # Create sub-account if it doesn't exist
-                _, created = GoogleSubAccount.objects.get_or_create(
+                sub_account, created = GoogleSubAccount.objects.get_or_create(
                     google_calendar=google_cal,
                     act_as_email=cal_id,
                     defaults={
                         'relationship': relationship,
-                        'active': True
+                        'active': True,
+                        'calendar_name': cal_summary
                     }
                 )
+
+                # Update calendar name if it changed (even for existing sub-accounts)
+                if not created and sub_account.calendar_name != cal_summary:
+                    sub_account.calendar_name = cal_summary
+                    sub_account.save(update_fields=['calendar_name'])
+
                 if created:
                     results['google']['new_subaccounts'] += 1
-                    logger.info(f"Created new Google sub-account: {cal_id}")
+                    logger.info(f"Created new Google sub-account: {cal_summary} ({cal_id})")
+                elif sub_account.calendar_name != cal_summary:
+                    logger.info(f"Updated calendar name for {cal_id}: {cal_summary}")
                     
         except Exception as e:
             results['google']['errors'].append({
