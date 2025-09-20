@@ -113,10 +113,23 @@ def initialize_feature_usage_for_subscription(subscription):
 
     for plan_feature in plan_features:
         if plan_feature.feature_id not in existing_feature_ids:
+            # Calculate initial usage based on feature type
+            initial_usage = Decimal('0')
+
+            # For capacity limits, count existing entities
+            if plan_feature.feature.feature_name == 'max_agents':
+                from core.models import Agent
+                agent_count = Agent.objects.filter(workspace=subscription.workspace).count()
+                initial_usage = Decimal(str(agent_count))
+            elif plan_feature.feature.feature_name == 'max_users':
+                user_count = subscription.workspace.users.count()
+                initial_usage = Decimal(str(user_count))
+            # For consumption features (call_minutes, etc.), start at 0
+
             FeatureUsage.objects.create(
                 usage_record=usage_container,
                 feature=plan_feature.feature,
-                used_amount=Decimal('0')
+                used_amount=initial_usage
             )
 
     return usage_container
