@@ -126,29 +126,9 @@ class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
             except Exception:
                 workspace = None
 
-            # Assign Enterprise (max) plan and active subscription
-            if workspace is not None:
-                try:
-                    from core.models import Plan, WorkspaceSubscription
-                    enterprise_plan, _ = Plan.objects.get_or_create(
-                        plan_name='Enterprise',
-                        defaults={'price_monthly': None, 'is_active': True}
-                    )
-                    # Create active subscription if none exists
-                    if not WorkspaceSubscription.objects.filter(workspace=workspace, is_active=True).exists():
-                        WorkspaceSubscription.objects.create(
-                            workspace=workspace,
-                            plan=enterprise_plan,
-                            started_at=timezone.now(),
-                            is_active=True,
-                        )
-                    # Set current_plan on workspace
-                    if getattr(workspace, 'current_plan', None) != enterprise_plan:
-                        workspace.current_plan = enterprise_plan
-                        workspace.save(update_fields=['current_plan'])
-                except Exception:
-                    # Do not break admin save if plan assignment fails
-                    pass
+            # REMOVED: No longer auto-assign Enterprise plan when admin creates user
+            # Plans should only be assigned after successful Stripe checkout
+            # This was causing duplicate WorkspaceSubscription records
 
 
 @admin.register(Voice)

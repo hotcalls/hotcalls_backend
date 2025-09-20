@@ -218,26 +218,13 @@ class CustomUserManager(BaseUserManager):
                 # Do not break superuser setup on unexpected assignment issues
                 pass
             
-            # Get or create Enterprise plan
-            enterprise_plan, created = Plan.objects.get_or_create(
-                plan_name='Enterprise',
-                defaults={
-                    'price_monthly': None,  # Custom pricing
-                    'is_active': True
-                }
-            )
-            
-            # Create active subscription for the workspace
-            WorkspaceSubscription.objects.create(
-                workspace=workspace,
-                plan=enterprise_plan,
-                started_at=timezone.now(),
-                is_active=True
-            )
-            
+            # REMOVED: No longer auto-assign Enterprise plan during superuser creation
+            # Plans should only be assigned after successful Stripe checkout
+            # This was causing duplicate WorkspaceSubscription records
+
             import logging
             logger = logging.getLogger(__name__)
-            logger.info(f"Superuser {user.email} automatically assigned Enterprise plan in workspace '{workspace.workspace_name}'")
+            logger.info(f"Created workspace '{workspace.workspace_name}' for superuser {user.email} (no plan assigned)")
             
         except Exception as e:
             import logging
