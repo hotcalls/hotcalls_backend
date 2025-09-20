@@ -621,6 +621,27 @@ class AgentViewSet(viewsets.ModelViewSet):
         serializer = AgentConfigSerializer(agent)
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        Delete agent with protection to prevent deletion of last agent in workspace
+        """
+        agent = self.get_object()
+        workspace = agent.workspace
+
+        # Check if this is the last agent in the workspace
+        agent_count = Agent.objects.filter(workspace=workspace).count()
+        if agent_count <= 1:
+            return Response(
+                {
+                    "detail": "Cannot delete the last agent. Each workspace must have at least one agent.",
+                    "error_code": "last_agent_deletion_prohibited"
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Proceed with deletion
+        return super().destroy(request, *args, **kwargs)
+
 
 @extend_schema_view(
     list=extend_schema(

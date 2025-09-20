@@ -2265,7 +2265,7 @@ class CallTask(models.Model):
 
 
 # Signal handlers for eager FeatureUsage initialization
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 
 
@@ -2290,4 +2290,99 @@ def initialize_subscription_usage(sender, instance, created, **kwargs):
             import logging
             logger = logging.getLogger(__name__)
             logger.error("Failed to initialize FeatureUsage for subscription %s: %s", instance, str(e))
-    
+
+
+@receiver(post_save, sender=Agent)
+def handle_agent_creation(sender, instance, created, **kwargs):
+    """
+    Track agent creation in usage system (backup to middleware).
+    This ensures agent usage is recorded even if middleware misses it.
+    """
+    if created:
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            # Get the current agent count for the workspace
+            current_count = Agent.objects.filter(workspace=instance.workspace).count()
+
+            # Update the usage counter to reflect the new agent count
+            from core.quotas import get_usage_container, current_billing_window
+            from core.models import FeatureUsage
+            from decimal import Decimal
+
+            # Get current billing period
+            subscription = WorkspaceSubscription.objects.filter(
+                workspace=instance.workspace,
+                is_active=True
+            ).first()
+
+            if subscription:
+                period_start, period_end = current_billing_window(subscription)
+
+                # Get or create usage container
+                usage_container = get_usage_container(instance.workspace)
+
+                # Find the agent count feature usage
+                max_agents_feature = Feature.objects.filter(feature_name='max_agents').first()
+                if max_agents_feature:
+                    feature_usage, created = FeatureUsage.objects.get_or_create(
+                        usage_record=usage_container,
+                        feature=max_agents_feature,
+                        defaults={'used_amount': Decimal(str(current_count))}
+                    )
+
+                    if not created:
+                        # Update to current count (idempotent)
+                        feature_usage.used_amount = Decimal(str(current_count))
+                        feature_usage.save(update_fields=['used_amount'])
+
+                    logger.info(f"Updated agent count usage to {current_count} for workspace {instance.workspace.id}")
+
+        except Exception as e:
+            logger.warning(f"Failed to track agent creation for workspace {instance.workspace.id}: {e}")
+
+
+@receiver(post_delete, sender=Agent)
+def handle_agent_deletion(sender, instance, **kwargs):
+    """
+    Handle agent deletion - update usage counters and ensure minimum agent requirement.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    try:
+        workspace = instance.workspace
+
+        # Get remaining agent count after deletion
+        remaining_count = Agent.objects.filter(workspace=workspace).count()
+
+        # Update the usage counter to reflect the current agent count
+        from core.quotas import get_usage_container
+        from core.models import FeatureUsage
+        from decimal import Decimal
+
+        # Get current usage container
+        usage_container = get_usage_container(workspace)
+
+        # Find the agent count feature usage
+        max_agents_feature = Feature.objects.filter(feature_name='max_agents').first()
+        if max_agents_feature:
+            feature_usage = FeatureUsage.objects.filter(
+                usage_record=usage_container,
+                feature=max_agents_feature
+            ).first()
+
+            if feature_usage:
+                # Update to current count
+                feature_usage.used_amount = Decimal(str(remaining_count))
+                feature_usage.save(update_fields=['used_amount'])
+
+                logger.info(f"Updated agent count usage to {remaining_count} for workspace {workspace.id}")
+
+        # Log if workspace now has 0 agents (this should be prevented by API validation)
+        if remaining_count == 0:
+            logger.error(f"WARNING: Workspace {workspace.id} now has 0 agents! This violates minimum requirement.")
+
+    except Exception as e:
+        logger.warning(f"Failed to track agent deletion: {e}")
+
