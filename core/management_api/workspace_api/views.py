@@ -420,7 +420,7 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "You do not have permission to perform this action."}, status=status.HTTP_403_FORBIDDEN)
 
         # If there is an active/chargeable subscription, require cancellation first
-        active_statuses = {"active", "past_due", "unpaid"}
+        active_statuses = {"trial", "active", "past_due", "unpaid"}
         if (
             getattr(workspace, "stripe_subscription_id", None)
             and getattr(workspace, "subscription_status", "none") in active_statuses
