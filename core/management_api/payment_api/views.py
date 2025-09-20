@@ -1534,22 +1534,32 @@ def stripe_webhook(request):
                     if plan:
                         # Create WorkspaceSubscription record (this is what the quota system expects!)
                         from datetime import datetime, timezone
-                        
-                        # Deactivate any existing subscriptions
-                        WorkspaceSubscription.objects.filter(
-                            workspace=workspace,
-                            is_active=True
-                        ).update(is_active=False)
-                        
-                        # Create new active subscription
-                        WorkspaceSubscription.objects.create(
+
+                        # IDEMPOTENCY: Check if subscription already exists for this workspace+plan combination
+                        existing_subscription = WorkspaceSubscription.objects.filter(
                             workspace=workspace,
                             plan=plan,
-                            started_at=datetime.now(timezone.utc),
                             is_active=True
-                        )
-                        
-                        logger.info("Created WorkspaceSubscription plan=%s for workspace=%s", plan.plan_name, workspace.id)
+                        ).first()
+
+                        if existing_subscription:
+                            logger.info("WorkspaceSubscription already exists for workspace=%s plan=%s, skipping creation",
+                                       workspace.id, plan.plan_name)
+                        else:
+                            # Deactivate any existing subscriptions with different plans
+                            WorkspaceSubscription.objects.filter(
+                                workspace=workspace,
+                                is_active=True
+                            ).update(is_active=False)
+
+                            # Create new active subscription
+                            WorkspaceSubscription.objects.create(
+                                workspace=workspace,
+                                plan=plan,
+                                started_at=datetime.now(timezone.utc),
+                                is_active=True
+                            )
+                            logger.info("Created WorkspaceSubscription plan=%s for workspace=%s", plan.plan_name, workspace.id)
                     else:
                         logger.warning("No plan found for price_id=%s", price_id)
                 

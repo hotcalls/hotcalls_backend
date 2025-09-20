@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from core.models import WorkspaceSubscription, Workspace
+from core.models import WorkspaceSubscription, Workspace, WorkspaceUsage
 from django.utils import timezone
 import logging
 
@@ -61,9 +61,11 @@ class Command(BaseCommand):
             self.stdout.write(f"  Active subscriptions: {item['active_count']}")
 
             for i, sub in enumerate(subscriptions):
+                # Check for WorkspaceUsage records that would prevent deletion
+                usage_count = WorkspaceUsage.objects.filter(subscription=sub).count()
                 self.stdout.write(
                     f"    {i+1}. Plan: {sub.plan.plan_name}, Created: {sub.created_at}, "
-                    f"Started: {sub.started_at}"
+                    f"Started: {sub.started_at}, WorkspaceUsage: {usage_count}"
                 )
 
         if not fix_active:
@@ -100,13 +102,24 @@ class Command(BaseCommand):
             )
 
             for sub in deactivate_subscriptions:
+                usage_count = WorkspaceUsage.objects.filter(subscription=sub).count()
                 self.stdout.write(
                     f"  Deactivating: {sub.plan.plan_name} "
-                    f"(created {sub.created_at})"
+                    f"(created {sub.created_at}) - WorkspaceUsage: {usage_count}"
                 )
 
                 if not dry_run:
                     with transaction.atomic():
+                        # If there are WorkspaceUsage records, reassign them to the kept subscription
+                        if usage_count > 0:
+                            self.stdout.write(
+                                f"    Reassigning {usage_count} WorkspaceUsage records to kept subscription"
+                            )
+                            WorkspaceUsage.objects.filter(subscription=sub).update(
+                                subscription=keep_subscription
+                            )
+
+                        # Now we can safely deactivate the subscription
                         sub.is_active = False
                         sub.save()
 
