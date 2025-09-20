@@ -286,7 +286,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     phone = models.CharField(
         max_length=50,
-        help_text="Phone number in international format"
+        unique=True,
+        help_text="Phone number in international format (unique per user)"
     )
     
     # System fields
@@ -336,11 +337,17 @@ class User(AbstractBaseUser, PermissionsMixin):
         null=True,
         help_text="When the user last logged in"
     )
-    
+
+    # Trial tracking (prevents infinite trial abuse across workspaces)
+    has_used_trial = models.BooleanField(
+        default=False,
+        help_text="Whether this user has ever used a trial period (lifetime limit)"
+    )
+
     # Use email as the username field
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['first_name', 'last_name']
-    
+
     objects = CustomUserManager()
     
     class Meta:

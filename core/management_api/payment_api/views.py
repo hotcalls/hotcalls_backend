@@ -542,8 +542,8 @@ def create_checkout_session(request):
 
         # Do NOT cancel existing subscriptions here. Plan changes should be handled via the dedicated change-plan endpoint or the billing portal.
 
-        # Check trial eligibility
-        is_trial_eligible = not workspace.has_used_trial
+        # Check trial eligibility (per user, not per workspace - prevents infinite trial abuse)
+        is_trial_eligible = not request.user.has_used_trial
 
         # Create checkout session - customer will be created automatically if needed
         session_params = {
@@ -1248,16 +1248,16 @@ def check_trial_eligibility(request, workspace_id):
     try:
         workspace = Workspace.objects.get(id=workspace_id)
 
-        # Calculate eligibility
-        is_eligible = not workspace.has_used_trial
+        # Calculate eligibility (per user, not per workspace - prevents infinite trial abuse)
+        is_eligible = not request.user.has_used_trial
         has_active = workspace.subscription_status in ['active', 'trial']
 
-        logger.info("Trial eligibility check for workspace=%s: eligible=%s, used_trial=%s, status=%s",
-                   workspace.id, is_eligible, workspace.has_used_trial, workspace.subscription_status)
+        logger.info("Trial eligibility check for user=%s workspace=%s: eligible=%s, user_used_trial=%s, status=%s",
+                   request.user.id, workspace.id, is_eligible, request.user.has_used_trial, workspace.subscription_status)
 
         return Response({
             'eligible_for_trial': is_eligible,
-            'has_used_trial': workspace.has_used_trial,
+            'has_used_trial': request.user.has_used_trial,
             'has_active_subscription': has_active,
             'current_status': workspace.subscription_status or 'none',
             'workspace_id': str(workspace.id)
@@ -1515,10 +1515,11 @@ def stripe_webhook(request):
                 workspace.subscription_status = sub_status
                 logger.info("Setting subscription status=%s for workspace=%s", sub_status, workspace.id)
 
-                # CRITICAL: Mark trial as used when trial starts
-                if sub_status == 'trial' and not workspace.has_used_trial:
-                    workspace.has_used_trial = True
-                    logger.info("🎯 Marking trial as used for workspace=%s", workspace.id)
+                # CRITICAL: Mark trial as used when trial starts (per user to prevent abuse)
+                if sub_status == 'trial' and workspace.admin_user and not workspace.admin_user.has_used_trial:
+                    workspace.admin_user.has_used_trial = True
+                    workspace.admin_user.save()
+                    logger.info("🎯 Marking trial as used for user=%s (workspace=%s)", workspace.admin_user.id, workspace.id)
 
                 if subscription['items']['data']:
                     price_id = subscription['items']['data'][0]['price']['id']
@@ -1606,10 +1607,11 @@ def stripe_webhook(request):
             workspace.stripe_subscription_id = subscription['id']
             workspace.subscription_status = subscription_status
 
-            # CRITICAL: Mark trial as used when trial starts (backup)
-            if subscription_status == 'trial' and not workspace.has_used_trial:
-                workspace.has_used_trial = True
-                logger.info("🎯 Marking trial as used for workspace=%s (backup)", workspace.id)
+            # CRITICAL: Mark trial as used when trial starts (per user to prevent abuse - backup)
+            if subscription_status == 'trial' and workspace.admin_user and not workspace.admin_user.has_used_trial:
+                workspace.admin_user.has_used_trial = True
+                workspace.admin_user.save()
+                logger.info("🎯 Marking trial as used for user=%s (workspace=%s - backup)", workspace.admin_user.id, workspace.id)
 
             # WorkspaceSubscription creation is handled by checkout.session.completed - don't duplicate here!
             workspace.save()

@@ -289,7 +289,7 @@ class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
     inlines = [WorkspaceSubscriptionInline, CalendarInline]
     
     def get_active_subscription(self, obj):
-        active_subscription = obj.get_active_subscription()
+        active_subscription = obj.current_subscription
         return active_subscription.plan.plan_name if active_subscription else 'No Active Subscription'
     get_active_subscription.short_description = 'Active Subscription'
     
