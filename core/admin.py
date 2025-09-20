@@ -282,16 +282,16 @@ class PlanAdmin(ShowPkMixin, admin.ModelAdmin):
 
 @admin.register(Workspace)
 class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
-    list_display = ('workspace_name', 'get_current_plan', 'get_calendars_count', 'created_at', 'updated_at')
+    list_display = ('workspace_name', 'get_active_subscription', 'get_calendars_count', 'created_at', 'updated_at')
     search_fields = ('workspace_name',)
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
     inlines = [WorkspaceSubscriptionInline, CalendarInline]
     
-    def get_current_plan(self, obj):
-        current_plan = obj.current_plan
-        return current_plan.plan_name if current_plan else 'No Plan'
-    get_current_plan.short_description = 'Current Plan'
+    def get_active_subscription(self, obj):
+        active_subscription = obj.get_active_subscription()
+        return active_subscription.plan.plan_name if active_subscription else 'No Active Subscription'
+    get_active_subscription.short_description = 'Active Subscription'
     
     def get_calendars_count(self, obj):
         return obj.calendars.count()

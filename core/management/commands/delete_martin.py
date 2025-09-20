@@ -74,11 +74,8 @@ class Command(BaseCommand):
                 subscriptions.delete()
                 self.stdout.write(f'    ✅ Deleted {sub_count} subscription records')
                 
-                # Step 6: Clear any direct plan references
-                if hasattr(workspace, 'current_plan') and workspace.current_plan:
-                    workspace.current_plan = None
-                    workspace.save()
-                    self.stdout.write('    ✅ Cleared workspace plan reference')
+                # Step 6: Clear workspace references (current_plan field removed)
+                # No additional cleanup needed - WorkspaceSubscription handles plan relationships
                 
                 # Step 7: Delete the workspace
                 workspace_name = workspace.workspace_name

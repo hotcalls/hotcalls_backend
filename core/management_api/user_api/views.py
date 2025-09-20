@@ -442,10 +442,10 @@ class UserViewSet(viewsets.ModelViewSet):
             .filter(member_count=1)
         )
 
-        # Active/chargeable subscriptions in admin workspaces
+        # Active/chargeable subscriptions in admin workspaces (including trials)
         active_admin_ws = admin_ws.filter(
             stripe_subscription_id__isnull=False,
-            subscription_status__in=['active', 'past_due', 'unpaid']
+            subscription_status__in=['trial', 'active', 'past_due', 'unpaid']
         )
 
         if admin_ws.exists() or sole_ws.exists() or active_admin_ws.exists():

@@ -605,15 +605,7 @@ class Workspace(models.Model):
     )
     
 
-    # Subscription
-    current_plan = models.ForeignKey(
-        'Plan',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='workspaces',
-        help_text="Current subscription plan"
-    )
+    # Subscription (Plan tracking handled by WorkspaceSubscription model and Stripe)
     
     # Trial tracking
     has_used_trial = models.BooleanField(
@@ -638,6 +630,7 @@ class Workspace(models.Model):
     # NEW: Track current subscription status (mirrors Stripe)
     SUBSCRIPTION_STATUS_CHOICES = [
         ('none', 'None'),
+        ('trial', 'Trial'),
         ('active', 'Active'),
         ('past_due', 'Past Due'),
         ('unpaid', 'Unpaid'),
