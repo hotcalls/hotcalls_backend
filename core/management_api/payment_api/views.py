@@ -1107,7 +1107,6 @@ def debug_subscription_status(request, workspace_id):
             'workspace_subscription_status': workspace.subscription_status,
             'workspace_stripe_subscription_id': workspace.stripe_subscription_id,
             'workspace_stripe_customer_id': workspace.stripe_customer_id,
-            'workspace_has_used_trial': workspace.has_used_trial,
         }
 
         # Get Stripe subscription details if available
@@ -1209,7 +1208,7 @@ def resume_subscription(request, workspace_id):
 
     **📊 Returns**:
     - `eligible_for_trial`: Boolean indicating if workspace can start a trial
-    - `has_used_trial`: Boolean indicating if workspace has already used its trial
+    - `has_used_trial`: Boolean indicating if user has already used their trial
     - `has_active_subscription`: Boolean indicating if workspace has active subscription
     - `current_status`: Current subscription status (trial, active, cancelled, etc.)
     """,
@@ -1221,7 +1220,7 @@ def resume_subscription(request, workspace_id):
                     'Trial Eligible',
                     value={
                         'eligible_for_trial': True,
-                        'has_used_trial': False,
+                        'has_used_trial': request.user.has_used_trial,
                         'has_active_subscription': False,
                         'current_status': 'none'
                     }
@@ -1230,7 +1229,7 @@ def resume_subscription(request, workspace_id):
                     'Trial Already Used',
                     value={
                         'eligible_for_trial': False,
-                        'has_used_trial': True,
+                        'has_used_trial': request.user.has_used_trial,
                         'has_active_subscription': False,
                         'current_status': 'cancelled'
                     }
@@ -1515,11 +1514,16 @@ def stripe_webhook(request):
                 workspace.subscription_status = sub_status
                 logger.info("Setting subscription status=%s for workspace=%s", sub_status, workspace.id)
 
-                # CRITICAL: Mark trial as used when trial starts (per user to prevent abuse)
-                if sub_status == 'trial' and workspace.admin_user and not workspace.admin_user.has_used_trial:
-                    workspace.admin_user.has_used_trial = True
-                    workspace.admin_user.save()
-                    logger.info("🎯 Marking trial as used for user=%s (workspace=%s)", workspace.admin_user.id, workspace.id)
+                # CRITICAL: Mark trial as used when trial starts (prevent workspace-level trial abuse)
+                if sub_status == 'trial':
+                    workspace_users = workspace.users.all()
+                    any_user_used_trial = workspace_users.filter(has_used_trial=True).exists()
+
+                    if not any_user_used_trial:
+                        # Mark ALL workspace users as having used trial
+                        workspace_users.update(has_used_trial=True)
+                        user_ids = list(workspace_users.values_list('id', flat=True))
+                        logger.info("🎯 Marked trial as used for ALL users %s in workspace=%s", user_ids, workspace.id)
 
                 if subscription['items']['data']:
                     price_id = subscription['items']['data'][0]['price']['id']
@@ -1607,11 +1611,16 @@ def stripe_webhook(request):
             workspace.stripe_subscription_id = subscription['id']
             workspace.subscription_status = subscription_status
 
-            # CRITICAL: Mark trial as used when trial starts (per user to prevent abuse - backup)
-            if subscription_status == 'trial' and workspace.admin_user and not workspace.admin_user.has_used_trial:
-                workspace.admin_user.has_used_trial = True
-                workspace.admin_user.save()
-                logger.info("🎯 Marking trial as used for user=%s (workspace=%s - backup)", workspace.admin_user.id, workspace.id)
+            # CRITICAL: Mark trial as used when trial starts (prevent workspace-level trial abuse - backup)
+            if subscription_status == 'trial':
+                workspace_users = workspace.users.all()
+                any_user_used_trial = workspace_users.filter(has_used_trial=True).exists()
+
+                if not any_user_used_trial:
+                    # Mark ALL workspace users as having used trial
+                    workspace_users.update(has_used_trial=True)
+                    user_ids = list(workspace_users.values_list('id', flat=True))
+                    logger.info("🎯 Marked trial as used for ALL users %s in workspace=%s (backup)", user_ids, workspace.id)
 
             # WorkspaceSubscription creation is handled by checkout.session.completed - don't duplicate here!
             workspace.save()

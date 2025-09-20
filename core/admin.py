@@ -76,6 +76,9 @@ class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
         ('Custom Fields', {
             'fields': ('status', 'stripe_customer_id', 'social_id', 'social_provider')
         }),
+        ('Trial Status', {
+            'fields': ('has_used_trial',)
+        }),
     )
     
     # Form fieldsets for adding new users
@@ -89,6 +92,9 @@ class CustomUserAdmin(ShowPkMixin, BaseUserAdmin):
         }),
         ('Custom Fields', {
             'fields': ('status', 'stripe_customer_id', 'social_id', 'social_provider'),
+        }),
+        ('Trial Status', {
+            'fields': ('has_used_trial',)
         }),
     )
     
@@ -287,12 +293,29 @@ class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
     filter_horizontal = ('users',)
     ordering = ('workspace_name',)
     inlines = [WorkspaceSubscriptionInline, CalendarInline]
-    
+
+    fieldsets = (
+        ('Workspace Info', {
+            'fields': ('workspace_name', 'admin_user', 'users')
+        }),
+        ('Subscription Status', {
+            'fields': ('subscription_status', 'stripe_customer_id', 'stripe_subscription_id')
+        }),
+        ('Settings', {
+            'fields': ('timezone', 'meta_webhook_verified')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+    readonly_fields = ('created_at', 'updated_at')
+
     def get_active_subscription(self, obj):
         active_subscription = obj.current_subscription
         return active_subscription.plan.plan_name if active_subscription else 'No Active Subscription'
     get_active_subscription.short_description = 'Active Subscription'
-    
+
     def get_calendars_count(self, obj):
         return obj.calendars.count()
     get_calendars_count.short_description = 'Calendars'

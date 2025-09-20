@@ -614,12 +614,6 @@ class Workspace(models.Model):
 
     # Subscription (Plan tracking handled by WorkspaceSubscription model and Stripe)
     
-    # Trial tracking
-    has_used_trial = models.BooleanField(
-        default=False,
-        help_text="Whether this workspace has used their trial period"
-    )
-    
     # Stripe integration
     stripe_customer_id = models.CharField(
         max_length=255, 
@@ -632,7 +626,7 @@ class Workspace(models.Model):
         blank=True,
         null=True,
         help_text="Current Stripe Subscription ID (sub_xxx)"
-    )
+)
 
     # NEW: Track current subscription status (mirrors Stripe)
     SUBSCRIPTION_STATUS_CHOICES = [
