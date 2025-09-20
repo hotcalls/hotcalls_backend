@@ -616,7 +616,7 @@ class Workspace(models.Model):
     
     # Stripe integration
     stripe_customer_id = models.CharField(
-    max_length=255, 1§WQW   WΩ√Ω Ω
+    max_length=255,
         blank=True, 
         null=True,
         help_text="Stripe Customer ID for billing"
