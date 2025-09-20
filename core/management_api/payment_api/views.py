@@ -1220,7 +1220,7 @@ def resume_subscription(request, workspace_id):
                     'Trial Eligible',
                     value={
                         'eligible_for_trial': True,
-                        'has_used_trial': request.user.has_used_trial,
+                        'has_used_trial': False,
                         'has_active_subscription': False,
                         'current_status': 'none'
                     }
@@ -1229,7 +1229,7 @@ def resume_subscription(request, workspace_id):
                     'Trial Already Used',
                     value={
                         'eligible_for_trial': False,
-                        'has_used_trial': request.user.has_used_trial,
+                        'has_used_trial': True,
                         'has_active_subscription': False,
                         'current_status': 'cancelled'
                     }
