@@ -19,8 +19,8 @@ class WebhookLeadIncomeRequestSerializer(serializers.Serializer):
         return validated
 
 class WebhookCreateRequestSerializer(serializers.Serializer):
-    workspaceId = serializers.UUIDField(source='workspace_id')
-    webhookName = serializers.CharField(max_length=255, source='webhook_name')
+    workspace_id = serializers.UUIDField()
+    webhook_name = serializers.CharField(max_length=255)
     variables = serializers.ListField(
         child=serializers.CharField(max_length=255),
         required=False,
@@ -41,8 +41,8 @@ class WebhookCreateRequestSerializer(serializers.Serializer):
 
 
 class WebhookCreateResponseSerializer(serializers.Serializer):
-    webhookID = serializers.UUIDField(source='webhook_id')
-    webhookName = serializers.CharField(source='webhook_name')
+    webhook_id = serializers.UUIDField()
+    webhook_name = serializers.CharField()
     lead_funnel_id = serializers.UUIDField()
     webhook_url = serializers.URLField()
     secret_token = serializers.CharField()
@@ -51,8 +51,8 @@ class WebhookCreateResponseSerializer(serializers.Serializer):
 
 
 class WebhookDeleteRequestSerializer(serializers.Serializer):
-    workspaceID = serializers.UUIDField(source='workspace_id')
-    webhookID = serializers.UUIDField(source='webhook_id')
+    workspace_id = serializers.UUIDField()
+    webhook_id = serializers.UUIDField()
 
 
 class WebhookDeleteResponseSerializer(serializers.Serializer):
@@ -61,21 +61,21 @@ class WebhookDeleteResponseSerializer(serializers.Serializer):
 
 
 class WebhookGetRequestSerializer(serializers.Serializer):
-    workspaceID = serializers.UUIDField(source='workspace_id')
-    webhookID = serializers.UUIDField(source='webhook_id')
+    workspace_id = serializers.UUIDField()
+    webhook_id = serializers.UUIDField()
 
 
 class WebhookGetResponseSerializer(serializers.Serializer):
-    webhookName = serializers.CharField(source='webhook_name')
-    webhookID = serializers.UUIDField(source='webhook_id')
+    webhook_name = serializers.CharField()
+    webhook_id = serializers.UUIDField()
     public_key = serializers.CharField()
     token = serializers.CharField()
-    hasLeadFunnel = serializers.BooleanField(source='has_lead_funnel')
+    has_lead_funnel = serializers.BooleanField()
 
 
 class WebhookRefreshTokenRequestSerializer(serializers.Serializer):
-    workspaceID = serializers.UUIDField(source='workspace_id')
-    webhookID = serializers.UUIDField(source='webhook_id')
+    workspace_id = serializers.UUIDField()
+    webhook_id = serializers.UUIDField()
 
 
 class WebhookRefreshTokenResponseSerializer(serializers.Serializer):
