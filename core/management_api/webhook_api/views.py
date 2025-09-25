@@ -2,6 +2,8 @@ import json
 import logging
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.conf import settings
+from django.db import transaction
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -25,6 +27,8 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 class WebhookViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
     @extend_schema(
         summary="Create webhook",
         description="Creates a webhook with an associated lead funnel, returns the data needed to use the webhook",
@@ -34,25 +38,7 @@ class WebhookViewSet(viewsets.ViewSet):
             400: {'description': 'Bad Request - Invalid input data'},
             403: {'description': 'Forbidden - User does not have access to workspace'},
             404: {'description': 'Not Found - Workspace does not exist'}
-        },
-        examples=[
-            {
-                "request": {
-                    "workspaceId": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhookName": "My Webhook",
-                    "variables": ["name", "email", "phone"]
-                },
-                "response": {
-                    "webhookID": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhookName": "My Webhook",
-                    "lead_funnel_id": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhook_url": "https://api.example.com/api/webhooks/leads/abc123def456/",
-                    "secret_token": "token_here",
-                    "public_key": "abc123def456",
-                    "required_headers": {"Authorization": "Bearer <token>"}
-                }
-            }
-        ]
+        }
     )
     @action(detail=False, methods=['post'], url_path='create')
     def create_webhook(self, request):
@@ -91,7 +77,6 @@ class WebhookViewSet(viewsets.ViewSet):
         )
 
         # Build webhook URL
-        from django.conf import settings
         base = settings.BASE_URL
         webhook_url = f"{base}/api/webhooks/leads/{source.public_key}/"
 
@@ -120,23 +105,10 @@ class WebhookViewSet(viewsets.ViewSet):
             400: {'description': 'Bad Request - Invalid input data'},
             403: {'description': 'Forbidden - User does not have access to workspace'},
             404: {'description': 'Not Found - Workspace or webhook does not exist'}
-        },
-        examples=[
-            {
-                "request": {
-                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
-                },
-                "response": {
-                    "status": "success",
-                    "message": "Webhook My Webhook has been deleted"
-                }
-            }
-        ]
+        }
     )
     @action(detail=False, methods=['delete'], url_path='delete')
     def delete_webhook(self, request):
-        from django.db import transaction
         """Delete webhook and its associated lead funnel"""
         serializer = WebhookDeleteRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -208,22 +180,7 @@ class WebhookViewSet(viewsets.ViewSet):
             400: {'description': 'Bad Request - Invalid input data'},
             403: {'description': 'Forbidden - User does not have access to workspace'},
             404: {'description': 'Not Found - Workspace or webhook does not exist'}
-        },
-        examples=[
-            {
-                "request": {
-                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
-                },
-                "response": {
-                    "webhookName": "My Webhook",
-                    "webhookID": "123e4567-e89b-12d3-a456-426614174000",
-                    "public_key": "abc123def456",
-                    "token": "generated_token_here",
-                    "hasLeadFunnel": True
-                }
-            }
-        ]
+        }
     )
     @action(detail=False, methods=['get'], url_path='get')
     def get_webhook(self, request):
@@ -273,19 +230,7 @@ class WebhookViewSet(viewsets.ViewSet):
             400: {'description': 'Bad Request - Invalid input data'},
             403: {'description': 'Forbidden - User does not have access to workspace'},
             404: {'description': 'Not Found - Workspace or webhook does not exist'}
-        },
-        examples=[
-            {
-                "request": {
-                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
-                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
-                },
-                "response": {
-                    "webhook_id": "123e4567-e89b-12d3-a456-426614174000",
-                    "token": "new_generated_token_here"
-                }
-            }
-        ]
+        }
     )
     @action(detail=False, methods=['post'], url_path='refresh_token')
     def refresh_token(self, request):
@@ -346,22 +291,7 @@ class WebhookInboundView(viewsets.ViewSet):
             401: {'description': 'Unauthorized - Invalid token'},
             404: {'description': 'Not Found - Webhook does not exist'}
         },
-        examples=[
-            {
-                "request": {
-                    "name": "John",
-                    "surname": "Doe",
-                    "phone_number": "+49123456789",
-                    "email": "john@example.com",
-                    "custom1": "value1",
-                    "custom2": "value2"
-                },
-                "response": {
-                    "status": "success",
-                    "message": "Lead processed successfully"
-                }
-            }
-        ]
+        auth=None
     )
     def post(self, request, public_key: str = None):
         """Process inbound lead from webhook"""
