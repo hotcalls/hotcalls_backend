@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Optional
 from django.db import transaction
 from django.utils import timezone
-from core.utils.lead_normalization import canonicalize_lead_payload
+from core.utils.validators import normalize_phone_e164
 
 from core.models import (
     Lead, LeadFunnel, WebhookLeadSource, CallTask, CallStatus
@@ -37,14 +37,14 @@ class WebhookLeadService:
         stats.save()
 
     @transaction.atomic
-    def process_incoming_lead(self, payload: Dict, source: WebhookLeadSource) -> Dict:
+    def process_incoming_lead(self, lead_data: Dict, webhook: WebhookLeadSource) -> Dict:
         """
         Validates gating and creates Lead + CallTask atomically.
 
         Returns a dict with status and optional lead_id.
         """
-        lead_funnel: LeadFunnel = source.lead_funnel
-        workspace = source.workspace
+        lead_funnel = webhook.lead_funnel
+        workspace = webhook.workspace
 
         # Gate checks
         if not lead_funnel:
@@ -63,38 +63,25 @@ class WebhookLeadService:
             return {"status": "ignored_inactive_agent"}
 
         # Canonical normalization of inbound fields
-        normalized = canonicalize_lead_payload(payload or {})
-        name = normalized.get('first_name') or ''
-        surname = normalized.get('last_name') or ''
-        email = normalized.get('email') or ''
-        phone = normalized.get('phone') or ''
-        variables = normalized.get('variables') or {}
-        external_id = payload.get('external_id')
+        name = lead_data['name']
+        surname = lead_data['surname']
+        email = lead_data['email']
 
-        # Simple idempotency: if external_id provided, avoid duplicates per funnel
-        if external_id:
-            existing = Lead.objects.filter(
-                lead_funnel=lead_funnel,
-                variables__external_id=external_id,
-            ).first()
-            if existing:
-                logger.info("Duplicate webhook lead ignored (external_id)", extra={
-                    'lead_id': str(existing.id),
-                    'funnel_id': str(lead_funnel.id),
-                    'external_id': external_id,
-                })
-                # Do not change stats counters again (counted as received only once ideally)
-                return {"status": "duplicate", "lead_id": str(existing.id)}
+        phone_number = lead_data['phone_number']
+        phone_normalized = normalize_phone_e164(phone_number, default_region='DE')
+        phone_to_save = phone_normalized or phone_number
+
+        variables = lead_data.get('custom_variables')
 
         # Create Lead
         lead = Lead.objects.create(
             name=name or 'Webhook Lead',
             surname=surname or '',
             email=email or f'lead-{timezone.now().timestamp()}@webhook.local',
-            phone=phone or '',
+            phone=phone_to_save or '',
             workspace=workspace,
             integration_provider='custom-webhook',
-            variables={**variables, **({'external_id': external_id} if external_id else {})},
+            variables=variables,
             lead_funnel=lead_funnel,
         )
 

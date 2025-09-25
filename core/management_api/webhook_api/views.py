@@ -10,12 +10,325 @@ from drf_spectacular.utils import extend_schema
 from core.models import WebhookLeadSource, LeadFunnel, Workspace
 from core.services import WebhookLeadService
 from .serializers import (
-    WebhookLeadPayloadSerializer,
-    WebhookLeadSourceCreateSerializer,
-    WebhookLeadSourceSerializer,
+    WebhookLeadIncomeRequestSerializer,
+    WebhookCreateRequestSerializer,
+    WebhookCreateResponseSerializer,
+    WebhookDeleteRequestSerializer,
+    WebhookDeleteResponseSerializer,
+    WebhookGetRequestSerializer,
+    WebhookGetResponseSerializer,
+    WebhookRefreshTokenRequestSerializer,
+    WebhookRefreshTokenResponseSerializer,
+    WebhookLeadIncomeResponseSerializer
 )
 
 logger = logging.getLogger(__name__)
+
+class WebhookViewSet(viewsets.ViewSet):
+    @extend_schema(
+        summary="Create webhook",
+        description="Creates a webhook with an associated lead funnel, returns the data needed to use the webhook",
+        request=WebhookCreateRequestSerializer,
+        responses={
+            201: WebhookCreateResponseSerializer,
+            400: {'description': 'Bad Request - Invalid input data'},
+            403: {'description': 'Forbidden - User does not have access to workspace'},
+            404: {'description': 'Not Found - Workspace does not exist'}
+        },
+        examples=[
+            {
+                "request": {
+                    "workspaceId": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhookName": "My Webhook",
+                    "variables": ["name", "email", "phone"]
+                },
+                "response": {
+                    "webhookID": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhookName": "My Webhook",
+                    "lead_funnel_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhook_url": "https://api.example.com/api/webhooks/leads/abc123def456/",
+                    "secret_token": "token_here",
+                    "public_key": "abc123def456",
+                    "required_headers": {"Authorization": "Bearer <token>"}
+                }
+            }
+        ]
+    )
+    @action(detail=False, methods=['post'], url_path='create')
+    def create_webhook(self, request):
+        """Create webhook with lead funnel and variables"""
+        serializer = WebhookCreateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        workspace_id = serializer.validated_data['workspace_id']
+        webhook_name = serializer.validated_data['webhook_name']
+        variables = serializer.validated_data.get('variables', [])
+
+        # Check if workspace exists
+        try:
+            workspace = Workspace.objects.get(id=workspace_id)
+        except Workspace.DoesNotExist:
+            return Response({'error': 'Workspace not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to workspace
+        if request.user not in workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Create lead funnel with pattern "Funnel_<WebhookName>"
+        funnel_name = f"Funnel_{webhook_name}"
+        funnel = LeadFunnel.objects.create(
+            name=funnel_name,
+            workspace=workspace,
+            is_active=True,
+            custom_variables=variables
+        )
+
+        # Create webhook lead source
+        source = WebhookLeadSource.objects.create(
+            workspace=workspace,
+            lead_funnel=funnel,
+            name=webhook_name
+        )
+
+        # Build webhook URL
+        from django.conf import settings
+        base = settings.BASE_URL
+        webhook_url = f"{base}/api/webhooks/leads/{source.public_key}/"
+
+        # Prepare response data
+        response_data = {
+            'webhook_id': source.id,
+            'webhook_name': source.name,
+            'lead_funnel_id': funnel.id,
+            'webhook_url': webhook_url,
+            'secret_token': source.token,
+            'public_key': source.public_key,
+            'required_headers': {'Authorization': 'Bearer <token>'}
+        }
+
+        response_serializer = WebhookCreateResponseSerializer(data=response_data)
+        response_serializer.is_valid(raise_exception=True)
+
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Delete webhook",
+        description="Deletes a webhook and its associated lead funnel",
+        request=WebhookDeleteRequestSerializer,
+        responses={
+            200: WebhookDeleteResponseSerializer,
+            400: {'description': 'Bad Request - Invalid input data'},
+            403: {'description': 'Forbidden - User does not have access to workspace'},
+            404: {'description': 'Not Found - Workspace or webhook does not exist'}
+        },
+        examples=[
+            {
+                "request": {
+                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
+                },
+                "response": {
+                    "status": "success",
+                    "message": "Webhook My Webhook has been deleted"
+                }
+            }
+        ]
+    )
+    @action(detail=False, methods=['delete'], url_path='delete')
+    def delete_webhook(self, request):
+        from django.db import transaction
+        """Delete webhook and its associated lead funnel"""
+        serializer = WebhookDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        workspace_id = serializer.validated_data['workspace_id']
+        webhook_id = serializer.validated_data['webhook_id']
+
+        # Check if workspace exists
+        try:
+            workspace = Workspace.objects.get(id=workspace_id)
+        except Workspace.DoesNotExist:
+            response_data = {
+                'status': 'error',
+                'message': 'Workspace not found'
+            }
+            return Response(response_data, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to workspace
+        if request.user not in workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
+            response_data = {
+                'status': 'error',
+                'message': 'Forbidden'
+            }
+            return Response(response_data, status=status.HTTP_403_FORBIDDEN)
+
+        # Check if webhook exists
+        try:
+            webhook = WebhookLeadSource.objects.get(id=webhook_id, workspace=workspace)
+        except WebhookLeadSource.DoesNotExist:
+            response_data = {
+                'status': 'error',
+                'message': 'Webhook not found'
+            }
+            return Response(response_data, status=status.HTTP_404_NOT_FOUND)
+
+        # Save webhook name for response message
+        webhook_name = webhook.name
+
+        try:
+            # If funnel exists, delete it first (this will cascade delete the webhook due to OneToOneField)
+            if hasattr(webhook, 'lead_funnel') and webhook.lead_funnel:
+                with transaction.atomic():
+                    funnel = webhook.lead_funnel
+                    funnel.delete()  # This should cascade delete the webhook
+            else:
+                with transaction.atomic():
+                    webhook.delete()
+
+            response_data = {
+                'status': 'success',
+                'message': f'Webhook {webhook_name} has been deleted'
+            }
+            return Response(response_data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            logger.error(f"Error deleting webhook {webhook_id}: {str(e)}")
+            response_data = {
+                'status': 'error',
+                'message': f'Webhook {webhook_name} was not deleted'
+            }
+            return Response(response_data, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @extend_schema(
+        summary="Get webhook information",
+        description="Retrieves detailed information about a webhook",
+        request=WebhookGetRequestSerializer,
+        responses={
+            200: WebhookGetResponseSerializer,
+            400: {'description': 'Bad Request - Invalid input data'},
+            403: {'description': 'Forbidden - User does not have access to workspace'},
+            404: {'description': 'Not Found - Workspace or webhook does not exist'}
+        },
+        examples=[
+            {
+                "request": {
+                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
+                },
+                "response": {
+                    "webhookName": "My Webhook",
+                    "webhookID": "123e4567-e89b-12d3-a456-426614174000",
+                    "public_key": "abc123def456",
+                    "token": "generated_token_here",
+                    "hasLeadFunnel": True
+                }
+            }
+        ]
+    )
+    @action(detail=False, methods=['get'], url_path='get')
+    def get_webhook(self, request):
+        """Get webhook information"""
+        serializer = WebhookGetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        workspace_id = serializer.validated_data['workspace_id']
+        webhook_id = serializer.validated_data['webhook_id']
+
+        # Check if workspace exists
+        try:
+            workspace = Workspace.objects.get(id=workspace_id)
+        except Workspace.DoesNotExist:
+            return Response({'error': 'Workspace not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to workspace
+        if request.user not in workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Check if webhook exists
+        try:
+            webhook = WebhookLeadSource.objects.get(id=webhook_id, workspace=workspace)
+        except WebhookLeadSource.DoesNotExist:
+            return Response({'error': 'Webhook not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Prepare response data
+        response_data = {
+            'webhook_name': webhook.name,
+            'webhook_id': webhook.id,
+            'public_key': webhook.public_key,
+            'token': webhook.token,
+            'has_lead_funnel': hasattr(webhook, 'lead_funnel') and webhook.lead_funnel is not None
+        }
+
+        response_serializer = WebhookGetResponseSerializer(data=response_data)
+        response_serializer.is_valid(raise_exception=True)
+
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Refresh webhook token",
+        description="Generates a new secure token for the webhook",
+        request=WebhookRefreshTokenRequestSerializer,
+        responses={
+            200: WebhookRefreshTokenResponseSerializer,
+            400: {'description': 'Bad Request - Invalid input data'},
+            403: {'description': 'Forbidden - User does not have access to workspace'},
+            404: {'description': 'Not Found - Workspace or webhook does not exist'}
+        },
+        examples=[
+            {
+                "request": {
+                    "workspaceID": "123e4567-e89b-12d3-a456-426614174000",
+                    "webhookID": "123e4567-e89b-12d3-a456-426614174000"
+                },
+                "response": {
+                    "webhook_id": "123e4567-e89b-12d3-a456-426614174000",
+                    "token": "new_generated_token_here"
+                }
+            }
+        ]
+    )
+    @action(detail=False, methods=['post'], url_path='refresh_token')
+    def refresh_token(self, request):
+        """Refresh webhook token by generating a new secure token"""
+        serializer = WebhookRefreshTokenRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        workspace_id = serializer.validated_data['workspace_id']
+        webhook_id = serializer.validated_data['webhook_id']
+
+        # Check if workspace exists
+        try:
+            workspace = Workspace.objects.get(id=workspace_id)
+        except Workspace.DoesNotExist:
+            return Response({'error': 'Workspace not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check if user has access to workspace
+        if request.user not in workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
+            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Check if webhook exists
+        try:
+            webhook = WebhookLeadSource.objects.get(id=webhook_id, workspace=workspace)
+        except WebhookLeadSource.DoesNotExist:
+            return Response({'error': 'Webhook not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Generate new token
+        from secrets import token_urlsafe
+        webhook.token = token_urlsafe(48)
+        webhook.save(update_fields=['token', 'updated_at'])
+
+        # Prepare response data
+        response_data = {
+            'webhook_id': webhook.id,
+            'token': webhook.token
+        }
+
+        response_serializer = WebhookRefreshTokenResponseSerializer(data=response_data)
+        response_serializer.is_valid(raise_exception=True)
+
+        return Response(response_serializer.data, status=status.HTTP_200_OK)
+
+
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -24,119 +337,97 @@ class WebhookInboundView(viewsets.ViewSet):
     permission_classes: list = []
 
     @extend_schema(
-        summary="Inbound webhook for custom lead sources",
-        request=WebhookLeadPayloadSerializer,
-        auth=None
+        summary="Receive inbound lead from webhook",
+        description="Receives and processes an inbound lead from a webhook",
+        request=WebhookLeadIncomeRequestSerializer,
+        responses={
+            200: WebhookLeadIncomeResponseSerializer,
+            400: {'description': 'Bad Request - Invalid input data'},
+            401: {'description': 'Unauthorized - Invalid token'},
+            404: {'description': 'Not Found - Webhook does not exist'}
+        },
+        examples=[
+            {
+                "request": {
+                    "name": "John",
+                    "surname": "Doe",
+                    "phone_number": "+49123456789",
+                    "email": "john@example.com",
+                    "custom1": "value1",
+                    "custom2": "value2"
+                },
+                "response": {
+                    "status": "success",
+                    "message": "Lead processed successfully"
+                }
+            }
+        ]
     )
     def post(self, request, public_key: str = None):
-        # Resolve source
+        """Process inbound lead from webhook"""
+        # Resolve webhook by public_key
         try:
-            source = WebhookLeadSource.objects.select_related('lead_funnel', 'workspace', 'lead_funnel__agent').get(public_key=public_key)
+            webhook = WebhookLeadSource.objects.select_related('lead_funnel', 'workspace', 'lead_funnel__agent').get(public_key=public_key)
         except WebhookLeadSource.DoesNotExist:
-            return Response({'error': 'Unknown webhook'}, status=status.HTTP_404_NOT_FOUND)
+            response_data = {
+                'status': 'error',
+                'message': 'Unknown webhook'
+            }
+            return Response(response_data, status=status.HTTP_404_NOT_FOUND)
 
         # Authorization: Bearer token
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
         prefix = 'Bearer '
         if not auth_header.startswith(prefix):
-            return Response({'error': 'Missing or invalid Authorization header'}, status=status.HTTP_401_UNAUTHORIZED)
+            response_data = {
+                'status': 'error',
+                'message': 'Missing or invalid Authorization header'
+            }
+            return Response(response_data, status=status.HTTP_401_UNAUTHORIZED)
+
         token = auth_header[len(prefix):].strip()
-        if token != source.token:
-            return Response({'error': 'Invalid token'}, status=status.HTTP_401_UNAUTHORIZED)
+        if token != webhook.token:
+            response_data = {
+                'status': 'error',
+                'message': 'Invalid token'
+            }
+            return Response(response_data, status=status.HTTP_401_UNAUTHORIZED)
 
-        serializer = WebhookLeadPayloadSerializer(data=request.data)
+        # Validate request data
+        serializer = WebhookLeadIncomeRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        service = WebhookLeadService()
-        result = service.process_incoming_lead(serializer.validated_data, source)
-        return Response(result, status=status.HTTP_200_OK)
+        # Filter variables against allowed custom variables in funnel
+        funnel_variables = webhook.lead_funnel.custom_variables or []
+        filtered_variables = {}
+        given_variables = serializer.validated_data.get('variables', {})
 
+        for key, value in given_variables.items():
+            if key in funnel_variables:
+                filtered_variables[key] = value
 
-class WebhookLeadSourceViewSet(viewsets.ModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_staff or user.is_superuser:
-            return WebhookLeadSource.objects.select_related('workspace', 'lead_funnel', 'lead_funnel__agent').all()
-        return WebhookLeadSource.objects.select_related('workspace', 'lead_funnel', 'lead_funnel__agent').filter(workspace__in=user.mapping_user_workspaces.all())
-
-    def get_serializer_class(self):
-        if self.action == 'create':
-            return WebhookLeadSourceCreateSerializer
-        return WebhookLeadSourceSerializer
-
-    @extend_schema(summary="Create a new webhook lead source", request=WebhookLeadSourceCreateSerializer)
-    def create(self, request, *args, **kwargs):
-        serializer = WebhookLeadSourceCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        workspace_id = serializer.validated_data['workspace']
-        name = serializer.validated_data['name']
-
-        # Validate workspace ownership
-        try:
-            workspace = Workspace.objects.get(id=workspace_id)
-        except Workspace.DoesNotExist:
-            return Response({'error': 'Workspace not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if request.user not in workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
-            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
-
-        # Create funnel + source
-        funnel = LeadFunnel.objects.create(name=name, workspace=workspace, is_active=True)
-        source = WebhookLeadSource.objects.create(workspace=workspace, lead_funnel=funnel, name=name)
-
-        # One-time show of token
-        resp = {
-            'id': str(source.id),
-            'name': source.name,
-            'lead_funnel': str(funnel.id),
-            'url': WebhookLeadSourceSerializer(source, context={'request': request}).data['url'],
-            'token': source.token,
-            'required_headers': {'Authorization': 'Bearer <token>'},
-            'created_at': source.created_at,
-            'updated_at': source.updated_at,
+        # Prepare lead data for service
+        lead_data = {
+            'name': serializer.validated_data['name'],
+            'surname': serializer.validated_data['surname'],
+            'email': serializer.validated_data['email'],
+            'phone_number': serializer.validated_data['phone_number'],
+            'custom_variables': filtered_variables
         }
-        return Response(resp, status=status.HTTP_201_CREATED)
 
-    @extend_schema(summary="Rotate webhook token")
-    @action(detail=True, methods=['post'])
-    def rotate_token(self, request, pk=None):
-        try:
-            source = WebhookLeadSource.objects.get(pk=pk)
-        except WebhookLeadSource.DoesNotExist:
-            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Process lead using service
+        service = WebhookLeadService()
+        result = service.process_incoming_lead(lead_data, webhook)
 
-        if request.user not in source.workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
-            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
-
-        # rotate
-        from secrets import token_urlsafe
-        source.token = token_urlsafe(48)
-        source.save(update_fields=['token', 'updated_at'])
-        return Response({'token': source.token, 'url': WebhookLeadSourceSerializer(source, context={'request': request}).data['url']}, status=status.HTTP_200_OK)
-
-    @extend_schema(summary="Delete webhook source")
-    def destroy(self, request, pk=None):
-        from django.db import transaction
-        
-        try:
-            source = WebhookLeadSource.objects.get(pk=pk)
-        except WebhookLeadSource.DoesNotExist:
-            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
-
-        if request.user not in source.workspace.users.all() and not (request.user.is_staff or request.user.is_superuser):
-            return Response({'error': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
-
-        # Atomic delete to ensure consistency
-        with transaction.atomic():
-            funnel = source.lead_funnel
-            if funnel:
-                # Delete both to ensure clean removal
-                funnel.delete()  # This should cascade delete the WebhookLeadSource
-            source.delete()  # Explicit delete to be sure
-            
-        logger.info(f"Deleted webhook source {source.id} and associated funnel {funnel.id if funnel else 'None'}")
-        return Response(status=status.HTTP_204_NO_CONTENT)
-
-
+        if result.get('status') == 'processed_with_agent':
+            response_data = {
+                'status': 'success',
+                'message': f'Lead processed successfully for webhook {webhook.name}'
+            }
+            return Response(response_data, status=status.HTTP_200_OK)
+        else:
+            response_data = {
+                'status': 'error',
+                'message': f'Lead was not processed: {result.get("status", "unknown error")}'
+            }
+            return Response(response_data, status=status.HTTP_200_OK)
