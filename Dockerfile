@@ -1,4 +1,3 @@
-# Multi-stage build for production Django application
 FROM python:3.12-slim as base
 
 # Set environment variables
@@ -30,7 +29,6 @@ FROM base as development
 # Create static files directory
 RUN mkdir -p /app/staticfiles
 
-# Development doesn't need non-root user for simplicity
 # Expose port
 EXPOSE 8000
 
@@ -50,8 +48,7 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 # Switch to the non-root user
 USER django
 
-# Collect static files - provide minimal required environment variables for build
-# Full production environment variables will be provided at runtime
+# Filed with dummy variables for the run to complete. Real values are provided at runtime via kubernetes
 RUN DJANGO_SETTINGS_MODULE=hotcalls.settings.production ALLOWED_HOSTS=localhost BASE_URL=http://localhost CSRF_TRUSTED_ORIGINS=http://localhost python manage.py collectstatic --noinput
 
 # Health check
