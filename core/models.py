@@ -967,7 +967,7 @@ class Agent(models.Model):
     )
     
     # UPDATED: Multiple greeting types
-    greeting_inbound = models.TextField(
+    greeting_inbound = models.CharField(
         help_text="Greeting for inbound calls",
         blank=True,
         default="Hello! How can I help you today?"
