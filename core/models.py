@@ -967,7 +967,7 @@ class Agent(models.Model):
     )
     
     # UPDATED: Multiple greeting types
-    greeting_inbound = models.CharField(
+    greeting_inbound = models.TextField(
         help_text="Greeting for inbound calls",
         blank=True,
         default="Hello! How can I help you today?"
@@ -976,6 +976,12 @@ class Agent(models.Model):
         help_text="Greeting for outbound calls", 
         blank=True,
         default="Hello! I'm calling from our team. Is this a good time to talk?"
+    )
+
+    testVariable = models.TextField(
+        help_text="Nutzlose Variable um migrations zu testen",
+        blank=True,
+        default="HALLO"
     )
     
     # UPDATED: Voice as relationship to Voice model
