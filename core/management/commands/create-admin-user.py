@@ -11,7 +11,7 @@ class Command(BaseCommand):
     @transaction.atomic
     def handle(self, *args, **options):
         user, created = User.objects.get_or_create(
-            email=options["admin-email"],
+            email=options["admin_email"],
             defaults={
                 'first_name': 'Admin',
                 'last_name': 'User',
@@ -23,7 +23,7 @@ class Command(BaseCommand):
             },
         )
         if created:
-            user.set_password(options["admin-password"])
+            user.set_password(options["admin_password"])
             user.save()
         else:
             updated = False
