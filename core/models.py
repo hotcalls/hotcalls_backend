@@ -977,12 +977,6 @@ class Agent(models.Model):
         blank=True,
         default="Hello! I'm calling from our team. Is this a good time to talk?"
     )
-
-    testVariable = models.TextField(
-        help_text="Nutzlose Variable um migrations zu testen",
-        blank=True,
-        default="HALLO"
-    )
     
     # UPDATED: Voice as relationship to Voice model
     voice = models.ForeignKey(
