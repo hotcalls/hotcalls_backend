@@ -1,3 +1,0 @@
-This file serves as check of the production branch
-
-And even more so now. 
