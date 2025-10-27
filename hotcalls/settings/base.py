@@ -1,59 +1,165 @@
 """
-Base Django settings for HotCalls project.
-
-This module contains settings that are common across all environments.
+Base settings for hotcalls project.
+Containing common settings across all environments.
 Environment-specific settings inherit from this base configuration.
 """
 
 import os
 from pathlib import Path
 import logging
-from dotenv import load_dotenv
 
 # Setup logging for settings module
 logger = logging.getLogger(__name__)
 
-# Determine environment - development, staging, or production
-ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
-
-# Log which settings module is being used
-logger.info(f"Loading {__name__} settings module for ENVIRONMENT={ENVIRONMENT}")
-
-# Load .env file in all environments as fallback
-# In staging/production, explicit environment variables will override .env
+# Load data from environment. Use os.environ[...] to ensure a key error is raised when 1 is missing. Key error results in RuntimeError
 try:
-    load_dotenv()
-    logger.info(f"{ENVIRONMENT} environment: Loaded .env file as fallback")
-except Exception as e:
-    logger.warning(f"Failed to load .env file: {str(e)}")
-    logger.warning("Continuing with environment variables only")
+    ENVIRONMENT = os.environ["ENVIRONMENT"]
+    SECRET_KEY = os.environ["SECRET_KEY"]
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+    # Base App configuration
+    TIME_ZONE = os.environ["TIME_ZONE"]
+    BASE_URL = os.environ["BASE_URL"]
+    csrf_trusted_origins = os.environ["CSRF_TRUSTED_ORIGINS"]
+
+    # Database configuration
+    DB_ENGINE = os.environ["DB_ENGINE"]
+    DB_NAME = os.environ["DB_NAME"]
+    DB_USER = os.environ["DB_USER"]
+    DB_PASSWORD = os.environ["DB_PASSWORD"]
+    DB_HOST = os.environ["DB_HOST"]
+    DB_PORT = os.environ["DB_PORT"]
+    DB_SSL_MODE = os.environ["DB_SSLMODE"]
+
+    # Redis configuration
+    REDIS_HOST = os.environ["REDIS_HOST"]
+    REDIS_PASSWORD = os.environ["REDIS_PASSWORD"]
+    REDIS_PORT = os.environ["REDIS_PORT"]
+    REDIS_DB = os.environ["REDIS_DB"]
+    REDIS_URL = os.environ["REDIS_URL"]
+
+    # Celery configuration
+    CELERY_BROKER_URL = os.environ["CELERY_BROKER_URL"]
+    CELERY_RESULT_BACKEND = os.environ["CELERY_RESULT_BACKEND"]
+
+    # Email Configuration
+    EMAIL_BACKEND = os.environ["EMAIL_BACKEND"]
+    EMAIL_HOST = os.environ["EMAIL_HOST"]
+    EMAIL_PORT = os.environ["EMAIL_PORT"]
+    EMAIL_USE_TLS = os.environ["EMAIL_USE_TLS"]
+    EMAIL_USE_SSL = os.environ["EMAIL_USE_SSL"]
+    EMAIL_HOST_USER = os.environ["EMAIL_HOST_USER"]
+    EMAIL_HOST_PASSWORD = os.environ["EMAIL_HOST_PASSWORD"]
+    DEFAULT_FROM_EMAIL = os.environ["DEFAULT_FROM_EMAIL"]
+    SERVER_EMAIL = os.environ["SERVER_EMAIL"]
+
+    # Stripe configuration
+    STRIPE_SECRET_KEY = os.environ["STRIPE_SECRET_KEY"]
+    STRIPE_PUBLISHABLE_KEY = os.environ["STRIPE_PUBLISHABLE_KEY"]
+    STRIPE_WEBHOOK_SECRET = os.environ["STRIPE_WEBHOOK_SECRET"]
+    STRIPE_MINUTE_PACK_PRICE_ID = os.environ["STRIPE_MINUTE_PACK_PRICE_ID"]
+    STRIPE_MINUTE_PACK_PRODUCT_ID = os.environ["STRIPE_MINUTE_PACK_PRODUCT_ID"]
+
+    # Meta Integration
+    META_APP_ID = os.environ["META_APP_ID"]
+    META_APP_SECRET = os.environ["META_APP_SECRET"]
+    META_WEBHOOK_VERIFY_TOKEN = os.environ["META_WEBHOOK_VERIFY_TOKEN"]
+    META_API_VERSION = os.environ["META_API_VERSION"]
+    META_REDIRECT_URI = os.environ["META_REDIRECT_URI"]
+
+    # LiveKit Configuration
+    LIVEKIT_URL = os.environ["LIVEKIT_URL"]
+    LIVEKIT_API_KEY = os.environ["LIVEKIT_API_KEY"]
+    LIVEKIT_API_SECRET = os.environ["LIVEKIT_API_SECRET"]
+    LIVEKIT_AGENT_NAME = os.environ["LIVEKIT_AGENT_NAME"]
+    NUMBER_OF_LIVEKIT_AGENTS = os.environ["NUMBER_OF_LIVEKIT_AGENTS"]
+    CONCURRENCY_PER_LIVEKIT_AGENT = os.environ["CONCURRENCY_PER_LIVEKIT_AGENT"]
+
+    # Google configuration
+    GOOGLE_OAUTH_CLIENT_ID = os.environ["GOOGLE_OAUTH_CLIENT_ID"]
+    GOOGLE_OAUTH_CLIENT_SECRET = os.environ["GOOGLE_OAUTH_CLIENT_SECRET"]
+
+    # Microsoft configuration
+    MS_CLIENT_ID = os.environ["MS_CLIENT_ID"]
+    MS_CLIENT_SECRET = os.environ["MS_CLIENT_SECRET"]
+    MS_AUTH_TENANT = os.environ["MS_AUTH_TENANT"]
+
+    # OpenAI Configuration
+    OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
+except KeyError as e:
+    missing_variable = e.args[0]
+    raise RuntimeError(f"Environment variable {missing_variable} is not set")
+
+
+# Base App setup
+API_VERSION = "v1"
+LANGUAGE_CODE = "en-us"
+USE_I18N = True
+USE_TZ = True
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()
+]
 
-# SECURITY WARNING: keep the secret key used in production secret!
-if ENVIRONMENT != 'development':
-    # CRITICAL:  default SECRET_KEY in staging/production!
-    try:
-        SECRET_KEY = os.environ['SECRET_KEY']
-    except KeyError:
-        raise RuntimeError(
-            f"CRITICAL: SECRET_KEY not set in {ENVIRONMENT} environment!\n"
-            "This is a security requirement - set SECRET_KEY in environment variables."
-        )
-else:
-    # Development can use a default key
-    SECRET_KEY = os.environ.get(
-        "SECRET_KEY", "django-insecure-=a8o!^u&0e(!-p_$f)ppq2r=*)$g8v(3lrb*vl@+b%i!pn8-=r"
-    )
+# Database configuration
+DATABASES = {
+    "default": {
+        "ENGINE": DB_ENGINE,
+        "NAME": DB_NAME,
+        "USER": DB_USER,
+        "PASSWORD": DB_PASSWORD,
+        "HOST": DB_HOST,
+        "PORT": DB_PORT,
+        "OPTIONS": {
+            "sslmode": DB_SSL_MODE,
+        },
+    }
+}
 
-# Custom User Model
-AUTH_USER_MODEL = 'core.User'
+# Celery configuration
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = TIME_ZONE
 
-# Authentication backends - Email-based authentication
+# Google configuration
+GOOGLE_REDIRECT_URI = f"{BASE_URL}/api/google-calendar/auth/callback/"
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "openid",
+]
+
+# Microsoft configuration
+MS_REDIRECT_URI = f"{BASE_URL}/api/outlook-calendar/auth/callback/"
+MS_SCOPES = [
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "User.Read",
+    "Calendars.ReadWrite",
+    "Calendars.Read.Shared",
+    "Calendars.ReadWrite.Shared",
+    "MailboxSettings.Read",
+    "OnlineMeetings.Read",
+    "OnlineMeetings.ReadWrite",
+]
+
+# File upload configuration
+FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
+DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
+FILE_UPLOAD_TEMP_DIR = None  # Use system default
+FILE_UPLOAD_PERMISSIONS = 0o644
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
+
+# User Model
+AUTH_USER_MODEL = "core.User"
+
+# Email based authentication backend
 AUTHENTICATION_BACKENDS = [
-    'core.management_api.auth_api.backends.EmailBackend',  # Primary: Email authentication with verification
-    'django.contrib.auth.backends.ModelBackend',  # Fallback: Default Django backend
+    "core.management_api.auth_api.backends.EmailBackend",
 ]
 
 # Application definition
@@ -97,102 +203,41 @@ ROOT_URLCONF = "hotcalls.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.debug',
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
-                'hotcalls.context_processors.base_url',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.debug",
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
+                "hotcalls.context_processors.base_url",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'hotcalls.wsgi.application'
-
-# Authentication redirect target for non-API views (used by invitation templates)
-# Route users to the SPA login so they see the normal Hotcalls login UI
-LOGIN_URL = '/login'
-
-# Database configuration - FAIL FAST if not configured!
-# In staging/production, these MUST come from environment variables
-if ENVIRONMENT != 'development':
-    # CRITICAL: No defaults in staging/production - fail if not set!
-    try:
-        DATABASES = {
-            'default': {
-                'ENGINE': os.environ['DB_ENGINE'],  # Will raise KeyError if missing
-                'NAME': os.environ['DB_NAME'],
-                'USER': os.environ['DB_USER'],
-                'PASSWORD': os.environ['DB_PASSWORD'],
-                'HOST': os.environ['DB_HOST'],  # MUST be set - no localhost fallback!
-                'PORT': os.environ.get('DB_PORT', '5432'),
-                'OPTIONS': {
-                    'sslmode': os.environ.get('DB_SSLMODE', 'require'),
-                },
-            }
-        }
-    except KeyError as e:
-        raise RuntimeError(
-            f"CRITICAL: Missing required database configuration: {e}\n"
-            f"Environment: {ENVIRONMENT}\n"
-            f"Required variables: DB_ENGINE, DB_NAME, DB_USER, DB_PASSWORD, DB_HOST"
-        )
-else:
-    # Development can have defaults for convenience
-    DATABASES = {
-        'default': {
-            'ENGINE': os.environ.get('DB_ENGINE', 'django.db.backends.postgresql'),
-            'NAME': os.environ.get('DB_NAME', 'hotcalls_db'),
-            'USER': os.environ.get('DB_USER', 'postgres'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-            'HOST': os.environ.get('DB_HOST', 'localhost'),
-            'PORT': os.environ.get('DB_PORT', '5432'),
-            'OPTIONS': {
-                'sslmode': os.environ.get('DB_SSLMODE', 'disable'),
-            },
-        }
-    }
+WSGI_APPLICATION = "hotcalls.wsgi.application"
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
 
-# Email Configuration
-EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
-EMAIL_HOST = os.environ.get('EMAIL_HOST', 'localhost')
-EMAIL_PORT = int(os.environ.get('EMAIL_PORT', '587'))
-EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 'yes')
-EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'False').lower() in ('true', '1', 'yes')
-EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
-EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
-DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@hotcalls.com')
-SERVER_EMAIL = DEFAULT_FROM_EMAIL
-
-# Internationalization
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = os.environ.get("TIME_ZONE", "Europe/Berlin")
-USE_I18N = True
-USE_TZ = True
-
 # Default primary key field type
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # REST Framework configuration
 REST_FRAMEWORK = {
@@ -205,365 +250,123 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework.authentication.TokenAuthentication",
-        # SessionAuthentication removed - no CSRF needed for API endpoints
-        # Use TokenAuthentication for all API calls
     ],
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.AllowAny",
     ],
-    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20,
-    'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend',
-        'rest_framework.filters.SearchFilter',
-        'rest_framework.filters.OrderingFilter',
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",
+        "rest_framework.filters.SearchFilter",
+        "rest_framework.filters.OrderingFilter",
     ],
 }
 
 # Spectacular (OpenAPI/Swagger) Settings
+API_DESCRIPTION = (Path(__file__).parent / "spectacular_api_description.md").read_text()
+
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'HotCalls API',
-    'DESCRIPTION': '''
-# 🔐 HotCalls API - Email-Based Authentication System
-
-## 🎭 Authentication & Email Verification
-
-### 🚀 New Features
-- **📧 Email-based login**: Use email instead of username to login
-- **✅ Mandatory email verification**: Users MUST verify email before accessing system
-- **🔒 Enhanced security**: Email verification enforced at login
-- **📱 Responsive emails**: Beautiful HTML verification emails
-
-### 🔑 Authentication Flow
-1. **Registration**: POST to `/api/auth/register/` with email, password, name, phone
-2. **Email Verification**: User receives email with verification link
-3. **Verify Email**: Click link or use `/api/auth/verify-email/{token}/`
-4. **Login**: POST to `/api/auth/login/` with email and password
-5. **Access APIs**: Use token authentication for protected endpoints
-
-### 📧 Email Verification Requirements
-- **🚫 No login without verification**: Cannot access protected APIs
-- **📨 Auto-send verification**: Sent automatically on registration
-- **🔄 Resend option**: Use `/api/auth/resend-verification/` if needed
-- **⏰ Token expiration**: Verification tokens have security expiration
-
----
-
-## 🎭 User Roles & Permissions
-
-### User Role Hierarchy
-| Role | Level | Description | Email Required |
-|------|--------|-------------|----------------|
-| **👤 Regular User** | `is_authenticated=True` | Standard user - must verify email | ✅ Required |
-| **👔 Staff Member** | `is_staff=True` | System staff - must verify email | ✅ Required |
-| **🔧 Superuser** | `is_superuser=True` | Admin - auto-verified | ✅ Auto-verified |
-
-### 🔑 Authentication Methods
-- **Token Authentication**: Login via `/api/auth/login/` then use `Authorization: Token <token>`
-- **No CSRF Required**: Token authentication doesn't need CSRF tokens
-- **⚠️ Email Verification Required**: Must verify email before login
-
----
-
-## 📊 Complete Permission Matrix
-
-### 🔐 Authentication API (`/api/auth/`)
-| Operation | Permission | Email Verification | Description |
-|-----------|------------|-------------------|-------------|
-| **Register** | Public | Not required | Create account, sends verification email |
-| **Verify Email** | Public | Completes verification | Verify email with token from email |
-| **Login** | Public | ✅ Required | Login with email/password (verified only) |
-| **Logout** | Authenticated | ✅ Required | Clear user session |
-| **Profile** | Authenticated | ✅ Required | Get current user profile |
-| **Resend Verification** | Public | For unverified emails | Resend verification email |
-
-### 👤 User Management API (`/api/users/`)
-| Operation | Regular User | Staff | Superuser | Email Verification |
-|-----------|--------------|-------|-----------|-------------------|
-| **View Users** | ✅ Own profile | ✅ All users | ✅ All users | ✅ Required |
-| **Create User** | ❌ Use auth/register | ✅ Any user | ✅ Any user | ✅ Required |
-| **Edit User** | ✅ Own profile | ✅ Any user | ✅ Any user | ✅ Required |
-| **Delete User** | ❌ No access | ❌ No access | ✅ Any user | ✅ Required |
-
-### 📋 Other APIs (`/api/workspaces/`, `/api/agents/`, etc.)
-- **🔒 All protected APIs require**: Authentication + Email Verification
-- **📧 No verification = No access**: Unverified users cannot use any protected endpoints
-- **🎯 Same permissions as before**: Role-based access unchanged, just add email verification
-
----
-
-## 🚨 Authentication Error Responses
-
-### 401 Unauthorized
-```json
-{
-  "detail": "Authentication credentials were not provided."
-}
-```
-
-### 403 Forbidden - Email Not Verified
-```json
-{
-  "email": ["Please verify your email address before logging in. Check your inbox for the verification email."]
-}
-```
-
-### 400 Bad Request - Invalid Credentials  
-```json
-{
-  "non_field_errors": ["Unable to log in with provided credentials."]
-}
-```
-
-### 400 Bad Request - Account Issues
-```json
-{
-  "non_field_errors": ["Your account has been suspended. Please contact support."]
-}
-```
-
----
-
-## 📚 Getting Started with Token Authentication
-
-### 1. Register New Account
-```bash
-POST /api/auth/register/
-{
-  "email": "user@example.com",
-  "password": "securepassword123",
-  "password_confirm": "securepassword123",
-  "first_name": "John",
-  "last_name": "Doe",
-  "phone": "+1234567890"
-}
-```
-
-### 2. Check Email & Verify
-- Check inbox for verification email
-- Click verification link or use token
-
-### 3. Login After Verification
-```bash
-POST /api/auth/login/
-{
-  "email": "user@example.com",
-  "password": "securepassword123"
-}
-```
-Response includes auth token:
-```json
-{
-  "token": "your-auth-token-here",
-  "user": {...}
-}
-```
-
-### 4. Access Protected APIs
-```bash
-Authorization: Token your-auth-token-here
-```
-
-**📧 Remember**: Email verification is mandatory for all users!
-    ''',
-    'VERSION': '2.0.0',
-    'SERVE_INCLUDE_SCHEMA': False,
-    'SCHEMA_PATH_PREFIX': '/api/',
-    'COMPONENT_SPLIT_REQUEST': True,
-    'SORT_OPERATIONS': False,
-    'TAGS': [
-        {'name': 'Authentication', 'description': '🔐 Token-based authentication with mandatory email verification'},
-        {'name': 'User Management', 'description': '👤 User accounts and blacklist management - Requires token auth'},
-        {'name': 'Workspace Management', 'description': '🏢 Workspace and user association management'},
-        {'name': 'Agent Management', 'description': '🤖 AI agents and phone number management'},
-        {'name': 'Lead Management', 'description': '📞 Lead management and bulk operations'},
+    "TITLE": "HotCalls API",
+    "DESCRIPTION": API_DESCRIPTION,
+    "VERSION": "1.0.0",
+    "SERVE_INCLUDE_SCHEMA": False,
+    "SCHEMA_PATH_PREFIX": "/api/",
+    "COMPONENT_SPLIT_REQUEST": True,
+    "SORT_OPERATIONS": False,
+    "TAGS": [
+        {
+            "name": "Authentication",
+            "description": "Token-based authentication with mandatory email verification",
+        },
+        {
+            "name": "User Management",
+            "description": "User accounts and blacklist management - Requires token auth",
+        },
+        {
+            "name": "Workspace Management",
+            "description": "Workspace and user association management",
+        },
+        {
+            "name": "Agent Management",
+            "description": "AI agents and phone number management",
+        },
+        {
+            "name": "Lead Management",
+            "description": "Lead management and bulk operations",
+        },
     ],
-    'COMPONENT_SECURITY_SCHEMES': {
-        'TokenAuth': {
-            'type': 'apiKey',
-            'in': 'header',
-            'name': 'Authorization',
-            'description': 'Token-based authentication. Format: `Token <your-token>`'
+    "COMPONENT_SECURITY_SCHEMES": {
+        "TokenAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "Authorization",
+            "description": "Token-based authentication. Format: `Token <your-token>`",
         }
     },
-    'SECURITY': [{'TokenAuth': []}],
+    "SECURITY": [{"TokenAuth": []}],
 }
-
-# Celery Configuration - Dynamically constructed from Redis env vars
-if ENVIRONMENT != 'development':
-    # CRITICAL: No defaults in staging/production - fail if not set!
-    try:
-        REDIS_HOST = os.environ['REDIS_HOST']
-        REDIS_PASSWORD = os.environ['REDIS_PASSWORD']
-    except KeyError as e:
-        raise RuntimeError(
-            f"CRITICAL: Missing required Redis configuration: {e}\n"
-            f"Environment: {ENVIRONMENT}\n"
-            f"Required variables: REDIS_HOST, REDIS_PASSWORD"
-        )
-    REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
-    REDIS_DB = os.environ.get("REDIS_DB", "0")
-else:
-    # Development can have defaults
-    REDIS_HOST = os.environ.get("REDIS_HOST", "localhost")
-    REDIS_PORT = os.environ.get("REDIS_PORT", "6379")
-    REDIS_DB = os.environ.get("REDIS_DB", "0")
-    REDIS_PASSWORD = os.environ.get("REDIS_PASSWORD", "")
-
-# Construct Redis URL with optional password
-if REDIS_PASSWORD:
-    REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-else:
-    REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-
-CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
-CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", REDIS_URL)
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE = TIME_ZONE
-
-# Base URL for generating absolute URLs - REQUIRED
-BASE_URL = os.environ.get("BASE_URL")
-if not BASE_URL:
-    raise ValueError("BASE_URL environment variable is required but not set")
 
 # Logging configuration
 LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": "{levelname} {asctime} {module} {funcName:s} {message}",
+            "style": "{",
         },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
-    },
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-            'formatter': 'verbose',
+        "basic": {
+            "format": "{levelname} {module} {message}",
+            "style": "{",
         },
     },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
-            'propagate': False,
+    "handlers": {
+        "console": {
+            "level": "WARNING",
+            "class": "logging.StreamHandler",
+            "formatter": "basic",
         },
-        'hotcalls': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
+        "django_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": "django_info.log",
+            "formatter": "verbose",
+        },
+        "hotcalls_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": "hotcalls_info.log",
+            "formatter": "verbose",
+        },
+        "core_file": {
+            "level": "INFO",
+            "class": "logging.FileHandler",
+            "filename": "hotcalls_info.log",
+            "formatter": "verbose",
+        },
+        "email_admins": {
+            "level": "ERROR",
+            "class": "django.utils.log.AdminEmailHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+    },
+    "loggers": {
+        "hotcalls": {
+            "handlers": ["console", "hotcalls_file", "email_admins"],
+            "propagate": False,
+        },
+        "django": {
+            "handlers": ["console", "django_file"],
+            "propagate": False,
+        },
+        "core": {
+            "handlers": ["console", "core_file", "email_admins"],
+            "propagate": False,
         },
     },
 }
-
-# Health check configuration
-HEALTH_CHECK = {
-    'DISK_USAGE_MAX': 90,  # Fail if disk usage is over 90%
-    'MEMORY_MIN': 100,     # Fail if available memory is less than 100MB
-}
-
-# API configuration
-API_VERSION = 'v1' 
-
-# Stripe configuration
-STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
-STRIPE_PUBLISHABLE_KEY = os.getenv('STRIPE_PUBLISHABLE_KEY', '')
-STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
-# Minute-Pack configuration (one-time top-ups)
-STRIPE_MINUTE_PACK_PRICE_ID = os.getenv('STRIPE_MINUTE_PACK_PRICE_ID', '')
-STRIPE_MINUTE_PACK_PRODUCT_ID = os.getenv('STRIPE_MINUTE_PACK_PRODUCT_ID', '')
-
-# File upload settings
-# Maximum size for file uploads via forms (1GB for voice files and images)
-FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
-
-# Maximum allowed size for a request body (1GB for voice files and images)
-DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
-
-# For large files, Django will use temporary files instead of loading into memory
-FILE_UPLOAD_TEMP_DIR = None  # Use system default
-
-# Permissions for uploaded files
-FILE_UPLOAD_PERMISSIONS = 0o644
-
-# Maximum number of fields in a multipart form (default is 1000)
-DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
-
-# Meta (Facebook/Instagram) Integration Configuration
-META_APP_ID = os.getenv('META_APP_ID', '')
-META_APP_SECRET = os.getenv('META_APP_SECRET', '')
-META_REDIRECT_URI = os.getenv('META_REDIRECT_URI', '')
-META_API_VERSION = os.getenv('META_API_VERSION', 'v18.0')
-META_WEBHOOK_VERIFY_TOKEN = os.getenv('META_WEBHOOK_VERIFY_TOKEN', '')
-
-# LiveKit Configuration
-LIVEKIT_URL = os.getenv('LIVEKIT_URL', '')
-LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', '')
-LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', '')
-LIVEKIT_AGENT_NAME = os.getenv('LIVEKIT_AGENT_NAME', 'hotcalls_agent')
-TRUNK_ID = os.getenv('TRUNK_ID', '')
-SIP_PROVIDER = os.getenv('SIP_PROVIDER', 'jambonz')
-
-# LiveKit Agent Concurrency: Managed via database (LiveKitAgent model)
-# Agent count and concurrency are now dynamic - configured via API
-# But keep environment fallbacks for backward compatibility
-
-# TODO Remove hardcoded shit
-NUMBER_OF_LIVEKIT_AGENTS = 1 #int(os.getenv('NUMBER_OF_LIVEKIT_AGENTS', '1'))
-CONCURRENCY_PER_LIVEKIT_AGENT = 100 #int(os.getenv('CONCURRENCY_PER_LIVEKIT_AGENT', '100'))
-
-# Site URL for absolute URL generation (used by multiple services)
-SITE_URL = os.getenv('BASE_URL')
-if not SITE_URL:
-    raise ValueError("BASE_URL environment variable is required but not set")
-
-# Google Calendar OAuth Configuration - UNIFIED NAMING
-GOOGLE_OAUTH_CLIENT_ID = os.getenv('GOOGLE_OAUTH_CLIENT_ID', '')
-GOOGLE_OAUTH_CLIENT_SECRET = os.getenv('GOOGLE_OAUTH_CLIENT_SECRET', '')
-GOOGLE_REDIRECT_URI = f"{SITE_URL}/api/google-calendar/auth/callback/"
-GOOGLE_SCOPES = [
-    'https://www.googleapis.com/auth/calendar.readonly',
-    'https://www.googleapis.com/auth/calendar.events',
-    'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'openid'  # Required by Google OAuth for user identification
-]
-
-# Microsoft 365 / Exchange Online OAuth Configuration
-# Keep it simple and similar to Google; values are read from environment.
-MS_CLIENT_ID = os.getenv('MS_CLIENT_ID', '')
-MS_CLIENT_SECRET = os.getenv('MS_CLIENT_SECRET', '')
-MS_AUTH_TENANT = os.getenv('MS_AUTH_TENANT', 'organizations')  # restrict to work/school accounts
-MS_REDIRECT_URI = f"{SITE_URL}/api/outlook-calendar/auth/callback/"
-MS_SCOPES = [
-    'openid',
-    'profile',
-    'email',
-    'offline_access',
-    'User.Read',
-    'Calendars.ReadWrite',
-    'Calendars.Read.Shared',
-    'Calendars.ReadWrite.Shared',
-    'MailboxSettings.Read',
-    'OnlineMeetings.Read',
-    # 'OnlineMeetings.ReadWrite',  # optional: enable if Teams meetings are required by default
-]
-
-# OpenAI Configuration
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-
-csrf_trusted_origins = os.environ.get("CSRF_TRUSTED_ORIGINS")
-if not csrf_trusted_origins:
-    raise ValueError("CSRF_TRUSTED_ORIGINS environment variable is required but not set")
-CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()]
