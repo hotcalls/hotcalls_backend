@@ -413,7 +413,7 @@ class MetaIntegrationService:
             )
             
             # Set up webhook subscription
-            callback_url = f"{settings.SITE_URL}/api/integrations/meta/lead_in/"
+            callback_url = f"{settings.BASE_URL}/api/integrations/meta/lead_in/"
             webhook_verify_token = getattr(settings, 'META_WEBHOOK_VERIFY_TOKEN', '')
             if not webhook_verify_token:
                 logger.warning("META_WEBHOOK_VERIFY_TOKEN not configured, skipping webhook setup")

@@ -626,7 +626,7 @@ def create_minute_pack_checkout(request):
         workspace = Workspace.objects.get(id=workspace_id)
         logger.info("✅ Found workspace: %s", workspace.id)
 
-        site_url = getattr(settings, 'SITE_URL', 'https://app.hotcalls.ai')
+        site_url = getattr(settings, 'BASE_URL')
         success_url = f"{site_url}/dashboard/settings?tab=billing&topup=success&session_id=" + "{CHECKOUT_SESSION_ID}"
         cancel_url = f"{site_url}/dashboard/settings?tab=billing&topup=cancelled"
 
