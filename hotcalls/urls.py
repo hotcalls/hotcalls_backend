@@ -1,149 +1,233 @@
 """
-URL configuration for HotCalls project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.0/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+URL configuration for project.
 """
 
 from django.contrib import admin
-from django.urls import path, include, re_path
-from django.conf import settings
-from django.conf.urls.static import static
+from django.urls import path, include
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from drf_spectacular.views import (
+    SpectacularAPIView,
+    SpectacularSwaggerView,
+    SpectacularRedocView,
+)
 from rest_framework.permissions import AllowAny
 from rest_framework.decorators import permission_classes
-from core.health import health_check
+from .health import health_check, readiness_check, startup_check
 from core.utils import CORSMediaView
 from core.views import invitation_detail, accept_invitation
+
 
 # Create public versions of documentation views
 class PublicSpectacularAPIView(SpectacularAPIView):
     permission_classes = [AllowAny]
 
+
+# Swagger API view. Currently public and allowed for any user
 class PublicSpectacularSwaggerView(SpectacularSwaggerView):
     permission_classes = [AllowAny]
 
+
+# Redoc API view. Currently public and allowed for any user
 class PublicSpectacularRedocView(SpectacularRedocView):
     permission_classes = [AllowAny]
+
 
 @csrf_exempt
 @permission_classes([AllowAny])
 def api_root(request):
     """API root endpoint that lists available API endpoints"""
-    return JsonResponse({
-        "message": "HotCalls API v1",
-        "endpoints": {
-            "auth": "/api/auth/",
-            "users": "/api/users/",
-            "workspaces": "/api/workspaces/",
-            "agents": "/api/agents/",
-            "leads": "/api/leads/",
-            "calls": "/api/calls/",
-            "calendars": "/api/calendars/",
-            "voices": "/api/voices/",
-            "plans": "/api/plans/",
-            "payments": "/api/payments/",
-            "meta": "/api/meta/",
-            "livekit": "/api/livekit/",
-            "docs": "/api/docs/",
-            "schema": "/api/schema/"
+    return JsonResponse(
+        {
+            "message": "HotCalls API v1",
+            "endpoints": {
+                "auth": "/api/auth/",
+                "users": "/api/users/",
+                "invitations": "/invitations/",
+                "workspaces": "/api/workspaces/",
+                "agents": "/api/agents/",
+                "leads": "/api/leads/",
+                "calls": "/api/calls/",
+                "funnels": "/api/funnels/",
+                "event-types": "/api/event-types/",
+                "calendars": "/api/calendars/",
+                "google-calendar": "/api/google-calendar/",
+                "outlook-calendar": "/api/outlook-calendar/",
+                "voices": "/api/voices/",
+                "knowledge": "/api/knowledge/",
+                "communication": "/api/communication/",
+                "webhooks": "/api/webhooks/",
+                "meta": "/api/meta/",
+                "meta-integration": "/api/integrations/meta/",
+                "jambonz-integration": "/api/integrations/jambonz/",
+                "plans": "/api/plans/",
+                "payments": "/api/payments/",
+                "docs": "/api/docs/",
+                "schema": "/api/schema/",
+            },
         }
-    })
+    )
+
 
 urlpatterns = [
-    # Admin interface
-    path('admin/', admin.site.urls),
-    
-    # Health check
-    path('health/', health_check, name='health_check'),
-    path('health/', include('health_check.urls')),
-    
-    # API Health check (for external calls through ingress)
-    path('api/health/', health_check, name='api_health_check'),
-    
-    # API Root
-    path('api/', api_root, name='api-root'),
-    
-    # API Documentation (PUBLIC)
-    path('api/schema/', PublicSpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', PublicSpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('api/redoc/', PublicSpectacularRedocView.as_view(url_name='schema'), name='redoc'),
-    
-    # Authentication API - NEW: Email-based authentication with verification
-    path('api/auth/', include('core.management_api.auth_api.urls')),
-    
-    # Management APIs - All require email verification
-    path('api/users/', include(('core.management_api.user_api.urls', 'user_api'), namespace='user_api')),
-    path('api/payments/', include(('core.management_api.payment_api.urls', 'payment_api'), namespace='payment_api')),
-    path('api/plans/', include(('core.management_api.plan_api.urls', 'plan_api'), namespace='plan_api')),
-    path('api/workspaces/', include(('core.management_api.workspace_api.urls', 'workspace_api'), namespace='workspace_api')),
-    path('api/agents/', include(('core.management_api.agent_api.urls', 'agent_api'), namespace='agent_api')),
-    path('api/leads/', include(('core.management_api.lead_api.urls', 'lead_api'), namespace='lead_api')),
-    path('api/calls/', include(('core.management_api.call_api.urls', 'call_api'), namespace='call_api')),
-    path('api/funnels/', include(('core.management_api.funnel_api.urls', 'funnel_api'), namespace='funnel_api')),
-    # Event Types API (workspace-scoped)
-    path('api/event-types/', include(('core.management_api.event_type_api.urls', 'event_type_api'), namespace='event_type_api')),
-    
-    # Calendar APIs - Restructured into three sections
-    path('api/calendars/', include(('core.management_api.calendar_api.urls', 'calendar_api'), namespace='calendar_api')),
-    path('api/google-calendar/', include(('core.management_api.google_calendar_api.urls', 'google_calendar_api'), namespace='google_calendar_api')),
-    path('api/outlook-calendar/', include(('core.management_api.outlook_calendar_api.urls', 'outlook_calendar_api'), namespace='outlook_calendar_api')),
-    
-    path('api/communication/', include(('core.management_api.communication_api.urls', 'communication_api'), namespace='communication_api')),
-
-    path('api/voices/', include(('core.management_api.voice_api.urls', 'voice_api'), namespace='voice_api')),
-    # Subscription management is handled by payment_api above
-    
-    # Meta Integration Management API
-    path('api/meta/', include(('core.management_api.meta_api.urls', 'meta_api'), namespace='meta_api')),
-    
-    # LiveKit Token Management API (Superuser only)
-    # LiveKit token management removed - no longer using token authentication
-    # path('api/livekit/', include(('core.management_api.livekit_api.urls', 'livekit_api'), namespace='livekit_api')),
-    # Knowledge Base API (per Agent, PDF-only)
-    path('api/knowledge/', include(('core.management_api.knowledge_api.urls', 'knowledge_api'), namespace='knowledge_api')),
-    
-    # Google Calendar MCP Token Management API (removed in unified LiveKit-only flow)
-    
-    # Meta Webhooks (for Meta to call)
-    path('api/integrations/meta/', include(('core.management_api.meta_api.webhook_urls', 'meta_webhooks'), namespace='meta_webhooks')),
-    
-    # Microsoft Graph Webhooks - REMOVED (now handled by outlook_calendar_api)
-
-    # Jambonz Webhooks (for Jambonz to call)
-    path('api/integrations/jambonz/', include(('core.management_api.jambonz_api.urls', 'jambonz_webhooks'), namespace='jambonz_webhooks')),
-
-    # Webhook API (both inbound and management)
-    path('api/webhooks/', include(('core.management_api.webhook_api.urls', 'webhook_api'), namespace='webhook_api')),
-    
-    # Workspace Invitation Templates (Public + Authenticated)
-    path('invitations/<str:token>/', invitation_detail, name='invitation_detail'),
-    path('invitations/<str:token>/accept/', accept_invitation, name='accept_invitation'),
+    # Admin interface. Currently blocked by kubernetes ingress configuration
+    path("admin/", admin.site.urls),
+    # Multiple health checks. Currently used by kubernetes to evaluate deployment success
+    path("health/", health_check, name="health_check"),
+    path("health/readiness/", readiness_check, name="readiness_check"),
+    path("health/startup/", startup_check, name="startup_check"),
+    path("api/", api_root, name="api-root"),
+    path("api/schema/", PublicSpectacularAPIView.as_view(), name="schema"),
+    path(
+        "api/docs/",
+        PublicSpectacularSwaggerView.as_view(url_name="schema"),
+        name="swagger-ui",
+    ),
+    path(
+        "api/redoc/",
+        PublicSpectacularRedocView.as_view(url_name="schema"),
+        name="redoc",
+    ),
+    path(
+        "api/auth/",
+        include(
+            ("core.management_api.auth_api.urls", "auth_api"),
+            namespace="auth_api",
+        ),
+    ),
+    path(
+        "api/users/",
+        include(
+            ("core.management_api.user_api.urls", "user_api"),
+            namespace="user_api",
+        ),
+    ),
+    path(
+        "api/payments/",
+        include(
+            ("core.management_api.payment_api.urls", "payment_api"),
+            namespace="payment_api",
+        ),
+    ),
+    path(
+        "api/plans/",
+        include(
+            ("core.management_api.plan_api.urls", "plan_api"),
+            namespace="plan_api",
+        ),
+    ),
+    path(
+        "api/workspaces/",
+        include(
+            ("core.management_api.workspace_api.urls", "workspace_api"),
+            namespace="workspace_api",
+        ),
+    ),
+    path(
+        "api/agents/",
+        include(
+            ("core.management_api.agent_api.urls", "agent_api"),
+            namespace="agent_api",
+        ),
+    ),
+    path(
+        "api/leads/",
+        include(
+            ("core.management_api.lead_api.urls", "lead_api"),
+            namespace="lead_api",
+        ),
+    ),
+    path(
+        "api/calls/",
+        include(
+            ("core.management_api.call_api.urls", "call_api"),
+            namespace="call_api",
+        ),
+    ),
+    path(
+        "api/funnels/",
+        include(
+            ("core.management_api.funnel_api.urls", "funnel_api"),
+            namespace="funnel_api",
+        ),
+    ),
+    path(
+        "api/event-types/",
+        include(
+            ("core.management_api.event_type_api.urls", "event_type_api"),
+            namespace="event_type_api",
+        ),
+    ),
+    path(
+        "api/calendars/",
+        include(
+            ("core.management_api.calendar_api.urls", "calendar_api"),
+            namespace="calendar_api",
+        ),
+    ),
+    path(
+        "api/google-calendar/",
+        include(
+            ("core.management_api.google_calendar_api.urls", "google_calendar_api"),
+            namespace="google_calendar_api",
+        ),
+    ),
+    path(
+        "api/outlook-calendar/",
+        include(
+            ("core.management_api.outlook_calendar_api.urls", "outlook_calendar_api"),
+            namespace="outlook_calendar_api",
+        ),
+    ),
+    path(
+        "api/communication/",
+        include(
+            ("core.management_api.communication_api.urls", "communication_api"),
+            namespace="communication_api",
+        ),
+    ),
+    path(
+        "api/voices/",
+        include(
+            ("core.management_api.voice_api.urls", "voice_api"), namespace="voice_api"
+        ),
+    ),
+    path(
+        "api/meta/",
+        include(
+            ("core.management_api.meta_api.urls", "meta_api"), namespace="meta_api"
+        ),
+    ),
+    path(
+        "api/knowledge/",
+        include(
+            ("core.management_api.knowledge_api.urls", "knowledge_api"),
+            namespace="knowledge_api",
+        ),
+    ),
+    path(
+        "api/integrations/meta/",
+        include(
+            ("core.management_api.meta_api.webhook_urls", "meta_webhooks"),
+            namespace="meta_webhooks",
+        ),
+    ),
+    path(
+        "api/integrations/jambonz/",
+        include(
+            ("core.management_api.jambonz_api.urls", "jambonz_webhooks"),
+            namespace="jambonz_webhooks",
+        ),
+    ),
+    path(
+        "api/webhooks/",
+        include(
+            ("core.management_api.webhook_api.urls", "webhook_api"),
+            namespace="webhook_api",
+        ),
+    ),
+    path("invitations/<str:token>/", invitation_detail, name="invitation_detail"),
+    path(
+        "invitations/<str:token>/accept/", accept_invitation, name="accept_invitation"
+    ),
 ]
-
-# Serve media files in development with CORS support
-if settings.DEBUG:
-    urlpatterns += [
-        re_path(r'^media/(?P<path>.*)$', CORSMediaView.as_view(), name='media'),
-    ]
-
-    # Debug toolbar URLs (only in development)
-    try:
-        import debug_toolbar
-        urlpatterns += [
-            path('__debug__/', include(debug_toolbar.urls)),
-        ]
-    except ImportError:
-        pass
