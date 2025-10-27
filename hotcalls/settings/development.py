@@ -1,7 +1,7 @@
 """
 Development settings for HotCalls project.
 
-These settings are used for local development and should never be used in production.
+These settings are used for local development and testing using docker.
 """
 
 from .base import *
