@@ -3,11 +3,6 @@ from celery import Celery
 from django.conf import settings
 from celery.schedules import crontab
 
-# Ensure we have DJANGO_SETTINGS_MODULE set up using the environment variable DJANGO_SETTINGS_MODULE
-os.environ.setdefault(
-    "DJANGO_SETTINGS_MODULE", os.environ.get("DJANGO_SETTINGS_MODULE")
-)
-
 # Create the Celery app
 app = Celery("hotcalls")
 

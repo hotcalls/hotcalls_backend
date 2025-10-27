@@ -73,10 +73,6 @@ THIRD_PARTY_APPS = [
     "django_celery_beat",
     "drf_spectacular",
     "django_filters",
-    "health_check",
-    "health_check.db",
-    "health_check.cache",
-    "health_check.storage",
 ]
 
 LOCAL_APPS = [
