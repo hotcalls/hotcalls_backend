@@ -11,8 +11,8 @@ import os
 from django.core.wsgi import get_wsgi_application
 
 # Set default settings module based on environment
-environment = os.environ.get('ENVIRONMENT')
-default_settings = f'hotcalls.settings.{environment}'
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', default_settings)
+environment = os.environ.get("ENVIRONMENT")
+default_settings = f"hotcalls.settings.{environment}"
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", default_settings)
 
 application = get_wsgi_application()
