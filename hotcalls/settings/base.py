@@ -19,7 +19,6 @@ try:
     # Base App configuration
     TIME_ZONE = os.environ["TIME_ZONE"]
     BASE_URL = os.environ["BASE_URL"]
-    csrf_trusted_origins = os.environ["CSRF_TRUSTED_ORIGINS"]
 
     # Database configuration
     DB_ENGINE = os.environ["DB_ENGINE"]
@@ -96,9 +95,6 @@ LANGUAGE_CODE = "en-us"
 USE_I18N = True
 USE_TZ = True
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()
-]
 ADMINS = [("Paul Bahr", "paul.bahr@malmachen.com")]
 
 # Database configuration
@@ -191,8 +187,9 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",
     "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
