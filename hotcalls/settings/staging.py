@@ -19,6 +19,7 @@ try:
     AZURE_ACCOUNT_NAME = os.environ["AZURE_ACCOUNT_NAME"]
     AZURE_STORAGE_KEY = os.environ["AZURE_STORAGE_KEY"]
     AZURE_CUSTOM_DOMAIN = os.environ["AZURE_CUSTOM_DOMAIN"]
+    AZURE_MEDIA_CONTAINER = os.environ["AZURE_MEDIA_CONTAINER"]
 except KeyError as e:
     missing_variable = e.args[0]
     raise RuntimeError(f"Environment variable {missing_variable} is not set")
@@ -65,8 +66,6 @@ CORS_ALLOWED_METHODS = [
 
 
 # Media configuration
-AZURE_MEDIA_CONTAINER = "media"
-
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
