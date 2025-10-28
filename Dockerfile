@@ -49,7 +49,7 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 USER django
 
 # Use minimal migration settings to perform collectstatic job. different settings will be used at runtime via kubernetes
-RUN ENVIRONMENT=migrations python manage.py collectstatic --noinput
+RUN ENVIRONMENT=minimal python manage.py collectstatic --noinput
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \

@@ -19,5 +19,5 @@ elif ENVIRONMENT == "staging":
     from .staging import *
 elif ENVIRONMENT == "development":
     from .development import *
-elif ENVIRONMENT == "migrations":
-    from .migrations import *
+elif ENVIRONMENT == "minimal":
+    from .minimal import *
