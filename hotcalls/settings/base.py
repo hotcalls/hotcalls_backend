@@ -99,6 +99,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 CSRF_TRUSTED_ORIGINS = [
     origin.strip() for origin in csrf_trusted_origins.split(",") if origin.strip()
 ]
+ADMINS = [("Paul Bahr", "paul.bahr@malmachen.com")]
 
 # Database configuration
 DATABASES = {
@@ -114,6 +115,8 @@ DATABASES = {
         },
     }
 }
+# Default primary key type
+DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Celery configuration
 CELERY_ACCEPT_CONTENT = ["json"]
@@ -150,7 +153,7 @@ MS_SCOPES = [
 # File upload configuration
 FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024 * 1024  # 1GB
-FILE_UPLOAD_TEMP_DIR = None  # Use system default
+FILE_UPLOAD_TEMP_DIR = None
 FILE_UPLOAD_PERMISSIONS = 0o644
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 1000
 
@@ -235,9 +238,6 @@ AUTH_PASSWORD_VALIDATORS = [
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
 ]
-
-# Default primary key field type
-DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # REST Framework configuration
 REST_FRAMEWORK = {
