@@ -1,17 +1,23 @@
 """
 Django settings package for HotCalls.
+Settings are chosen depending on the Environment.
 
-Contains environment specific configurations, in addition to base configuration
+The module contains multiple configurations, in addition to a base configuration.
 """
 
 import os
 
-# Determine which settings to use based on environment
-ENVIRONMENT = os.environ.get('ENVIRONMENT', 'development')
+try:
+    ENVIRONMENT = os.environ["ENVIRONMENT"]
+except KeyError as e:
+    missing_variable = e.args[0]
+    raise RuntimeError(f"Environment variable {missing_variable} is not set")
 
-if ENVIRONMENT == 'production':
+if ENVIRONMENT == "production":
     from .production import *
-elif ENVIRONMENT == 'staging':
+elif ENVIRONMENT == "staging":
     from .staging import *
-else:
+elif ENVIRONMENT == "development":
     from .development import *
+elif ENVIRONMENT == "migrations":
+    from .migrations import *
