@@ -48,8 +48,8 @@ RUN mkdir -p /app/staticfiles /app/tmp && \
 # Switch to the non-root user
 USER django
 
-# Filed with dummy variables for the run to complete. Real values are provided at runtime via kubernetes
-RUN DJANGO_SETTINGS_MODULE=hotcalls.settings.production ALLOWED_HOSTS=localhost BASE_URL=http://localhost CSRF_TRUSTED_ORIGINS=http://localhost python manage.py collectstatic --noinput
+# Use minimal migration settings to perform collectstatic job. different settings will be used at runtime via kubernetes
+RUN ENVIRONMENT=migrations python manage.py collectstatic --noinput
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
