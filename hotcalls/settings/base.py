@@ -343,7 +343,7 @@ LOGGING = {
         "core_file": {
             "level": "INFO",
             "class": "logging.FileHandler",
-            "filename": "hotcalls_info.log",
+            "filename": "app_core_info.log",
             "formatter": "verbose",
         },
         "email_admins": {
