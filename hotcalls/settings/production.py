@@ -23,7 +23,7 @@ try:
     SECURE_CONTENT_TYPE_NOSNIFF = (
         os.environ["SECURE_CONTENT_TYPE_NOSNIFF"].lower() == "true"
     )
-    X_FRAME_OPTIONS = os.environ["X_FRAME_OPTIONS"].lower() == "true"
+    X_FRAME_OPTIONS = os.environ["X_FRAME_OPTIONS"]
 
     # Storage account configuration
     AZURE_ACCOUNT_NAME = os.environ["AZURE_ACCOUNT_NAME"]
@@ -114,7 +114,7 @@ CACHES = {
                 "retry_on_timeout": True,
             },
         },
-        "KEY_PREFIX": "hotcalls_staging",
+        "KEY_PREFIX": "hotcalls_production",
         "TIMEOUT": 300,
     }
 }
