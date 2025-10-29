@@ -325,24 +325,6 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "basic",
         },
-        "django_file": {
-            "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": "django_info.log",
-            "formatter": "verbose",
-        },
-        "hotcalls_file": {
-            "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": "hotcalls_info.log",
-            "formatter": "verbose",
-        },
-        "core_file": {
-            "level": "INFO",
-            "class": "logging.FileHandler",
-            "filename": "app_core_info.log",
-            "formatter": "verbose",
-        },
         "email_admins": {
             "level": "ERROR",
             "class": "django.utils.log.AdminEmailHandler",
@@ -354,15 +336,15 @@ LOGGING = {
     },
     "loggers": {
         "hotcalls": {
-            "handlers": ["console", "hotcalls_file", "email_admins"],
+            "handlers": ["console", "email_admins"],
             "propagate": False,
         },
         "django": {
-            "handlers": ["console", "django_file"],
+            "handlers": ["console"],
             "propagate": False,
         },
         "core": {
-            "handlers": ["console", "core_file", "email_admins"],
+            "handlers": ["console", "email_admins"],
             "propagate": False,
         },
     },

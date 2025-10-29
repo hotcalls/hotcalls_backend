@@ -103,10 +103,36 @@ CACHES = {
     }
 }
 
-# Logging for development
+# Debug logging for development and file logging
 LOGGING["handlers"]["console"]["level"] = "DEBUG"
-LOGGING["handlers"]["hotcalls_file"]["level"] = "DEBUG"
-LOGGING["handlers"]["django_file"]["level"] = "DEBUG"
+LOGGING["handlers"]["django_file"] = (
+    {
+        "level": "INFO",
+        "class": "logging.FileHandler",
+        "filename": "django_info.log",
+        "formatter": "verbose",
+    },
+)
+LOGGING["handlers"]["hotcalls_file"] = (
+    {
+        "level": "INFO",
+        "class": "logging.FileHandler",
+        "filename": "hotcalls_info.log",
+        "formatter": "verbose",
+    },
+)
+LOGGING["handlers"]["core_file"] = (
+    {
+        "level": "INFO",
+        "class": "logging.FileHandler",
+        "filename": "app_core_info.log",
+        "formatter": "verbose",
+    },
+)
+LOGGING["loggers"]["hotcalls"]["handlers"] = ["console", "hotcalls_file"]
+LOGGING["loggers"]["django"]["handlers"] = ["console", "django_file"]
+LOGGING["loggers"]["core"]["handlers"] = ["console", "core_file"]
+
 
 # Django extensions configuration
 SHELL_PLUS = "ipython"
