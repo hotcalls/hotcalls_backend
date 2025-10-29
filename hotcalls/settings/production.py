@@ -83,7 +83,7 @@ STORAGES = {
         "BACKEND": "hotcalls.storage_backends.AzureMediaStorage",
     },
     "staticfiles": {
-        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        "BACKEND": "whitenoise.storage.StaticFilesStorage",
     },
 }
 
