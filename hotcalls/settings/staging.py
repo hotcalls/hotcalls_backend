@@ -38,8 +38,7 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 
 SECURE_REDIRECT_EXEMPT = [
-    r"^health/$",
-    r"^health$",
+    r"^health/",
     r"^admin/",
     r"^static/",
 ]
