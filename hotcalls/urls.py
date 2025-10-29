@@ -72,7 +72,7 @@ def api_root(request):
 
 urlpatterns = [
     # Admin interface. Currently blocked by kubernetes ingress configuration
-    path("admin/", admin.site.urls),
+    path("asdoksifje/admin/", admin.site.urls),
     # Multiple health checks. Currently used by kubernetes to evaluate deployment success
     path("health/", health_check, name="health_check"),
     path("health/readiness/", readiness_check, name="readiness_check"),
