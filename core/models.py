@@ -610,7 +610,8 @@ class Workspace(models.Model):
     admin_user = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL, related_name='admin_workspaces'
     )
-    
+
+    random_value = models.CharField(default='3')
 
     # Subscription (Plan tracking handled by WorkspaceSubscription model and Stripe)
     

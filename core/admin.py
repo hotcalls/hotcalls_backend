@@ -301,9 +301,6 @@ class WorkspaceAdmin(ShowPkMixin, admin.ModelAdmin):
         ('Subscription Status', {
             'fields': ('subscription_status', 'stripe_customer_id', 'stripe_subscription_id')
         }),
-        ('Settings', {
-            'fields': ('timezone', 'meta_webhook_verified')
-        }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
             'classes': ('collapse',)
