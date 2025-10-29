@@ -53,7 +53,15 @@ CORS_ALLOWED_ORIGINS = [
     origin.strip() for origin in cors_allowed_origins.split(",") if origin.strip()
 ]
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = ["*"]
+CORS_ALLOWED_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+]
 CORS_ALLOWED_METHODS = [
     "OPTIONS",
     "DELETE",
