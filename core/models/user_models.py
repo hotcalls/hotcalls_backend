@@ -108,21 +108,21 @@ class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
-        editable=False
+        editable=False,
     )
 
     # User information fields
     email = models.EmailField(
         unique=True,
-        help_text="Email address used for login"
+        help_text="Email address used for login",
     )
     first_name = models.CharField(
         max_length=150,
-        help_text="User first name"
+        help_text="User first name",
     )
     last_name = models.CharField(
         max_length=150,
-        help_text="User last name"
+        help_text="User last name",
     )
     phone = models.CharField(
         max_length=50,
@@ -136,7 +136,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="User account status",
     )
     is_staff = models.BooleanField(
-        default=False, help_text="Can User access admin site"
+        default=False,
+        help_text="Can User access admin site",
     )
     has_used_trial = models.BooleanField(
         default=False,
@@ -146,7 +147,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Verification fields
     is_email_verified = models.BooleanField(
         default=False,
-        help_text="Has the user email been verified?"
+        help_text="Has the user email been verified?",
     )
     email_verification_token = models.CharField(
         max_length=100,
@@ -156,7 +157,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     email_verification_sent_at = models.DateTimeField(
         blank=True,
-        help_text="When email verification was sent"
+        help_text="When email verification was sent",
     )
     password_reset_token = models.CharField(
         max_length=100,
@@ -166,17 +167,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     password_reset_sent_at = models.DateTimeField(
         blank=True,
-        help_text="When password reset email was sent "
+        help_text="When password reset email was sent",
     )
 
     # Timestamps
     date_joined = models.DateTimeField(
         default=timezone.now,
-        help_text="When the user account was created"
+        help_text="When the user account was created",
     )
     last_login = models.DateTimeField(
         blank=True,
-        help_text="When the user last logged in"
+        help_text="When the user last logged in",
     )
 
     # User django configuration
