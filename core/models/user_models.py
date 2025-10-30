@@ -140,11 +140,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         default=False,
         help_text="Whether this user has ever used a trial period (lifetime limit)",
     )
-    stripe_customer_id = models.CharField(
-        max_length=255,
-        blank=True,
-        help_text="Stripe customer ID for billing",
-    )
 
     # Verification fields
     is_email_verified = models.BooleanField(
