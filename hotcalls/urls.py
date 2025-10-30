@@ -60,7 +60,6 @@ def api_root(request):
                 "webhooks": "/api/webhooks/",
                 "meta": "/api/meta/",
                 "meta-integration": "/api/integrations/meta/",
-                "jambonz-integration": "/api/integrations/jambonz/",
                 "plans": "/api/plans/",
                 "payments": "/api/payments/",
                 "docs": "/api/docs/",
@@ -71,7 +70,7 @@ def api_root(request):
 
 
 urlpatterns = [
-    # Admin interface. Currently blocked by kubernetes ingress configuration
+    # Admin interface.
     path("asdoksifje/admin/", admin.site.urls),
     # Multiple health checks. Currently used by kubernetes to evaluate deployment success
     path("health/", health_check, name="health_check"),
@@ -211,13 +210,6 @@ urlpatterns = [
         include(
             ("core.management_api.meta_api.webhook_urls", "meta_webhooks"),
             namespace="meta_webhooks",
-        ),
-    ),
-    path(
-        "api/integrations/jambonz/",
-        include(
-            ("core.management_api.jambonz_api.urls", "jambonz_webhooks"),
-            namespace="jambonz_webhooks",
         ),
     ),
     path(
