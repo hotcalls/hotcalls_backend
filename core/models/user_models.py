@@ -97,12 +97,14 @@ class CustomUserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
     """Custom user model with email"""
 
+    # Choices
     USER_STATUS_CHOICES = [
         ("active", "Active"),
         ("suspended", "Suspended"),
         ("forever_disabled", "Forever Disabled"),
     ]
 
+    # Fields
     id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
