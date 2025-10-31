@@ -2,10 +2,12 @@
 Models for Workspace Logic
 """
 
+import datetime
+import secrets
 import uuid
-from datetime import timezone
 
 from django.db import models
+from django.utils import timezone
 
 from .plan_models import Plan
 from .user_models import User
@@ -106,7 +108,9 @@ class Workspace(models.Model):
         help_text="SMTP password (encrypted at rest)",
     )
     smtp_from_email = models.EmailField(
-        blank=True, default="", help_text="Sender email address for outbound messages"
+        blank=True,
+        default="",
+        help_text="Sender email address for outbound messages",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -116,14 +120,9 @@ class Workspace(models.Model):
     def current_subscription(self):
         """Get current active subscription"""
         try:
-            return self.workspacesubscription_set.get(is_active=True)
+            return self.workspacesubscription.get(is_active=True)
         except WorkspaceSubscription.DoesNotExist:
             return None
-
-    def is_admin(self, user: "User") -> bool:
-        if user is None:
-            return False
-        return bool(self.admin_user and self.admin_user_id == user.id)
 
     class Meta:
         constraints = [
@@ -142,30 +141,46 @@ class Workspace(models.Model):
         ]
 
     def __str__(self):
-        return self.workspace_name
+        return f"{self.workspace_name} created at {self.created_at}."
+
+    def is_admin(self, user: "User") -> bool:
+        if user is None:
+            return False
+        return bool(self.admin_user and self.admin_user_id == user.id)
 
 
 class WorkspaceInvitation(models.Model):
-    """Workspace invitations for inviting users via email"""
+    """Workspace Invitation model per email"""
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # Choices
+    INVITATION_STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("accepted", "Accepted"),
+        ("expired", "Expired"),
+        ("cancelled", "Cancelled"),
+    ]
 
-    # Core invitation fields
+    # Fields
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
     workspace = models.ForeignKey(
         Workspace,
         on_delete=models.CASCADE,
         related_name="invitations",
         help_text="Workspace the user is being invited to",
     )
-    email = models.EmailField(help_text="Email address of the person being invited")
+    email = models.EmailField(
+        help_text="Email address of the person being invited",
+    )
     invited_by = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
         related_name="sent_invitations",
         help_text="User who sent the invitation",
     )
-
-    # Invitation management
     token = models.CharField(
         max_length=64,
         unique=True,
@@ -202,13 +217,15 @@ class WorkspaceInvitation(models.Model):
             models.Index(fields=["token"]),
             models.Index(fields=["email", "status"]),
             models.Index(fields=["workspace", "status"]),
-            models.Index(fields=["expires_at"]),
         ]
+
+    def __str__(self):
+        return f"Invitation: From {self.invited_by} to {self.email} into {self.workspace.workspace_name}. Status: ({self.status})"
 
     def save(self, *args, **kwargs):
         # Set expiration to 7 days from now if not set
         if not self.expires_at:
-            self.expires_at = timezone.now() + timezone.timedelta(days=7)
+            self.expires_at = timezone.now() + datetime.timedelta(days=7)
 
         # Generate token if not set
         if not self.token:
@@ -219,10 +236,10 @@ class WorkspaceInvitation(models.Model):
     @staticmethod
     def generate_token():
         """Generate a secure random token for invitations"""
-        return secrets.token_urlsafe(48)  # 64 character URL-safe token
+        return secrets.token_urlsafe(32)
 
     def is_valid(self):
-        """Check if invitation is still valid (not expired and pending)"""
+        """Check if invitation is still valid"""
         return (
             self.status == "pending"
             and self.expires_at
@@ -237,6 +254,7 @@ class WorkspaceInvitation(models.Model):
         if user.email != self.email:
             raise ValueError("Email address does not match invitation")
 
+        # TODO: Maybe extract this logic of adding user to workspace to service layer.
         # Add user to workspace
         self.workspace.users.add(user)
 
@@ -253,21 +271,34 @@ class WorkspaceInvitation(models.Model):
             self.status = "cancelled"
             self.save(update_fields=["status"])
 
-    def __str__(self):
-        return f"Invitation: {self.email} → {self.workspace.workspace_name} ({self.status})"
-
 
 class WorkspaceSubscription(models.Model):
     """
     Makes the relationship between a Workspace and a Plan explicit,
     and captures periods so you can keep historical data.
+    TODO: Check what this means and maybe change logic.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
-    plan = models.ForeignKey(Plan, on_delete=models.PROTECT)
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="workspacesubscription",
+    )
+    plan = models.ForeignKey(
+        Plan,
+        on_delete=models.PROTECT,
+        related_name="workspacesubscriptionplan",
+    )
     started_at = models.DateTimeField()
-    ends_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -283,7 +314,7 @@ class WorkspaceSubscription(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.workspace.workspace_name} - {self.plan.plan_name} ({'Active' if self.is_active else 'Inactive'})"
+        return f"{self.workspace.workspace_name} - {self.plan.plan_name}. Status: ({'Active' if self.is_active else 'Inactive'})"
 
 
 class WorkspaceUsage(models.Model):
@@ -292,11 +323,20 @@ class WorkspaceUsage(models.Model):
     Historical rows are never mutated – new row each period.
     """
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE)
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    workspace = models.ForeignKey(
+        Workspace,
+        on_delete=models.CASCADE,
+        related_name="workspaceusages",
+    )
     subscription = models.ForeignKey(
         WorkspaceSubscription,
         on_delete=models.PROTECT,
+        related_name="workspaceusagesubscription",
         help_text="Subscription that was active for this usage period",
     )
     period_start = models.DateTimeField()
@@ -315,4 +355,4 @@ class WorkspaceUsage(models.Model):
         unique_together = ("workspace", "period_start", "period_end")
 
     def __str__(self):
-        return f"{self.workspace} | {self.period_start:%Y-%m-%d} → {self.period_end:%Y-%m-%d}"
+        return f"{self.workspace}, period from {self.period_start:%Y-%m-%d} to {self.period_end:%Y-%m-%d}. Extra call minutes: {self.extra_call_minutes}"
