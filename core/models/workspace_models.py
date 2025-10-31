@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .plan_models import Plan
 from .user_models import User
+from .telephony_models import PhoneNumber
 
 
 class Workspace(models.Model):
@@ -372,3 +373,46 @@ class WorkspaceUsage(models.Model):
 
     def __str__(self):
         return f"{self.workspace}, period from {self.period_start:%Y-%m-%d} to {self.period_end:%Y-%m-%d}. Extra call minutes: {self.extra_call_minutes}"
+
+
+class WorkspacePhoneNumber(models.Model):
+    """
+    Model to map workspaces to phone numbers with a default number.
+    """
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+    )
+    workspace = models.ForeignKey(
+        "Workspace",
+        on_delete=models.CASCADE,
+        related_name="workspace_phonenumbers",
+        help_text="Workspace that can use this phone number",
+    )
+    phone_number = models.ForeignKey(
+        PhoneNumber,
+        on_delete=models.CASCADE,
+        related_name="workspace_mappings",
+        help_text="Phone number available to this workspace",
+    )
+    is_default = models.BooleanField(
+        default=False, help_text="If true, default phone number for this workspace"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "phone_number"],
+                name="unique_workspace_phone_number",
+            ),
+        ]
+        verbose_name = "Workspace phone number"
+        verbose_name_plural = "Workspaces phone numbers"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"Workspace: {self.workspace.workspace_name}, Phone number: {self.phone_number.phone_number}. {'default' if self.is_default else 'pool'}"
