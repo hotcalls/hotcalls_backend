@@ -361,7 +361,7 @@ class WorkspaceUsage(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ("workspace", "period_start", "period_end")
+        unique_together = ["workspace", "period_start", "period_end"]
         verbose_name = "Workspace usage"
         verbose_name_plural = "Workspaces usage"
         ordering = ["created_at"]
