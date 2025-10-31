@@ -139,6 +139,9 @@ class Workspace(models.Model):
                 name="unique_stripe_subscription_id",
             ),
         ]
+        verbose_name = "Workspace"
+        verbose_name_plural = "Workspaces"
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"{self.workspace_name} created at {self.created_at}."
@@ -218,6 +221,9 @@ class WorkspaceInvitation(models.Model):
             models.Index(fields=["email", "status"]),
             models.Index(fields=["workspace", "status"]),
         ]
+        verbose_name = "Workspace invitation"
+        verbose_name_plural = "Workspace invitations"
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"Invitation: From {self.invited_by} to {self.email} into {self.workspace.workspace_name}. Status: ({self.status})"
@@ -312,6 +318,9 @@ class WorkspaceSubscription(models.Model):
                 name="unique_active_subscription_per_workspace",
             )
         ]
+        verbose_name = "Workspace subscription"
+        verbose_name_plural = "Workspace subscriptions"
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"{self.workspace.workspace_name} - {self.plan.plan_name}. Status: ({'Active' if self.is_active else 'Inactive'})"
@@ -353,6 +362,9 @@ class WorkspaceUsage(models.Model):
 
     class Meta:
         unique_together = ("workspace", "period_start", "period_end")
+        verbose_name = "Workspace usage"
+        verbose_name_plural = "Workspaces usage"
+        ordering = ["created_at"]
 
     def __str__(self):
         return f"{self.workspace}, period from {self.period_start:%Y-%m-%d} to {self.period_end:%Y-%m-%d}. Extra call minutes: {self.extra_call_minutes}"
