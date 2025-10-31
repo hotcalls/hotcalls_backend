@@ -172,8 +172,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     # Timestamps
     date_joined = models.DateTimeField(
-        default=timezone.now,
-        help_text="When the user account was created",
+        auto_now_add=True,
     )
     last_login = models.DateTimeField(
         blank=True,
