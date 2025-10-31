@@ -56,7 +56,7 @@ class Plan(models.Model):
     class Meta:
         verbose_name = "Plan"
         verbose_name_plural = "Plans"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.plan_name}. Monthly price: {self.price_monthly}. Features: {self.features}"
@@ -104,7 +104,7 @@ class Feature(models.Model):
     class Meta:
         verbose_name = "Feature"
         verbose_name_plural = "Features"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return self.feature_name
@@ -168,7 +168,7 @@ class EndpointFeature(models.Model):
         ]
         verbose_name = "EndpointFeature"
         verbose_name_plural = "EndpointFeatures"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         method_str = f" ({self.http_method})" if self.http_method else ""
@@ -208,7 +208,7 @@ class PlanFeature(models.Model):
         ]
         verbose_name = "PlanFeature"
         verbose_name_plural = "PlanFeatures"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return (
@@ -274,7 +274,7 @@ class FeatureUsage(models.Model):
         ]
         verbose_name = "FeatureUsage"
         verbose_name_plural = "FeatureUsages"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.feature.feature_name} - {self.used_amount}"

@@ -142,7 +142,7 @@ class Workspace(models.Model):
         ]
         verbose_name = "Workspace"
         verbose_name_plural = "Workspaces"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.workspace_name} created at {self.created_at}."
@@ -223,7 +223,7 @@ class WorkspaceInvitation(models.Model):
         ]
         verbose_name = "Workspace invitation"
         verbose_name_plural = "Workspace invitations"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"Invitation: From {self.invited_by} to {self.email} into {self.workspace.workspace_name}. Status: ({self.status})"
@@ -320,7 +320,7 @@ class WorkspaceSubscription(models.Model):
         ]
         verbose_name = "Workspace subscription"
         verbose_name_plural = "Workspace subscriptions"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.workspace.workspace_name} - {self.plan.plan_name}. Status: ({'Active' if self.is_active else 'Inactive'})"
@@ -369,7 +369,7 @@ class WorkspaceUsage(models.Model):
         ]
         verbose_name = "Workspace usage"
         verbose_name_plural = "Workspaces usage"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"{self.workspace}, period from {self.period_start:%Y-%m-%d} to {self.period_end:%Y-%m-%d}. Extra call minutes: {self.extra_call_minutes}"
@@ -412,7 +412,7 @@ class WorkspacePhoneNumber(models.Model):
         ]
         verbose_name = "Workspace phone number"
         verbose_name_plural = "Workspaces phone numbers"
-        ordering = ["created_at"]
+        ordering = ["-created_at"]
 
     def __str__(self):
         return f"Workspace: {self.workspace.workspace_name}, Phone number: {self.phone_number.phone_number}. {'default' if self.is_default else 'pool'}"
