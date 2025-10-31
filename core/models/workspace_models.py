@@ -207,7 +207,6 @@ class WorkspaceInvitation(models.Model):
     )
 
     class Meta:
-        unique_together = ["workspace", "email", "status"]
         constraints = [
             # Only one pending invitation per workspace-email combination
             models.UniqueConstraint(
@@ -361,7 +360,12 @@ class WorkspaceUsage(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ["workspace", "period_start", "period_end"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "period_start", "period_end"],
+                name="unique_active_usage_per_workspace",
+            )
+        ]
         verbose_name = "Workspace usage"
         verbose_name_plural = "Workspaces usage"
         ordering = ["created_at"]

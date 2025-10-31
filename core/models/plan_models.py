@@ -156,7 +156,12 @@ class EndpointFeature(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ["route_name", "http_method"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["route_name", "http_method"],
+                name="route_name_http_method_unique",
+            )
+        ]
         indexes = [
             models.Index(fields=["route_name"]),
             models.Index(fields=["route_name", "http_method"]),
@@ -195,7 +200,12 @@ class PlanFeature(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ["plan", "feature"]
+        constraint = [
+            models.UniqueConstraint(
+                fields=["plan", "feature"],
+                name="unique_feature_per_plan",
+            )
+        ]
         verbose_name = "PlanFeature"
         verbose_name_plural = "PlanFeatures"
         ordering = ["created_at"]
@@ -256,7 +266,12 @@ class FeatureUsage(models.Model):
         return None if lim is None else max(lim - self.used_amount, 0)
 
     class Meta:
-        unique_together = ["usage_record", "feature"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["usage_record", "feature"],
+                name="unique_usage_record_per_feature",
+            )
+        ]
         verbose_name = "FeatureUsage"
         verbose_name_plural = "FeatureUsages"
         ordering = ["created_at"]
